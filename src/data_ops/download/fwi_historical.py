@@ -357,7 +357,7 @@ Examples:
             print("[WARN] No reference FWI GeoTIFF found in fwi_dir.")
             print("       Will save in WGS84. Use --reference to specify one.")
             print("       Or download a recent FWI first:")
-            print("         python -m src.data_ops.download.fwi_wcs 20240901")
+            print("         python -m src.data_ops.download.download_fwi_grids 20240901")
             args.no_reproject = True
 
     # Initialize CDS client
