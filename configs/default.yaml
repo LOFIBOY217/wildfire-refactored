@@ -1,0 +1,84 @@
+# Wildfire Prediction Project - Default Configuration
+# ====================================================
+# All paths are relative to project root unless absolute.
+# Credentials should be set via environment variables, never in this file.
+
+paths:
+  project_root: "."
+  fwi_dir: "data/fwi_data"
+  ecmwf_dir: "data/ecmwf_reproject"
+  era5_dir: "data/era5_on_fwi_grid"
+  ciffc_csv: "data/ciffc.csv"
+  output_dir: "outputs"
+  checkpoint_dir: "checkpoints"
+
+# Credentials: resolved from environment variables
+# Set these before running download scripts:
+#   export ECMWF_EMAIL=your-email
+#   export ECMWF_KEY=your-api-key
+#   export CDS_API_KEY=your-cds-key
+credentials:
+  ecmwf_email: "${ECMWF_EMAIL}"
+  ecmwf_key: "${ECMWF_KEY}"
+  cds_api_key: "${CDS_API_KEY}"
+
+# Data processing parameters
+data:
+  nodata_threshold: -1.0e+30
+  fwi_max_clip: 150.0
+  dryness_offset: 5.0
+  dryness_scale: 15.0
+  ecmwf_vars:
+    - "2t"
+    - "2d"
+    - "tcw"
+    - "sm20"
+    - "st20"
+
+# Transformer model (7-day FWI forecast)
+model:
+  transformer:
+    d_model: 128
+    nhead: 4
+    num_encoder_layers: 2
+    num_decoder_layers: 2
+    dropout: 0.1
+    patch_size: 16
+
+  # S2S Transformer (14-46 day forecast)
+  s2s:
+    d_model: 512
+    nhead: 8
+    num_encoder_layers: 6
+    num_decoder_layers: 6
+    dropout: 0.1
+    patch_size: 16
+    lead_start: 14
+    lead_end: 46
+
+  # Logistic regression baseline
+  logistic:
+    max_iter: 500
+    class_weight: "balanced"
+
+# Training parameters
+training:
+  seed: 42
+  epochs: 50
+  batch_size: 64
+  lr: 0.0003
+  val_split: 0.2
+  in_days: 7
+  out_days: 7
+  forecast_horizon: 7
+  n_samples_per_day: 14285
+
+# Evaluation
+evaluation:
+  thresholds:
+    - 0.01
+    - 0.05
+    - 0.1
+    - 0.2
+    - 0.3
+    - 0.5

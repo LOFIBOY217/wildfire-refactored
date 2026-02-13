@@ -1,0 +1,20 @@
+name: wildfire
+channels:
+  - conda-forge
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+  - https://repo.anaconda.com/pkgs/msys2
+dependencies:
+  - python=3.11
+  - numpy
+  - rasterio
+  - jupyterlab
+  - pillow
+  - tqdm
+  - torchaudio
+  - torchvision
+  - tifffile
+  - pandas
+  - geopandas
+  - libpysal
+  - spreg

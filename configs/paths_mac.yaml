@@ -1,0 +1,11 @@
+# macOS-specific path overrides
+# Usage: python -m src.training.train_logistic --config configs/paths_mac.yaml
+
+paths:
+  project_root: "."
+  fwi_dir: "data/fwi_data"
+  ecmwf_dir: "data/ecmwf_reproject"
+  era5_dir: "data/era5_on_fwi_grid"
+  ciffc_csv: "data/ciffc.csv"
+  output_dir: "outputs"
+  checkpoint_dir: "checkpoints"
