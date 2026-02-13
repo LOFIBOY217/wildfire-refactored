@@ -2,10 +2,10 @@
 # Usage: python -m src.training.train_logistic --config configs/paths_windows.yaml
 
 paths:
-  project_root: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire"
-  fwi_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire\\data\\fwi_data"
-  ecmwf_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire\\data\\era5_on_fwi_grid"
-  era5_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire\\data\\era5_on_fwi_grid"
-  ciffc_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire\\data\\ciffc.csv"
-  output_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire\\outputs"
-  checkpoint_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire\\checkpoints"
+  project_root: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored"
+  fwi_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\fwi_data"
+  ecmwf_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_on_fwi_grid"
+  era5_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_on_fwi_grid"
+  ciffc_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ciffc.csv"
+  output_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\outputs"
+  checkpoint_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\checkpoints"
