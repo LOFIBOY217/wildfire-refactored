@@ -1,3 +1,7 @@
+# Base environment shared by all platforms.
+# Then apply one optional overlay:
+# - Local with pygrib: environments/environment.local-pygrib.yml
+# - HPC with cfgrib: environments/environment.hpc-cfgrib.yml
 name: wildfire
 channels:
   - conda-forge

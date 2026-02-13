@@ -1,0 +1,5 @@
+name: wildfire
+channels:
+  - conda-forge
+dependencies:
+  - pygrib

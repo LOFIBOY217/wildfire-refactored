@@ -1,0 +1,6 @@
+name: wildfire
+channels:
+  - conda-forge
+dependencies:
+  - cfgrib
+  - eccodes
