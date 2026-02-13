@@ -13,7 +13,7 @@ conda env create -f environment.yml
 Use this on machines where `pygrib` is available:
 
 ```bash
-conda env update -n wildfire -f environments/environment.local-pygrib.yml
+conda env update -n wildfore-r -f environments/environment.local-pygrib.yml
 ```
 
 ## HPC profile (without pygrib, using cfgrib)
@@ -21,7 +21,7 @@ conda env update -n wildfire -f environments/environment.local-pygrib.yml
 Use this on HPC where `pygrib` cannot be installed:
 
 ```bash
-conda env update -n wildfire -f environments/environment.hpc-cfgrib.yml
+conda env update -n wildfore-r -f environments/environment.hpc-cfgrib.yml
 ```
 
 ## Verify installed GRIB backend

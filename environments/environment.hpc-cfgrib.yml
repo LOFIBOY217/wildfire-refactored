@@ -1,4 +1,4 @@
-name: wildfire
+name: wildfore-r
 channels:
   - conda-forge
 dependencies:
