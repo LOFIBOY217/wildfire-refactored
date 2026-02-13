@@ -16,17 +16,17 @@ Output structure:
 
 Usage:
     # Process all files using config paths
-    python -m src.data.processing.era5_to_daily
+    python -m src.data_ops.processing.era5_to_daily
 
     # Single file
-    python -m src.data.processing.era5_to_daily --input era5_sfc_2025_09_12.grib
+    python -m src.data_ops.processing.era5_to_daily --input era5_sfc_2025_09_12.grib
 
     # Custom directories
-    python -m src.data.processing.era5_to_daily \\
+    python -m src.data_ops.processing.era5_to_daily \\
         --input-dir era5_observations --output-dir era5_daily_averages
 
     # With YAML config
-    python -m src.data.processing.era5_to_daily --config configs/paths_mac.yaml
+    python -m src.data_ops.processing.era5_to_daily --config configs/paths_mac.yaml
 """
 
 import sys
@@ -281,7 +281,7 @@ def main():
     print("=" * 70)
     print("These files are in WGS84 (EPSG:4326) at 0.25 deg resolution.")
     print("Resample them to match the FWI grid:")
-    print("  python -m src.data.processing.resample_to_fwi_grid --reference <fwi_ref.tif>")
+    print("  python -m src.data_ops.processing.resample_to_fwi_grid --reference <fwi_ref.tif>")
     print("=" * 70)
 
 

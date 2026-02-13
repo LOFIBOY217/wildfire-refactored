@@ -8,13 +8,13 @@ grid, and write single-band GeoTIFFs.
 
 Usage:
     # Single file
-    python -m src.data.processing.ecmwf_to_fwi --grib ecmwf_20240901.grib --ref fwi_reference.tif
+    python -m src.data_ops.processing.ecmwf_to_fwi --grib ecmwf_20240901.grib --ref fwi_reference.tif
 
     # Directory batch
-    python -m src.data.processing.ecmwf_to_fwi --grib ecmwf_data/ --ref fwi_reference.tif
+    python -m src.data_ops.processing.ecmwf_to_fwi --grib ecmwf_data/ --ref fwi_reference.tif
 
     # With config
-    python -m src.data.processing.ecmwf_to_fwi --grib ecmwf_data/ --config configs/paths_mac.yaml
+    python -m src.data_ops.processing.ecmwf_to_fwi --grib ecmwf_data/ --config configs/paths_mac.yaml
 """
 
 import os

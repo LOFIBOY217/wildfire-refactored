@@ -14,9 +14,9 @@ Refactored from: data/verify_data_alignment.py
   - Loads paths from YAML config via src.config
 
 Usage:
-  python -m src.data.validation.verify_alignment
-  python -m src.data.validation.verify_alignment --config configs/paths_mac.yaml
-  python -m src.data.validation.verify_alignment --fwi-dir /path/to/fwi --ecmwf-dir /path/to/ecmwf
+  python -m src.data_ops.validation.verify_alignment
+  python -m src.data_ops.validation.verify_alignment --config configs/paths_mac.yaml
+  python -m src.data_ops.validation.verify_alignment --fwi-dir /path/to/fwi --ecmwf-dir /path/to/ecmwf
 """
 
 import argparse

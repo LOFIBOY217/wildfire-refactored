@@ -10,9 +10,9 @@ Refactored from: data/check_FWI_consistency.py
   - Loads paths from YAML config via src.config
 
 Usage:
-  python -m src.data.validation.check_fwi_consistency
-  python -m src.data.validation.check_fwi_consistency --config configs/paths_mac.yaml
-  python -m src.data.validation.check_fwi_consistency --dir /path/to/tifs --ref /path/to/ref.tif
+  python -m src.data_ops.validation.check_fwi_consistency
+  python -m src.data_ops.validation.check_fwi_consistency --config configs/paths_mac.yaml
+  python -m src.data_ops.validation.check_fwi_consistency --dir /path/to/tifs --ref /path/to/ref.tif
 """
 
 import os

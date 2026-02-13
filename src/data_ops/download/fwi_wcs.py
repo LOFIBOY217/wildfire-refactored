@@ -3,9 +3,9 @@
 Download FWI data from CWFIS WCS (Web Coverage Service).
 
 Usage:
-    python -m src.data.download.fwi_wcs 20240901
-    python -m src.data.download.fwi_wcs 20240901 20241231
-    python -m src.data.download.fwi_wcs --config configs/custom.yaml 20240901
+    python -m src.data_ops.download.fwi_wcs 20240901
+    python -m src.data_ops.download.fwi_wcs 20240901 20241231
+    python -m src.data_ops.download.fwi_wcs --config configs/custom.yaml 20240901
 """
 
 import argparse

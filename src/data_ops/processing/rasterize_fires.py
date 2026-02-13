@@ -16,18 +16,18 @@ Three public functions:
     rasterize_fires_single(df, date, profile) -> [H, W] uint8
 
 Usage as a library:
-    from src.data.processing.rasterize_fires import (
+    from src.data_ops.processing.rasterize_fires import (
         load_ciffc_data, rasterize_fires_batch, rasterize_fires_single,
     )
 
 Usage as CLI (quick smoke-test):
-    python -m src.data.processing.rasterize_fires \\
+    python -m src.data_ops.processing.rasterize_fires \\
         --ciffc data/ciffc.csv \\
         --reference data/fwi_data/fwi_20250101.tif \\
         --date 2025-08-01
 
     # With config
-    python -m src.data.processing.rasterize_fires \\
+    python -m src.data_ops.processing.rasterize_fires \\
         --config configs/default.yaml --date 2025-08-01
 """
 

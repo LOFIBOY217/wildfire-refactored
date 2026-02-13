@@ -1,0 +1,42 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Local data and artifacts
+data/raw/
+data/interim/
+data/processed/
+artifacts/
+
+# Virtual envs
+.venv/
+venv/
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Local data and artifacts
+data/raw/
+data/interim/
+data/processed/
+artifacts/
+
+# Virtual envs
+.venv/
+venv/

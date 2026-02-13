@@ -12,12 +12,12 @@ Replaces Makefile targets:
 - FBP fuel types
 
 Usage:
-    python -m src.data.download.wildfire_data nfdb
-    python -m src.data.download.wildfire_data fwi-live 20250906
-    python -m src.data.download.wildfire_data fwi-batch 20250904 20250905 20250906
-    python -m src.data.download.wildfire_data fwi-archive 20250906
-    python -m src.data.download.wildfire_data nbac
-    python -m src.data.download.wildfire_data fbp
+    python -m src.data_ops.download.wildfire_data nfdb
+    python -m src.data_ops.download.wildfire_data fwi-live 20250906
+    python -m src.data_ops.download.wildfire_data fwi-batch 20250904 20250905 20250906
+    python -m src.data_ops.download.wildfire_data fwi-archive 20250906
+    python -m src.data_ops.download.wildfire_data nbac
+    python -m src.data_ops.download.wildfire_data fbp
 """
 
 import argparse

@@ -11,20 +11,20 @@ Output directory structure:
 
 Usage:
     # Single file
-    python -m src.data.processing.ecmwf_to_fwi_batch \\
+    python -m src.data_ops.processing.ecmwf_to_fwi_batch \\
         --grib_path ecmwf/forecast.grib --fwi_ref fwi/reference.tif
 
     # Batch over date range
-    python -m src.data.processing.ecmwf_to_fwi_batch \\
+    python -m src.data_ops.processing.ecmwf_to_fwi_batch \\
         --grib_dir ecmwf/ --fwi_ref fwi/reference.tif \\
         --start_date 2025-01-01 --end_date 2025-12-31
 
     # Validate outputs
-    python -m src.data.processing.ecmwf_to_fwi_batch \\
+    python -m src.data_ops.processing.ecmwf_to_fwi_batch \\
         --validate --fwi_ref fwi/reference.tif --check_file output/tcw.tif
 
     # With YAML config
-    python -m src.data.processing.ecmwf_to_fwi_batch \\
+    python -m src.data_ops.processing.ecmwf_to_fwi_batch \\
         --grib_path ecmwf/forecast.grib --config configs/paths_mac.yaml
 """
 

@@ -13,9 +13,9 @@ Temporal:  Daily average (00-23 UTC)
 Spatial:   0.25 x 0.25 deg (will need resampling to FWI grid)
 
 Usage:
-    Single date:    python -m src.data.download.era5_observations 2025-09-12
-    Date range:     python -m src.data.download.era5_observations 2025-09-12 2025-10-10
-    Batch mode:     python -m src.data.download.era5_observations --batch
+    Single date:    python -m src.data_ops.download.era5_observations 2025-09-12
+    Date range:     python -m src.data_ops.download.era5_observations 2025-09-12 2025-10-10
+    Batch mode:     python -m src.data_ops.download.era5_observations --batch
 """
 
 import argparse

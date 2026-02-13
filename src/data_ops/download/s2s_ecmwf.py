@@ -6,9 +6,9 @@ Defaults: params=2t/2d/sm20/st20/tcw, step=336-1104 by 24h, control (cf).
 Merges the single-date and batch download scripts into one unified CLI.
 
 Usage:
-    Single date:    python -m src.data.download.s2s_ecmwf 2025-01-26
-    Date range:     python -m src.data.download.s2s_ecmwf 2025-01-26 2025-11-15
-    Batch mode:     python -m src.data.download.s2s_ecmwf --batch
+    Single date:    python -m src.data_ops.download.s2s_ecmwf 2025-01-26
+    Date range:     python -m src.data_ops.download.s2s_ecmwf 2025-01-26 2025-11-15
+    Batch mode:     python -m src.data_ops.download.s2s_ecmwf --batch
 """
 
 import argparse

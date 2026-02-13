@@ -14,9 +14,9 @@ Refactored from: test_scripts/check_data.py
   - Added --config argument
 
 Usage:
-  python -m src.data.validation.check_fwi_health
-  python -m src.data.validation.check_fwi_health --config configs/paths_mac.yaml
-  python -m src.data.validation.check_fwi_health --dir /path/to/fwi_data
+  python -m src.data_ops.validation.check_fwi_health
+  python -m src.data_ops.validation.check_fwi_health --config configs/paths_mac.yaml
+  python -m src.data_ops.validation.check_fwi_health --dir /path/to/fwi_data
 """
 
 import os

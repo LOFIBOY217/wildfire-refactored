@@ -30,7 +30,7 @@ import rasterio
 from src.config import load_config, get_path, add_config_argument
 from src.utils.date_utils import extract_date_from_filename
 from src.utils.raster_io import read_singleband_stack
-from src.data.processing.rasterize_fires import load_ciffc_data, rasterize_fires_batch
+from src.data_ops.processing.rasterize_fires import load_ciffc_data, rasterize_fires_batch
 from src.models.logistic_baseline import compute_features, sample_training_data, build_logistic_model
 
 

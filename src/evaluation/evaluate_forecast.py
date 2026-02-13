@@ -21,7 +21,7 @@ import pandas as pd
 import rasterio
 
 from src.config import load_config, get_path, add_config_argument
-from src.data.processing.rasterize_fires import load_ciffc_data, rasterize_fires_single
+from src.data_ops.processing.rasterize_fires import load_ciffc_data, rasterize_fires_single
 from src.evaluation.metrics import compute_confusion_metrics
 from src.evaluation.visualize import (
     plot_metrics_vs_threshold,

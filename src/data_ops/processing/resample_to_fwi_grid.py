@@ -15,16 +15,16 @@ Output structure:
 
 Usage:
     # Basic usage with reference
-    python -m src.data.processing.resample_to_fwi_grid --reference fwi/fwi_20250912.tif
+    python -m src.data_ops.processing.resample_to_fwi_grid --reference fwi/fwi_20250912.tif
 
     # Specify resampling method
-    python -m src.data.processing.resample_to_fwi_grid --reference fwi/ref.tif --method cubic
+    python -m src.data_ops.processing.resample_to_fwi_grid --reference fwi/ref.tif --method cubic
 
     # Process single variable
-    python -m src.data.processing.resample_to_fwi_grid --reference fwi/ref.tif --variable 2t
+    python -m src.data_ops.processing.resample_to_fwi_grid --reference fwi/ref.tif --variable 2t
 
     # With YAML config (reference auto-detected from fwi_dir)
-    python -m src.data.processing.resample_to_fwi_grid --config configs/paths_mac.yaml
+    python -m src.data_ops.processing.resample_to_fwi_grid --config configs/paths_mac.yaml
 """
 
 import sys
@@ -270,7 +270,7 @@ def main():
     print("NEXT STEP: Verify alignment")
     print("=" * 70)
     print("Run verification to ensure perfect alignment:")
-    print(f"  python -m src.data.validation.verify_alignment \\")
+    print(f"  python -m src.data_ops.validation.verify_alignment \\")
     print(f"    --fwi-dir <fwi_dir> \\")
     print(f"    --ecmwf-dir {output_dir}")
     print("=" * 70)

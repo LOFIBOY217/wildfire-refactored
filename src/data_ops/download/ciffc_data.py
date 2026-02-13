@@ -13,10 +13,10 @@ Data sources (tried in order):
 NASA FIRMS is also supported but requires a separate API key registration.
 
 Usage:
-    python -m src.data.download.ciffc_data
-    python -m src.data.download.ciffc_data --start 2025-05-01 --end 2025-10-31
-    python -m src.data.download.ciffc_data --sample
-    python -m src.data.download.ciffc_data --config configs/custom.yaml
+    python -m src.data_ops.download.ciffc_data
+    python -m src.data_ops.download.ciffc_data --start 2025-05-01 --end 2025-10-31
+    python -m src.data_ops.download.ciffc_data --sample
+    python -m src.data_ops.download.ciffc_data --config configs/custom.yaml
 """
 
 import argparse
@@ -453,7 +453,7 @@ def main(argv=None):
     print("All download methods failed")
     print("=" * 60)
     print("\nTo generate sample data for testing, re-run with --sample flag:")
-    print(f"  python -m src.data.download.ciffc_data --sample "
+    print(f"  python -m src.data_ops.download.ciffc_data --sample "
           f"--start {start_date} --end {end_date}")
     print("\nOtherwise, try:")
     print("1. Check your network connection")

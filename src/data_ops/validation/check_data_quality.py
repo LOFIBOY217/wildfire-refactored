@@ -11,9 +11,9 @@ Refactored from: data/check_data_quality.py
   - Kept as mostly standalone (no heavy src.utils dependencies)
 
 Usage:
-  python -m src.data.validation.check_data_quality data/ciffc.csv
-  python -m src.data.validation.check_data_quality --config configs/default.yaml
-  python -m src.data.validation.check_data_quality  # auto-detects file
+  python -m src.data_ops.validation.check_data_quality data/ciffc.csv
+  python -m src.data_ops.validation.check_data_quality --config configs/default.yaml
+  python -m src.data_ops.validation.check_data_quality  # auto-detects file
 """
 
 import pandas as pd
@@ -321,7 +321,7 @@ def main():
 
             if filepath is None:
                 print("No data file found.")
-                print("Usage: python -m src.data.validation.check_data_quality <data_file_path>")
+                print("Usage: python -m src.data_ops.validation.check_data_quality <data_file_path>")
                 print(f"\nSupported filenames: {', '.join(default_files)}")
                 sys.exit(1)
 

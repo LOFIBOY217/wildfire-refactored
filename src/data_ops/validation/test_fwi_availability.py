@@ -6,8 +6,8 @@ Sends lightweight requests (100x100 pixels) to check which dates have data
 on the CWFIS WCS service, without downloading full-resolution files.
 
 Usage:
-    python -m src.data.validation.test_fwi_availability 20240901 20241231
-    python -m src.data.validation.test_fwi_availability 20250501 20251031 --config configs/default.yaml
+    python -m src.data_ops.validation.test_fwi_availability 20240901 20241231
+    python -m src.data_ops.validation.test_fwi_availability 20250501 20251031 --config configs/default.yaml
 """
 
 import sys
