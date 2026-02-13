@@ -26,14 +26,20 @@ WCS_BASE = (
 
 def test_date(date_str):
     """Return (date_str, True/False)."""
-    url = f"{WCS_BASE}&coverage=public:fwi{date_str}"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "FWI-Test/1.0"})
-        resp = urllib.request.urlopen(req, timeout=15)
-        ok = len(resp.read()) > 1000
-        return date_str, ok
-    except Exception:
-        return date_str, False
+    time_value = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+    urls = [
+        f"{WCS_BASE}&coverage=public:fwi&time={time_value}",
+        f"{WCS_BASE}&coverage=public:fwi{date_str}",
+    ]
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "FWI-Test/1.0"})
+            resp = urllib.request.urlopen(req, timeout=15)
+            if len(resp.read()) > 1000:
+                return date_str, True
+        except Exception:
+            pass
+    return date_str, False
 
 
 def generate_dates(start_str, end_str):

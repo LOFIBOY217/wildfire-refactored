@@ -29,13 +29,20 @@ WCS_BASE = (
 
 def test_date(date_str):
     """Test if FWI data exists for a single date (lightweight 100x100 request)."""
-    url = f"{WCS_BASE}&coverage=public:fwi{date_str}"
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'FWI-Test/1.0'})
-        resp = urllib.request.urlopen(req, timeout=10)
-        return len(resp.read()) > 1000
-    except Exception:
-        return False
+    time_value = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+    urls = [
+        f"{WCS_BASE}&coverage=public:fwi&time={time_value}",
+        f"{WCS_BASE}&coverage=public:fwi{date_str}",
+    ]
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'FWI-Test/1.0'})
+            resp = urllib.request.urlopen(req, timeout=10)
+            if len(resp.read()) > 1000:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def test_range(start_date, end_date):

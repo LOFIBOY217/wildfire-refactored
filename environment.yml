@@ -10,6 +10,7 @@ channels:
   - https://repo.anaconda.com/pkgs/msys2
 dependencies:
   - python=3.11
+  - pyyaml
   - numpy
   - rasterio
   - jupyterlab

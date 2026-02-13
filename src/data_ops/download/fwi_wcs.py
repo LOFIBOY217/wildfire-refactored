@@ -39,6 +39,24 @@ class FWIDownloader:
             "&width=2709&height=2281"
         )
 
+    @staticmethod
+    def _to_time_value(date_str):
+        """Convert YYYYMMDD -> YYYY-MM-DD for WCS time dimension."""
+        return datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+
+    def _build_urls(self, date_str):
+        """
+        Build candidate URLs for one date.
+
+        Preferred (new): coverage=public:fwi&time=YYYY-MM-DD
+        Fallback (legacy): coverage=public:fwiYYYYMMDD
+        """
+        time_value = self._to_time_value(date_str)
+        return [
+            f"{self.wcs_base}&coverage=public:fwi&time={time_value}",
+            f"{self.wcs_base}&coverage=public:fwi{date_str}",
+        ]
+
     def download_date(self, date_str):
         """
         Download FWI for single date.
@@ -55,39 +73,50 @@ class FWIDownloader:
             print(f"[SKIP] {date_str}")
             return True
 
-        # Construct URL
-        url = f"{self.wcs_base}&coverage=public:fwi{date_str}"
+        urls = self._build_urls(date_str)
+        print(f"[DOWNLOADING] {date_str}...", end=" ", flush=True)
 
-        try:
-            print(f"[DOWNLOADING] {date_str}...", end=" ", flush=True)
+        for idx, url in enumerate(urls):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={'User-Agent': 'FWI-Downloader/1.0'},
+                )
 
-            req = urllib.request.Request(
-                url,
-                headers={'User-Agent': 'FWI-Downloader/1.0'},
-            )
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    data = response.read()
 
-            with urllib.request.urlopen(req, timeout=30) as response:
-                data = response.read()
-
-                # Check minimum size
                 if len(data) < 1000:
+                    # Try next URL variant if response looks like an error payload.
+                    if idx < len(urls) - 1:
+                        continue
                     print("[FAIL] (too small)")
                     return False
 
-                # Save
                 with open(output_path, 'wb') as f:
                     f.write(data)
 
                 size_mb = len(data) / 1024 / 1024
-                print(f"[OK] {size_mb:.1f}MB")
+                if idx == 0:
+                    print(f"[OK] {size_mb:.1f}MB")
+                else:
+                    print(f"[OK] {size_mb:.1f}MB (legacy endpoint)")
                 return True
 
-        except urllib.error.HTTPError as e:
-            print(f"[FAIL] ({e.code})")
-            return False
-        except Exception as e:
-            print(f"[FAIL] ({e})")
-            return False
+            except urllib.error.HTTPError:
+                # Try fallback URL if available.
+                if idx < len(urls) - 1:
+                    continue
+                print("[FAIL] (http error)")
+                return False
+            except Exception as e:
+                if idx < len(urls) - 1:
+                    continue
+                print(f"[FAIL] ({e})")
+                return False
+
+        print("[FAIL]")
+        return False
 
     def download_range(self, start_date, end_date):
         """
