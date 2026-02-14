@@ -26,7 +26,16 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from src.config import load_config, get_path, add_config_argument
+try:
+    from src.config import load_config, get_path, add_config_argument
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "src" / "config.py").exists():
+            sys.path.insert(0, str(parent))
+            break
+    from src.config import load_config, get_path, add_config_argument
 
 
 # ------------------------------------------------------------------ #

@@ -27,7 +27,16 @@ from datetime import date, timedelta
 import numpy as np
 import rasterio
 
-from src.config import load_config, get_path, add_config_argument
+try:
+    from src.config import load_config, get_path, add_config_argument
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "src" / "config.py").exists():
+            sys.path.insert(0, str(parent))
+            break
+    from src.config import load_config, get_path, add_config_argument
 from src.utils.date_utils import extract_date_from_filename
 from src.utils.raster_io import read_singleband_stack
 from src.data_ops.processing.rasterize_fires import load_ciffc_data, rasterize_fires_batch

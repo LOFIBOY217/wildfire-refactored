@@ -16,7 +16,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config import load_config, get_path, add_config_argument
+try:
+    from src.config import load_config, get_path, add_config_argument
+except ModuleNotFoundError:
+    # Allow running from subdirectories like src/data_ops/download.
+    PROJECT_ROOT = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from src.config import load_config, get_path, add_config_argument
 
 
 # ------------------------------------------------------------------ #

@@ -19,7 +19,16 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from src.config import load_config, get_path, add_config_argument
+try:
+    from src.config import load_config, get_path, add_config_argument
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "src" / "config.py").exists():
+            sys.path.insert(0, str(parent))
+            break
+    from src.config import load_config, get_path, add_config_argument
 from src.utils.seed import set_seed
 from src.utils.date_utils import parse_date_arg
 from src.models.s2s_transformer import S2STransformer

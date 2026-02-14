@@ -25,7 +25,16 @@ from pathlib import Path
 from datetime import timedelta
 from collections import defaultdict
 
-from src.config import load_config, get_path, add_config_argument
+try:
+    from src.config import load_config, get_path, add_config_argument
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "src" / "config.py").exists():
+            sys.path.insert(0, str(parent))
+            break
+    from src.config import load_config, get_path, add_config_argument
 from src.utils.date_utils import extract_date_from_filename
 from src.utils.raster_io import get_raster_info
 

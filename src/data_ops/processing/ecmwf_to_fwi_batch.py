@@ -42,7 +42,16 @@ from rasterio.warp import reproject, Resampling
 from rasterio.transform import Affine
 from rasterio.crs import CRS
 
-from src.config import load_config, get_path, add_config_argument
+try:
+    from src.config import load_config, get_path, add_config_argument
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "src" / "config.py").exists():
+            sys.path.insert(0, str(parent))
+            break
+    from src.config import load_config, get_path, add_config_argument
 from src.utils.raster_io import write_geotiff
 
 # cfgrib / xarray are required for this module
