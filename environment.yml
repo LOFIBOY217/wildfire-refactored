@@ -12,6 +12,8 @@ dependencies:
   - python=3.11
   - pyyaml
   - numpy
+  - netCDF4
+  - cdsapi
   - rasterio
   - jupyterlab
   - pillow
