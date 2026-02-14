@@ -9,7 +9,7 @@ Consolidates duplicated date functions from:
 - simple_logistic_7day.py
 - evaluate_with_confusion_matrix.py
 - verify_data_alignment.py
-- download_era5_observations.py
+- download_ecmwf_reanalysis_observations.py
 """
 
 import os

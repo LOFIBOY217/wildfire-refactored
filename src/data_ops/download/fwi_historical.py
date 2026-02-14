@@ -62,6 +62,7 @@ CANADA_AREA = [84, -142, 41, -52]
 
 # All days in a month template
 ALL_DAYS = [f"{d:02d}" for d in range(1, 32)]
+DEFAULT_CDS_API_KEY = "d952a10c-f9c0-4ff3-92e1-aac8756dd123"
 
 
 def download_fwi_year_month(client, year, month, output_dir, area=None):
@@ -393,6 +394,8 @@ Examples:
         client_kwargs['key'] = args.cds_key
     elif os.environ.get('CDS_API_KEY'):
         client_kwargs['key'] = os.environ['CDS_API_KEY']
+    else:
+        client_kwargs['key'] = DEFAULT_CDS_API_KEY
 
     try:
         client = cdsapi.Client(**client_kwargs)

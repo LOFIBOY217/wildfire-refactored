@@ -13,15 +13,16 @@ Temporal:  Daily average (00-23 UTC)
 Spatial:   0.25 x 0.25 deg (will need resampling to FWI grid)
 
 Usage:
-    Single date:    python -m src.data_ops.download.era5_observations 2025-09-12
-    Date range:     python -m src.data_ops.download.era5_observations 2025-09-12 2025-10-10
-    Batch mode:     python -m src.data_ops.download.era5_observations --batch
+    Single date:    python -m src.data_ops.download.download_ecmwf_reanalysis_observations 2025-09-12
+    Date range:     python -m src.data_ops.download.download_ecmwf_reanalysis_observations 2025-09-12 2025-10-10
+    Batch mode:     python -m src.data_ops.download.download_ecmwf_reanalysis_observations --batch
 """
 
 import argparse
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -47,7 +48,7 @@ except ModuleNotFoundError:
 DEFAULT_AREA = [83, -141, 41, -52]
 
 
-def download_single_date(client, date_str, outdir, area=None):
+def download_single_date(client, date_str, outdir, area=None, verbose=True):
     """
     Download ERA5 reanalysis data for a single date.
 
@@ -66,7 +67,8 @@ def download_single_date(client, date_str, outdir, area=None):
 
     # Skip if already exists
     if target.exists() and target.stat().st_size > 0:
-        print(f"[SKIP] {date_str} - file already exists: {target}")
+        if verbose:
+            print(f"[SKIP] {date_str} - file already exists: {target}")
         return True
 
     if area is None:
@@ -101,8 +103,9 @@ def download_single_date(client, date_str, outdir, area=None):
     }
 
     try:
-        print(f"[DOWNLOADING] {date_str} -> {target}")
-        print(f"  Area: N={area[0]}, W={area[1]}, S={area[2]}, E={area[3]}")
+        if verbose:
+            print(f"[DOWNLOADING] {date_str} -> {target}")
+            print(f"  Area: N={area[0]}, W={area[1]}, S={area[2]}, E={area[3]}")
 
         client.retrieve(
             'reanalysis-era5-single-levels',
@@ -111,22 +114,55 @@ def download_single_date(client, date_str, outdir, area=None):
         )
 
         if target.exists() and target.stat().st_size > 0:
-            print(f"[SUCCESS] {date_str} - {target.stat().st_size / 1e6:.1f} MB")
+            if verbose:
+                print(f"[SUCCESS] {date_str} - {target.stat().st_size / 1e6:.1f} MB")
             return True
         else:
-            print(f"[ERROR] {date_str} - file missing or empty", file=sys.stderr)
+            if verbose:
+                print(f"[ERROR] {date_str} - file missing or empty", file=sys.stderr)
             return False
 
     except KeyboardInterrupt:
-        print(f"\n[CANCELLED] {date_str} - partial file: {target}")
+        if verbose:
+            print(f"\n[CANCELLED] {date_str} - partial file: {target}")
         if target.exists():
             target.unlink()  # Delete partial file
         raise
     except Exception as e:
-        print(f"[ERROR] {date_str} - {e}", file=sys.stderr)
+        if verbose:
+            print(f"[ERROR] {date_str} - {e}", file=sys.stderr)
         if target.exists():
             target.unlink()  # Delete partial file
         return False
+
+
+def _make_cds_client(cds_api_key):
+    return cdsapi.Client(
+        url="https://cds.climate.copernicus.eu/api",
+        key=cds_api_key,
+    )
+
+
+def download_with_retries(date_str, outdir, area, retries, retry_wait, cds_api_key, client=None, verbose=True):
+    """
+    Download one date with retries.
+
+    Returns:
+        tuple[str, bool]: (date_str, success)
+    """
+    local_client = client
+    if local_client is None:
+        local_client = _make_cds_client(cds_api_key)
+
+    for attempt in range(1, retries + 1):
+        ok = download_single_date(local_client, date_str, outdir, area=area, verbose=verbose)
+        if ok:
+            return date_str, True
+        if attempt < retries:
+            if verbose:
+                print(f"[RETRY] {date_str} attempt {attempt + 1}/{retries} after {retry_wait}s")
+            time.sleep(max(0, retry_wait))
+    return date_str, False
 
 
 # ------------------------------------------------------------------ #
@@ -180,6 +216,14 @@ def _build_parser():
         "--wait", type=int, default=2,
         help="Seconds to wait between requests (default: 2)",
     )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Parallel workers for date downloads (default: 1, sequential)",
+    )
+    parser.add_argument(
+        "--retries", type=int, default=2,
+        help="Max attempts per date (default: 2)",
+    )
     return parser
 
 
@@ -209,12 +253,6 @@ def main(argv=None):
     outdir = Path(get_path(cfg, "era5_dir"))
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # ---- Create CDS API client ----
-    client = cdsapi.Client(
-        url="https://cds.climate.copernicus.eu/api",
-        key=cds_api_key,
-    )
-
     # ---- Determine date list ----
     if args.batch:
         dates = generate_date_list(args.batch_start, args.batch_end)
@@ -242,6 +280,8 @@ def main(argv=None):
     print("  Each download includes 24 hourly timesteps (daily data)")
     print("  Process with: cfgrib + xarray to extract daily averages")
     print("  Area: Canada bounding box [83N, -141W, 41N, -52W]")
+    print(f"  Workers: {max(1, args.workers)}")
+    print(f"  Retries per date: {max(1, args.retries)}")
     print("=" * 70)
     print()
 
@@ -250,24 +290,76 @@ def main(argv=None):
     fail_count = 0
     failed_dates = []
 
+    workers = max(1, args.workers)
+    retries = max(1, args.retries)
+    area = DEFAULT_AREA
+
     try:
-        for i, date in enumerate(dates, 1):
-            print(f"\n{'='*70}")
-            print(f"Progress: {i}/{len(dates)} ({i/len(dates)*100:.1f}%)")
-            print(f"{'='*70}")
+        if workers == 1:
+            client = _make_cds_client(cds_api_key)
+            for i, date in enumerate(dates, 1):
+                print(f"\n{'='*70}")
+                print(f"Progress: {i}/{len(dates)} ({i/len(dates)*100:.1f}%)")
+                print(f"{'='*70}")
 
-            success = download_single_date(client, date, outdir)
+                _, success = download_with_retries(
+                    date,
+                    outdir,
+                    area=area,
+                    retries=retries,
+                    retry_wait=args.wait,
+                    cds_api_key=cds_api_key,
+                    client=client,
+                    verbose=True,
+                )
 
-            if success:
-                success_count += 1
-            else:
-                fail_count += 1
-                failed_dates.append(date)
+                if success:
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    failed_dates.append(date)
 
-            # Rate limiting
-            if i < len(dates):
-                print(f"Waiting {args.wait}s before next request...")
-                time.sleep(args.wait)
+                # Rate limiting between sequential requests
+                if i < len(dates):
+                    print(f"Waiting {args.wait}s before next request...")
+                    time.sleep(args.wait)
+        else:
+            print(f"[PARALLEL MODE] workers={workers}, retries={retries}")
+            done = 0
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(
+                        download_with_retries,
+                        date,
+                        outdir,
+                        area,
+                        retries,
+                        args.wait,
+                        cds_api_key,
+                        None,
+                        False,
+                    ): date
+                    for date in dates
+                }
+                for future in as_completed(futures):
+                    try:
+                        date, success = future.result()
+                    except Exception:
+                        date = futures[future]
+                        success = False
+                    done += 1
+                    if success:
+                        success_count += 1
+                    else:
+                        fail_count += 1
+                        failed_dates.append(date)
+                        print(f"[FAIL] {date}")
+
+                    if done % 10 == 0 or done == len(dates):
+                        print(
+                            f"Progress: {done}/{len(dates)} ({done/len(dates)*100:.1f}%) "
+                            f"OK={success_count} FAIL={fail_count}"
+                        )
 
     except KeyboardInterrupt:
         print("\n\n[INTERRUPTED] Download cancelled by user")
