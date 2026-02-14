@@ -19,12 +19,16 @@ import argparse
 import csv
 import os
 import re
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import xarray as xr
 import cfgrib
+
+# Silence cfgrib/xarray future-warning noise during validation output.
+warnings.filterwarnings("ignore", category=FutureWarning, module=r"cfgrib\..*")
 
 try:
     from src.config import load_config, get_path, add_config_argument
