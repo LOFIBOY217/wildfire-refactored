@@ -46,6 +46,7 @@ except ModuleNotFoundError:
 
 # Default bounding box for Canada: [north, west, south, east]
 DEFAULT_AREA = [83, -141, 41, -52]
+DEFAULT_CDS_API_KEY = "d952a10c-f9c0-4ff3-92e1-aac8756dd123"
 
 
 def download_single_date(client, date_str, outdir, area=None, verbose=True):
@@ -238,6 +239,8 @@ def main(argv=None):
         "CDS_API_KEY",
         cfg.get("credentials", {}).get("cds_api_key", ""),
     )
+    if not cds_api_key:
+        cds_api_key = DEFAULT_CDS_API_KEY
 
     if not cds_api_key:
         print(
