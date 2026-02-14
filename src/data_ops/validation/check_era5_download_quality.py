@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
+import cfgrib
 
 try:
     from src.config import load_config, get_path, add_config_argument
@@ -113,7 +114,7 @@ def _check_file(path: Path, expected_vars):
         return result
 
     try:
-        datasets = xr.open_datasets(path, engine="cfgrib")
+        datasets = cfgrib.open_datasets(str(path))
         found = {}
         for ds in datasets:
             for v in ds.data_vars:
