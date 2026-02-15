@@ -9,7 +9,7 @@ paths:
   ecmwf_dir: "data/ecmwf_observation"
   era5_dir: "data/era5_on_fwi_grid"
   observation_dir: "data/ecmwf_observation"
-  ciffc_csv: "data/ciffc.csv"
+  ciffc_csv: "data/ciffc/ciffc_logistic_20230505_20250821.csv"
   output_dir: "outputs"
   checkpoint_dir: "checkpoints"
 

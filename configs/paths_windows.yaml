@@ -7,6 +7,6 @@ paths:
   ecmwf_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ecmwf_observation"
   era5_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_on_fwi_grid"
   observation_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ecmwf_observation"
-  ciffc_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ciffc.csv"
+  ciffc_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ciffc\\ciffc_logistic_20230505_20250821.csv"
   output_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\outputs"
   checkpoint_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\checkpoints"
