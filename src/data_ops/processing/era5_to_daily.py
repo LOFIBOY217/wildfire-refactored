@@ -211,7 +211,7 @@ def main():
     )
     parser.add_argument(
         "--output-dir", type=str, default=None,
-        help="Output directory for daily GeoTIFFs (default: 'era5_daily_averages')",
+        help="Output directory for daily GeoTIFFs (default: 'data/era5_daily_averages')",
     )
 
     args = parser.parse_args()
@@ -233,7 +233,7 @@ def main():
     output_dir_str = args.output_dir
     if output_dir_str is None:
         from src.config import PROJECT_ROOT
-        output_dir_str = str(PROJECT_ROOT / "era5_daily_averages")
+        output_dir_str = str(PROJECT_ROOT / "data" / "era5_daily_averages")
     output_dir = Path(output_dir_str)
     output_dir.mkdir(parents=True, exist_ok=True)
 
