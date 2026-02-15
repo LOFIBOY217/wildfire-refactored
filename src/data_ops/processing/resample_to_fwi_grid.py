@@ -9,8 +9,8 @@ Steps:
 
 Output structure:
     <output_dir>/
-        2t_20250912.tif   (aligned to FWI)
-        2d_20250912.tif
+        2t/2t_20250912.tif   (aligned to FWI)
+        2d/2d_20250912.tif
         ...
 
 Usage:
@@ -31,6 +31,8 @@ import sys
 import os
 import glob
 import argparse
+import re
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -53,6 +55,19 @@ from src.utils.raster_io import get_raster_info
 # ---------------------------------------------------------------------------
 # Grid helpers
 # ---------------------------------------------------------------------------
+
+DATE_RE = re.compile(r'(20\d{6})')
+
+
+def _extract_date_from_name(path_obj):
+    """Extract YYYYMMDD date token from filename."""
+    m = DATE_RE.search(path_obj.name)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%Y%m%d").date()
+    except ValueError:
+        return None
 
 def get_fwi_grid_params(reference_tif):
     """
@@ -166,11 +181,19 @@ def main():
     )
     parser.add_argument(
         '--input-dir', '-i', type=str, default=None,
-        help='Input directory with ERA5 GeoTIFFs (default: era5_daily_averages)',
+        help='Input directory with ERA5 GeoTIFFs (default: data/era5_daily_averages)',
+    )
+    parser.add_argument(
+        '--start-date', type=str, default=None,
+        help='Optional start date YYYYMMDD or YYYY-MM-DD for filtering input files',
+    )
+    parser.add_argument(
+        '--end-date', type=str, default=None,
+        help='Optional end date YYYYMMDD or YYYY-MM-DD for filtering input files',
     )
     parser.add_argument(
         '--output-dir', '-o', type=str, default=None,
-        help='Output directory (default: from config era5_dir or era5_on_fwi_grid)',
+        help='Output root directory (default: from config observation_dir or data/ecmwf_observation)',
     )
 
     args = parser.parse_args()
@@ -200,15 +223,20 @@ def main():
         input_dir = Path(args.input_dir)
     else:
         from src.config import PROJECT_ROOT
-        input_dir = PROJECT_ROOT / "era5_daily_averages"
+        input_dir = PROJECT_ROOT / "data" / "era5_daily_averages"
 
     # Resolve output directory
     if args.output_dir is not None:
-        output_dir = Path(args.output_dir)
+        output_root = Path(args.output_dir)
     else:
-        output_dir = Path(get_path(cfg, 'era5_dir'))
+        paths_cfg = cfg.get('paths', {})
+        if 'observation_dir' in paths_cfg:
+            output_root = Path(get_path(cfg, 'observation_dir'))
+        else:
+            from src.config import PROJECT_ROOT
+            output_root = PROJECT_ROOT / "data" / "ecmwf_observation"
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_root.mkdir(parents=True, exist_ok=True)
 
     # Get FWI grid parameters
     print("=" * 70)
@@ -224,6 +252,7 @@ def main():
     print(f"  Size:       {fwi_params['width']} x {fwi_params['height']} pixels")
     print(f"  Bounds:     {fwi_params['bounds']}")
     print(f"\nResampling method: {args.method}")
+    print(f"Output root: {output_root}")
     print("=" * 70)
 
     # Find input files
@@ -235,6 +264,30 @@ def main():
         print(f"\nProcessing all variables")
 
     input_files = sorted(input_dir.glob(pattern))
+
+    # Optional date-range filtering based on YYYYMMDD in filename.
+    start_date = None
+    end_date = None
+    if args.start_date:
+        start_date = datetime.strptime(args.start_date.replace('-', ''), "%Y%m%d").date()
+    if args.end_date:
+        end_date = datetime.strptime(args.end_date.replace('-', ''), "%Y%m%d").date()
+    if start_date or end_date:
+        filtered = []
+        for f in input_files:
+            d = _extract_date_from_name(f)
+            if d is None:
+                continue
+            if start_date and d < start_date:
+                continue
+            if end_date and d > end_date:
+                continue
+            filtered.append(f)
+        input_files = filtered
+        print(
+            f"Date filter active: "
+            f"{start_date if start_date else '-inf'} to {end_date if end_date else '+inf'}"
+        )
 
     if not input_files:
         print(f"\nError: No files found matching {pattern} in {input_dir}")
@@ -250,7 +303,10 @@ def main():
         print(f"\nProgress: {i}/{len(input_files)} ({i/len(input_files)*100:.1f}%)")
         print(f"Processing: {src_file.name}")
 
-        dst_file = output_dir / src_file.name
+        var_name = src_file.stem.split("_")[0]
+        var_dir = output_root / var_name
+        var_dir.mkdir(parents=True, exist_ok=True)
+        dst_file = var_dir / src_file.name
 
         # Skip existing
         if dst_file.exists():
@@ -273,7 +329,7 @@ def main():
     print(f"Total files:  {len(input_files)}")
     print(f"Successful:   {success_count}")
     print(f"Failed:       {fail_count}")
-    print(f"\nOutput: {output_dir}")
+    print(f"\nOutput root: {output_root}")
 
     print("\n" + "=" * 70)
     print("NEXT STEP: Verify alignment")

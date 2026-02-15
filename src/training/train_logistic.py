@@ -53,7 +53,11 @@ def main():
 
     cfg = load_config(args.config)
     fwi_dir = get_path(cfg, 'fwi_dir')
-    ecmwf_dir = get_path(cfg, 'era5_dir')
+    paths_cfg = cfg.get('paths', {})
+    if 'observation_dir' in paths_cfg:
+        observation_root = get_path(cfg, 'observation_dir')
+    else:
+        observation_root = get_path(cfg, 'ecmwf_dir')
     ciffc_csv = get_path(cfg, 'ciffc_csv')
     output_dir = os.path.join(get_path(cfg, 'output_dir'), 'logreg_fire_prob_7day_forecast')
 
@@ -89,13 +93,23 @@ def main():
             fwi_dict[date_obj] = path
 
     d2m_dict = {}
-    for path in sorted(glob.glob(os.path.join(ecmwf_dir, "2d_*.tif"))):
+    d2m_dir = os.path.join(observation_root, "2d")
+    d2m_pattern = os.path.join(d2m_dir, "2d_*.tif")
+    if not glob.glob(d2m_pattern):
+        # Backward compatibility: previous flat directory layout.
+        d2m_pattern = os.path.join(observation_root, "2d_*.tif")
+    for path in sorted(glob.glob(d2m_pattern)):
         date_obj = extract_date_from_filename(os.path.basename(path))
         if date_obj:
             d2m_dict[date_obj] = path
 
     t2m_dict = {}
-    for path in sorted(glob.glob(os.path.join(ecmwf_dir, "2t_*.tif"))):
+    t2m_dir = os.path.join(observation_root, "2t")
+    t2m_pattern = os.path.join(t2m_dir, "2t_*.tif")
+    if not glob.glob(t2m_pattern):
+        # Backward compatibility: previous flat directory layout.
+        t2m_pattern = os.path.join(observation_root, "2t_*.tif")
+    for path in sorted(glob.glob(t2m_pattern)):
         date_obj = extract_date_from_filename(os.path.basename(path))
         if date_obj:
             t2m_dict[date_obj] = path
@@ -103,9 +117,9 @@ def main():
     if not fwi_dict:
         raise RuntimeError(f"No FWI files found in {fwi_dir}")
     if not d2m_dict:
-        raise RuntimeError(f"No 2d files found in {ecmwf_dir}")
+        raise RuntimeError(f"No 2d files found under {observation_root}")
     if not t2m_dict:
-        raise RuntimeError(f"No 2t files found in {ecmwf_dir}")
+        raise RuntimeError(f"No 2t files found under {observation_root}")
 
     print(f"  FWI: {len(fwi_dict)} days, 2d: {len(d2m_dict)} days, 2t: {len(t2m_dict)} days")
 

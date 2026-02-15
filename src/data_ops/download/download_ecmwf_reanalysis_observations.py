@@ -372,6 +372,8 @@ def main(argv=None):
         print("\n" + "=" * 70)
         print("DOWNLOAD SUMMARY")
         print("=" * 70)
+        if dates:
+            print(f"Time range:     {dates[0]} to {dates[-1]}")
         print(f"Total dates:    {len(dates)}")
         print(f"Successful:     {success_count}")
         print(f"Failed:         {fail_count}")
