@@ -23,7 +23,7 @@ Usage:
 
     # Custom directories
     python -m src.data_ops.processing.era5_to_daily \\
-        --input-dir download_ecmwf_reanalysis_observations --output-dir era5_daily_averages
+        --input-dir data/era5_on_fwi_grid --output-dir era5_daily_averages
 
     # With YAML config
     python -m src.data_ops.processing.era5_to_daily --config configs/paths_mac.yaml
@@ -207,7 +207,7 @@ def main():
     )
     parser.add_argument(
         "--input-dir", type=str, default=None,
-        help="Directory containing ERA5 GRIB files (default: from config or 'download_ecmwf_reanalysis_observations')",
+        help="Directory containing ERA5 GRIB files (default: config path 'era5_dir')",
     )
     parser.add_argument(
         "--output-dir", type=str, default=None,
@@ -225,9 +225,8 @@ def main():
     else:
         input_dir_str = args.input_dir
         if input_dir_str is None:
-            # Use project-relative default
-            from src.config import PROJECT_ROOT
-            input_dir_str = str(PROJECT_ROOT / "download_ecmwf_reanalysis_observations")
+            # Default to configured ERA5 directory where downloader writes GRIB.
+            input_dir_str = get_path(cfg, 'era5_dir')
         input_dir = Path(input_dir_str)
         grib_files = sorted(input_dir.glob("era5_sfc_*.grib"))
 
