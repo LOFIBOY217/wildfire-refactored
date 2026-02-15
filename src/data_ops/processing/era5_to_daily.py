@@ -6,6 +6,7 @@ Steps:
     1. Read hourly ERA5 data from GRIB files (24 timesteps per day)
     2. Compute daily averages for each variable
     3. Save as individual GeoTIFF files for each variable and date
+    4. Skip existing outputs by default (use --overwrite to regenerate)
 
 Output structure:
     <output_dir>/
@@ -64,13 +65,14 @@ VARIABLE_MAP = {
 }
 
 
-def process_single_grib(grib_path, output_dir):
+def process_single_grib(grib_path, output_dir, skip_existing=True):
     """
     Process a single ERA5 GRIB file to daily-averaged GeoTIFFs.
 
     Args:
         grib_path: Path to ERA5 GRIB file
         output_dir: Output directory for GeoTIFF files
+        skip_existing: If True, skip writing variable outputs that already exist
 
     Returns:
         True on success, False on failure
@@ -132,6 +134,9 @@ def process_single_grib(grib_path, output_dir):
                 lons = ds.longitude.values
 
                 output_file = output_dir / f"{out_var}_{date_str}.tif"
+                if skip_existing and output_file.exists() and output_file.stat().st_size > 0:
+                    print(f"  [SKIP] {output_file.name} already exists")
+                    continue
 
                 data_array = daily_avg.values
                 if data_array.ndim == 2:
@@ -213,6 +218,10 @@ def main():
         "--output-dir", type=str, default=None,
         help="Output directory for daily GeoTIFFs (default: 'data/era5_daily_averages')",
     )
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Overwrite existing daily GeoTIFF outputs (default: skip existing)",
+    )
 
     args = parser.parse_args()
 
@@ -259,7 +268,11 @@ def main():
     for i, grib_file in enumerate(grib_files, 1):
         print(f"\nProgress: {i}/{len(grib_files)} ({i/len(grib_files)*100:.1f}%)")
 
-        success = process_single_grib(grib_file, output_dir)
+        success = process_single_grib(
+            grib_file,
+            output_dir,
+            skip_existing=not args.overwrite,
+        )
         if success:
             success_count += 1
         else:
