@@ -8,4 +8,5 @@ Modules:
     check_fwi_consistency - Verify all FWI GeoTIFFs share the same CRS, resolution, bounds
     check_data_quality    - Detect NaN, Inf, extreme values, all-zero frames
     check_fwi_health      - FWI-specific health checks (value ranges, NoData patterns)
+    check_s2s_availability - Validate S2S training sample availability (FWI + ECMWF)
 """
