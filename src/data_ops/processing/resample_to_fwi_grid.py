@@ -337,7 +337,7 @@ def main():
     print("Run verification to ensure perfect alignment:")
     print(f"  python -m src.data_ops.validation.verify_alignment \\")
     print(f"    --fwi-dir <fwi_dir> \\")
-    print(f"    --ecmwf-dir {output_dir}")
+    print(f"    --ecmwf-dir {output_root}")
     print("=" * 70)
 
     sys.exit(0 if fail_count == 0 else 1)
