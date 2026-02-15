@@ -77,6 +77,12 @@ def read_singleband_stack(tif_paths):
     """
     Read list of single-band GeoTIFFs into a 3D array.
 
+    Corrupt or unreadable files are replaced by the most recent previously
+    loaded array (i.e. the previous day's data).  If the very first file is
+    corrupt an IOError is raised because there is no earlier array to fall
+    back to.  A warning is printed for every substitution so the caller can
+    see which dates were affected.
+
     Args:
         tif_paths: List of file paths to single-band GeoTIFFs
 
@@ -84,10 +90,29 @@ def read_singleband_stack(tif_paths):
         numpy array of shape [T, H, W]
     """
     arrays = []
+    last_good = None  # most recent successfully loaded array
+
     for path in tif_paths:
-        with rasterio.open(path) as src:
-            arr = src.read(1)
-            arrays.append(arr)
+        try:
+            with rasterio.open(path) as src:
+                arr = src.read(1)
+            last_good = arr
+        except Exception as exc:
+            if last_good is None:
+                raise IOError(
+                    f"First file in stack is corrupt and there is no previous "
+                    f"array to fall back to.\n  File: {path}\n  Error: {exc}"
+                ) from exc
+            import warnings
+            warnings.warn(
+                f"[read_singleband_stack] Corrupt file, substituting previous day:\n"
+                f"  {path}\n  {exc}",
+                stacklevel=2,
+            )
+            arr = last_good  # reuse previous day's data
+
+        arrays.append(arr)
+
     return np.stack(arrays, axis=0)
 
 
