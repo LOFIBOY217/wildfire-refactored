@@ -22,7 +22,11 @@ Based on simple_logistic_7day.py.
 import argparse
 import os
 import glob
+import json
+import time
+import atexit
 from datetime import date, timedelta
+from datetime import datetime as dt
 
 import numpy as np
 import rasterio
@@ -44,6 +48,9 @@ from src.models.logistic_baseline import compute_features, sample_training_data,
 
 
 def main():
+    run_started_at = time.time()
+    run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
+
     ap = argparse.ArgumentParser(description="Train Logistic Regression Wildfire Forecast")
     add_config_argument(ap)
     ap.add_argument("--data_start", type=str, default="2025-01-01")
@@ -60,6 +67,58 @@ def main():
         observation_root = get_path(cfg, 'ecmwf_dir')
     ciffc_csv = get_path(cfg, 'ciffc_csv')
     output_dir = os.path.join(get_path(cfg, 'output_dir'), 'logreg_fire_prob_7day_forecast')
+    os.makedirs(output_dir, exist_ok=True)
+
+    run_stamp = dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    run_meta_path = os.path.join(output_dir, f"run_logistic_{run_stamp}.json")
+    run_meta = {
+        "run_started_at_utc": run_started_iso,
+        "cli_args": {
+            "data_start": args.data_start,
+            "pred_start": args.pred_start,
+            "pred_end": args.pred_end,
+            "config": args.config,
+        },
+        "resolved_paths": {
+            "fwi_dir": fwi_dir,
+            "observation_root": observation_root,
+            "ciffc_csv": ciffc_csv,
+            "output_dir": output_dir,
+        },
+        "training_config": {
+            "forecast_horizon": cfg.get('training', {}).get('forecast_horizon', 7),
+            "n_samples_per_day": cfg.get('training', {}).get('n_samples_per_day', 14285),
+        },
+        "status": "running",
+    }
+
+    print("\n" + "=" * 70)
+    print("RUN METADATA")
+    print("=" * 70)
+    print(f"Run started (UTC): {run_started_iso}")
+    print(f"Config file:        {args.config if args.config else 'configs/default.yaml'}")
+    print(f"data_start:         {args.data_start}")
+    print(f"pred_start:         {args.pred_start}")
+    print(f"pred_end:           {args.pred_end}")
+    print(f"FWI dir:            {fwi_dir}")
+    print(f"Observation root:   {observation_root}")
+    print(f"CIFFC CSV:          {ciffc_csv}")
+    print(f"Run log path:       {run_meta_path}")
+    print("=" * 70)
+
+    def _flush_run_meta():
+        # Persist metadata even if training fails/interrupted.
+        if run_meta.get("status") == "running":
+            run_meta["status"] = "failed_or_interrupted"
+            run_meta["run_finished_at_utc"] = dt.utcnow().isoformat(timespec="seconds") + "Z"
+            run_meta["duration_seconds"] = round(time.time() - run_started_at, 3)
+        try:
+            with open(run_meta_path, "w", encoding="utf-8") as f:
+                json.dump(run_meta, f, indent=2)
+        except Exception:
+            pass
+
+    atexit.register(_flush_run_meta)
 
     # Parse dates
     parts = args.data_start.split('-')
@@ -122,6 +181,11 @@ def main():
         raise RuntimeError(f"No 2t files found under {observation_root}")
 
     print(f"  FWI: {len(fwi_dict)} days, 2d: {len(d2m_dict)} days, 2t: {len(t2m_dict)} days")
+    run_meta["inventory"] = {
+        "fwi_days": len(fwi_dict),
+        "d2m_days": len(d2m_dict),
+        "t2m_days": len(t2m_dict),
+    }
 
     # Step 2: Generate aligned date sequence
     print("\n[STEP 2] Aligning files by date...")
@@ -141,6 +205,7 @@ def main():
             aligned_dates.append(date_obj)
 
     print(f"  Complete dates: {len(aligned_dates)}")
+    run_meta["aligned_days"] = len(aligned_dates)
     if len(fwi_paths) < seq_len:
         raise RuntimeError(f"Insufficient data! Need at least {seq_len} days.")
 
@@ -159,6 +224,7 @@ def main():
     print("\n[STEP 4] Loading fire records...")
     ciffc_df = load_ciffc_data(ciffc_csv)
     print(f"  Total fire records: {len(ciffc_df)}")
+    run_meta["fire_records"] = int(len(ciffc_df))
     fire_stack = rasterize_fires_batch(ciffc_df, aligned_dates, profile)
     print(f"  Fire stack shape: {fire_stack.shape}")
 
@@ -189,6 +255,10 @@ def main():
     X_train = np.concatenate(X_train_list, axis=0)
     y_train = np.concatenate(y_train_list, axis=0)
     print(f"  Training samples: {len(X_train)}, Positive rate: {y_train.mean():.4f}")
+    run_meta["train_dataset"] = {
+        "num_samples": int(len(X_train)),
+        "positive_rate": float(y_train.mean()),
+    }
 
     # Step 6: Train
     print("\n[STEP 6] Training logistic regression...")
@@ -196,11 +266,13 @@ def main():
     model.fit(X_train, y_train)
     print(f"  Coefficients: {model.coef_[0]}")
     print(f"  Intercept: {model.intercept_[0]}")
+    run_meta["model"] = {
+        "coefficients": [float(v) for v in model.coef_[0]],
+        "intercept": float(model.intercept_[0]),
+    }
 
     # Step 7: Generate predictions
     print("\n[STEP 7] Generating forecasts...")
-    os.makedirs(output_dir, exist_ok=True)
-
     pred_dates = []
     current = pred_start_date
     while current <= pred_end_date:
@@ -253,6 +325,17 @@ def main():
     print("FORECAST GENERATION COMPLETE!")
     print(f"Output: {output_dir}")
     print("=" * 70)
+
+    run_ended_at = time.time()
+    finished_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
+    run_meta["run_finished_at_utc"] = finished_iso
+    run_meta["duration_seconds"] = round(run_ended_at - run_started_at, 3)
+    run_meta["status"] = "success"
+    with open(run_meta_path, "w", encoding="utf-8") as f:
+        json.dump(run_meta, f, indent=2)
+    print(f"Run log saved: {run_meta_path}")
+    print(f"Run finished (UTC): {finished_iso}")
+    print(f"Total duration:     {run_meta['duration_seconds']}s")
 
 
 if __name__ == "__main__":
