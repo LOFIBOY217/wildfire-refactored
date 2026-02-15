@@ -8,6 +8,8 @@ This repository uses one base conda environment plus profile-specific overlays.
 conda env create -f environment.yml
 ```
 
+`environment.yml` includes both `cdsapi` and `ecmwf-api-client` for download scripts.
+
 ## Local profile (with pygrib)
 
 Use this on machines where `pygrib` is available:
