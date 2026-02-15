@@ -162,15 +162,25 @@ def main():
     # Check every file
     # -----------------------------------------------------------------------
     corrupt = []
+    total = len(all_files)
     for i, path in enumerate(all_files, 1):
         ok, err = check_tif(path)
         if not ok:
             corrupt.append((path, err))
-            # Print immediately so progress is visible on HPC
-            print(f"  [CORRUPT]  {path}")
+            # Clear the progress line, then print the corrupt file on its own line
+            print(f"\r{' ' * 78}\r  [CORRUPT]  {path}")
             print(f"             {err}")
-        elif i % 500 == 0 or i == len(all_files):
-            print(f"  ... checked {i}/{len(all_files)}, corrupt so far: {len(corrupt)}")
+
+        # Overwrite the same line with current progress
+        bar_done = int(40 * i / total)
+        bar = "#" * bar_done + "-" * (40 - bar_done)
+        print(
+            f"\r  [{bar}] {i}/{total}  corrupt: {len(corrupt)}",
+            end="",
+            flush=True,
+        )
+
+    print()  # newline after the progress bar finishes
 
     # -----------------------------------------------------------------------
     # Summary
