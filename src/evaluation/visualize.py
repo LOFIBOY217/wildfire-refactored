@@ -8,7 +8,11 @@ Based on evaluate_with_confusion_matrix.py plotting sections.
 
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
+
+try:
+    import seaborn as sns
+except ImportError:  # Optional dependency
+    sns = None
 
 
 def plot_metrics_vs_threshold(threshold_summary, output_path):
@@ -102,11 +106,23 @@ def plot_confusion_matrix_heatmap(tp, fp, tn, fn, threshold, output_path):
     cm = np.array([[tn, fp], [fn, tp]])
 
     plt.figure(figsize=(8, 6))
-    sns.heatmap(
-        cm, annot=True, fmt='d', cmap='Blues',
-        xticklabels=['Pred No Fire', 'Pred Fire'],
-        yticklabels=['Actual No Fire', 'Actual Fire']
-    )
+    if sns is not None:
+        sns.heatmap(
+            cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=['Pred No Fire', 'Pred Fire'],
+            yticklabels=['Actual No Fire', 'Actual Fire']
+        )
+    else:
+        plt.imshow(cm, cmap='Blues')
+        plt.colorbar()
+        labels_x = ['Pred No Fire', 'Pred Fire']
+        labels_y = ['Actual No Fire', 'Actual Fire']
+        plt.xticks([0, 1], labels_x)
+        plt.yticks([0, 1], labels_y)
+        for i in range(cm.shape[0]):
+            for j in range(cm.shape[1]):
+                plt.text(j, i, f"{cm[i, j]}", ha='center', va='center', color='black')
+
     plt.title(f'Confusion Matrix (threshold={threshold})')
     plt.ylabel('Actual')
     plt.xlabel('Predicted')
