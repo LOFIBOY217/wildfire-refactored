@@ -64,7 +64,7 @@ class FWIDownloader:
             f"{self.wcs_base}&coverage=public:fwi{date_str}",
         ]
 
-    def download_date(self, date_str, verbose=True):
+    def download_date(self, date_str, verbose=True, force=False):
         """
         Download FWI for single date.
 
@@ -76,7 +76,7 @@ class FWIDownloader:
         """
         output_path = self.output_dir / f"fwi_{date_str}.tif"
 
-        if output_path.exists():
+        if output_path.exists() and not force:
             if verbose:
                 print(f"[SKIP] {date_str}")
             return True
@@ -131,7 +131,7 @@ class FWIDownloader:
             print("[FAIL]")
         return False
 
-    def download_range(self, start_date, end_date, workers=1):
+    def download_range(self, start_date, end_date, workers=1, force=False):
         """
         Download FWI for a date range.
 
@@ -154,14 +154,14 @@ class FWIDownloader:
 
         pending = []
         for date_str in dates:
-            if (self.output_dir / f"fwi_{date_str}.tif").exists():
+            if (self.output_dir / f"fwi_{date_str}.tif").exists() and not force:
                 skipped += 1
             else:
                 pending.append(date_str)
 
         if workers <= 1:
             for date_str in pending:
-                if self.download_date(date_str):
+                if self.download_date(date_str, force=force):
                     success += 1
                 else:
                     failed += 1
@@ -170,7 +170,10 @@ class FWIDownloader:
             done = 0
             total_pending = len(pending)
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {pool.submit(self.download_date, d, False): d for d in pending}
+                futures = {
+                    pool.submit(self.download_date, d, False, force): d
+                    for d in pending
+                }
                 for future in as_completed(futures):
                     done += 1
                     date_str = futures[future]
@@ -221,6 +224,11 @@ def _build_parser():
         "--workers", type=int, default=1,
         help="Parallel download workers (default: 1)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-download even if target file already exists",
+    )
     return parser
 
 
@@ -238,9 +246,14 @@ def main(argv=None):
     end_date = args.end_date if args.end_date else start_date
 
     if start_date == end_date:
-        downloader.download_date(start_date)
+        downloader.download_date(start_date, force=args.force)
     else:
-        downloader.download_range(start_date, end_date, workers=max(1, args.workers))
+        downloader.download_range(
+            start_date,
+            end_date,
+            workers=max(1, args.workers),
+            force=args.force,
+        )
 
 
 if __name__ == "__main__":
