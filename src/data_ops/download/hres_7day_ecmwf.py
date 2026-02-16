@@ -6,8 +6,8 @@ Downloads the operational high-resolution deterministic forecast (HRES)
 from the ECMWF MARS archive.  Parameters and structure mirror s2s_ecmwf.py
 so both scripts can be used as parallel data sources:
 
-    S2S  (s2s_ecmwf.py)  : 14-46 day forecasts  ->  data/ecmwf_s2s/
-    HRES (hres_ecmwf.py) : 1-7  day forecasts  ->  data/ecmwf_hres/
+    S2S  (s2s_ecmwf.py)      : 14-46 day forecasts  ->  data/ecmwf_s2s/
+    HRES (hres_7day_ecmwf.py): 1-7  day forecasts  ->  data/ecmwf_hres/
 
 Key MARS differences vs S2S:
     class   : od        (operational)
@@ -20,10 +20,10 @@ Output files:
     data/ecmwf_hres/hres_ecmf_<YYYY-MM-DD>.grib
 
 Usage:
-    Single date:   python -m src.data_ops.download.hres_ecmwf 2023-05-05
-    Date range:    python -m src.data_ops.download.hres_ecmwf 2023-05-05 2025-08-21
-    Batch mode:    python -m src.data_ops.download.hres_ecmwf --batch
-                   python -m src.data_ops.download.hres_ecmwf --batch --batch-start 2023-05-05 --batch-end 2025-08-21
+    Single date:   python -m src.data_ops.download.hres_7day_ecmwf 2023-04-28
+    Date range:    python -m src.data_ops.download.hres_7day_ecmwf 2023-04-28 2025-08-21
+    Batch mode:    python -m src.data_ops.download.hres_7day_ecmwf --batch
+                   python -m src.data_ops.download.hres_7day_ecmwf --batch --batch-start 2023-04-28 --batch-end 2025-08-21
 """
 
 import argparse
@@ -203,11 +203,11 @@ def _build_parser():
     )
     parser.add_argument(
         "--batch", action="store_true",
-        help="Download the full default date range (2023-05-05 to 2025-08-21)",
+        help="Download the full default date range (2023-04-28 to 2025-08-21)",
     )
     parser.add_argument(
-        "--batch-start", type=str, default="2023-05-05",
-        help="Override batch start date (default: 2023-05-05)",
+        "--batch-start", type=str, default="2023-04-28",
+        help="Override batch start date (default: 2023-04-28)",
     )
     parser.add_argument(
         "--batch-end", type=str, default="2025-08-21",
