@@ -106,13 +106,66 @@ def _build_transformer(profile):
     )
 
 
+# One pixel covers this many hectares at 2000 m resolution.
+_PIXEL_AREA_HA = 2000 * 2000 / 10_000  # = 400 ha
+
+
+def _mark_fire_pixels(raster, row, col, fire_size_ha):
+    """
+    Mark one or more pixels as fire on *raster* (in-place).
+
+    For fires smaller than one pixel (< 400 ha) only the centre pixel is
+    marked.  For larger fires a filled circle is drawn whose area matches
+    the reported fire size:
+
+        radius_pixels = sqrt(fire_size_ha / (pi * pixel_area_ha))
+
+    This is Route B: expand large fires beyond a single point so that the
+    ground-truth label density better reflects reality.
+
+    Args:
+        raster:       2-D uint8 array [H, W], modified in-place.
+        row, col:     Centre pixel (int).
+        fire_size_ha: Reported fire size in hectares (float).  Values <= 0
+                      or NaN are treated as a single-pixel fire.
+    """
+    height, width = raster.shape
+
+    # Always mark the centre pixel first.
+    if 0 <= row < height and 0 <= col < width:
+        raster[row, col] = 1
+
+    # Only expand when the fire is larger than one pixel.
+    if not (fire_size_ha > _PIXEL_AREA_HA):
+        return
+
+    radius_px = np.sqrt(fire_size_ha / (np.pi * _PIXEL_AREA_HA))
+    r_int = int(np.ceil(radius_px))
+
+    r0 = max(0, row - r_int)
+    r1 = min(height - 1, row + r_int)
+    c0 = max(0, col - r_int)
+    c1 = min(width - 1, col + r_int)
+
+    # Vectorised circle fill: avoid Python loop over pixels.
+    rows_idx = np.arange(r0, r1 + 1)
+    cols_idx = np.arange(c0, c1 + 1)
+    rr, cc = np.meshgrid(rows_idx, cols_idx, indexing='ij')
+    dist2 = (rr - row) ** 2 + (cc - col) ** 2
+    inside = dist2 <= radius_px ** 2
+    raster[rr[inside], cc[inside]] = 1
+
+
 def rasterize_fires_batch(fire_df, date_list, profile, nodata_value=-9999):
     """
     Rasterize fire points to a binary grid for each date in *date_list*.
 
+    Large fires (field_fire_size > 400 ha) are expanded to a filled circle
+    whose area matches the reported fire size (Route B area expansion).
+
     Args:
         fire_df: DataFrame from :func:`load_ciffc_data` (must have 'date',
-                 'field_longitude', 'field_latitude').
+                 'field_longitude', 'field_latitude', 'field_fire_size').
         date_list: Iterable of ``datetime.date`` objects.
         profile: Rasterio profile dict (must contain 'crs', 'height',
                  'width', 'transform').
@@ -134,15 +187,15 @@ def rasterize_fires_batch(fire_df, date_list, profile, nodata_value=-9999):
         raster = np.zeros((height, width), dtype=np.uint8)
 
         if len(fires_today) > 0:
-            lons = fires_today['field_longitude'].values
-            lats = fires_today['field_latitude'].values
-            xs, ys = transformer.transform(lons, lats)
+            lons       = fires_today['field_longitude'].values
+            lats       = fires_today['field_latitude'].values
+            sizes_ha   = fires_today['field_fire_size'].values
+            xs, ys     = transformer.transform(lons, lats)
 
-            for x, y in zip(xs, ys):
+            for x, y, size_ha in zip(xs, ys, sizes_ha):
                 try:
                     row, col = rowcol(transform, x, y)
-                    if 0 <= row < height and 0 <= col < width:
-                        raster[row, col] = 1
+                    _mark_fire_pixels(raster, row, col, size_ha)
                 except Exception:
                     continue
 
@@ -154,6 +207,9 @@ def rasterize_fires_batch(fire_df, date_list, profile, nodata_value=-9999):
 def rasterize_fires_single(fire_df, target_date, profile):
     """
     Rasterize fire points to a binary grid for a single date.
+
+    Large fires (field_fire_size > 400 ha) are expanded to a filled circle
+    whose area matches the reported fire size (Route B area expansion).
 
     Args:
         fire_df: DataFrame from :func:`load_ciffc_data`.
@@ -171,15 +227,15 @@ def rasterize_fires_single(fire_df, target_date, profile):
     if len(fires_today) > 0:
         transformer = _build_transformer(profile)
 
-        lons = fires_today['field_longitude'].values
-        lats = fires_today['field_latitude'].values
-        xs, ys = transformer.transform(lons, lats)
+        lons     = fires_today['field_longitude'].values
+        lats     = fires_today['field_latitude'].values
+        sizes_ha = fires_today['field_fire_size'].values
+        xs, ys   = transformer.transform(lons, lats)
 
-        for x, y in zip(xs, ys):
+        for x, y, size_ha in zip(xs, ys, sizes_ha):
             try:
                 row, col = rowcol(profile['transform'], x, y)
-                if 0 <= row < height and 0 <= col < width:
-                    raster[row, col] = 1
+                _mark_fire_pixels(raster, row, col, size_ha)
             except Exception:
                 continue
 
