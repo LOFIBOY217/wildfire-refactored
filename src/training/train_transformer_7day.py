@@ -16,7 +16,7 @@ Fair comparison against the Logistic Regression baseline:
 
 Usage:
     python -m src.training.train_transformer_7day \\
-        --config configs/default.yaml \\
+        --config configs/paths_windows.yaml \\
         --data_start 2023-05-05 \\
         --pred_start 2025-07-01 \\
         --pred_end   2025-08-14
@@ -51,53 +51,96 @@ except ModuleNotFoundError:
 from src.utils.date_utils import extract_date_from_filename
 from src.utils.raster_io import read_singleband_stack
 from src.utils.patch_utils import patchify, depatchify
-from src.utils.normalization import standardize
 from src.data_ops.processing.rasterize_fires import load_ciffc_data, rasterize_fires_batch
 from src.models.transformer_7day import FireProb7DayTransformer
 
 
 # ------------------------------------------------------------------ #
-# Dataset
+# Dataset  – lazy loading, samples N patches per time window
 # ------------------------------------------------------------------ #
 
 class Fire7DayDataset(Dataset):
     """
-    Each sample is one spatial patch across time.
+    Lazy-loading dataset: each __getitem__ call patchifies one time window
+    and returns one randomly-selected patch.
 
-    X: (in_days, patch_dim_in)  standardised FWI+2t+2d patches
-    Y: (out_days, patch_dim_out) binary fire label patches (float32)
+    This avoids pre-computing all patches at once, which would require
+    hundreds of GB of RAM for large FWI grids (2281x2709 → ~24,000 patches
+    x ~750 windows = 18M samples x 7 x 768 floats = ~384 GB).
+
+    Instead, we sample n_patches_per_win patches per window at construction
+    time (fixed indices), then patchify on the fly in __getitem__.
+
+    Args:
+        meteo_norm:        (T, H, W, 3) float32  standardised FWI+2t+2d
+        fire_stack:        (T, H, W)    uint8     binary fire labels
+        windows:           list of (hs, he, fs, fe) index tuples
+        patch_size:        spatial patch edge length (pixels)
+        n_patches_per_win: patches sampled per window (0 or None = all)
+        seed:              RNG seed for patch sampling
     """
 
-    def __init__(self, meteo_patches, fire_patches):
-        """
-        Args:
-            meteo_patches: (N_patches, in_days,  patch_dim_in)  float32
-            fire_patches:  (N_patches, out_days, patch_dim_out) float32
-        """
-        self.X = torch.from_numpy(meteo_patches.astype(np.float32))
-        self.Y = torch.from_numpy(fire_patches.astype(np.float32))
+    def __init__(self, meteo_norm, fire_stack, windows, patch_size,
+                 n_patches_per_win=500, seed=42):
+        self.meteo   = meteo_norm
+        self.fire    = fire_stack
+        self.windows = windows
+        self.P       = patch_size
+
+        # Compute patch grid dimensions from a single frame (cheap)
+        _sample, self.hw, self.grid = patchify(meteo_norm[:1], patch_size)
+        self.total_patches = self.grid[0] * self.grid[1]
+
+        # Determine which patch indices to use per window
+        rng = np.random.default_rng(seed)
+        if n_patches_per_win and 0 < n_patches_per_win < self.total_patches:
+            self.patch_idx = rng.choice(
+                self.total_patches, size=n_patches_per_win, replace=False
+            )
+        else:
+            self.patch_idx = np.arange(self.total_patches)
+
+        self.n_per_win = len(self.patch_idx)
 
     def __len__(self):
-        return self.X.shape[0]
+        return len(self.windows) * self.n_per_win
 
     def __getitem__(self, idx):
-        return self.X[idx], self.Y[idx]
+        win_i  = idx // self.n_per_win
+        loc_i  = idx %  self.n_per_win
+        p_i    = int(self.patch_idx[loc_i])
+
+        hs, he, fs, fe = self.windows[win_i]
+
+        hist = self.meteo[hs:he]                         # (in_days, H, W, 3)
+        fut  = self.fire[fs:fe].astype(np.float32)       # (out_days, H, W)
+
+        xp, _, _ = patchify(hist, self.P)               # (n_patches, in_days,  P²*3)
+        yp, _, _ = patchify(fut,  self.P)               # (n_patches, out_days, P²)
+
+        x = torch.from_numpy(xp[p_i].copy())            # (in_days, P²*3)
+        y = torch.from_numpy(yp[p_i].copy())            # (out_days, P²)
+        return x, y
 
 
 # ------------------------------------------------------------------ #
 # Helpers
 # ------------------------------------------------------------------ #
 
-def _file_index(directory, pattern, obs_root=None):
+def _build_file_dict(directory, prefix):
     """
-    Build {datetime.date: filepath} index.
-    Tries subdirectory pattern first, then flat pattern.
+    Build {datetime.date: filepath} from tif files matching <prefix>_*.tif.
+
+    Tries <directory>/<prefix>/<prefix>_*.tif first (subdirectory layout),
+    then <directory>/<prefix>_*.tif (flat layout).
     """
-    paths = sorted(glob.glob(os.path.join(directory, pattern)))
-    if not paths and obs_root:
-        flat_pattern = pattern.replace("*/", "")
-        paths = sorted(glob.glob(os.path.join(obs_root, flat_pattern)))
     result = {}
+    sub_paths = sorted(glob.glob(
+        os.path.join(directory, prefix, f"{prefix}_*.tif")
+    ))
+    paths = sub_paths if sub_paths else sorted(glob.glob(
+        os.path.join(directory, f"{prefix}_*.tif")
+    ))
     for p in paths:
         d = extract_date_from_filename(os.path.basename(p))
         if d:
@@ -113,58 +156,59 @@ def _build_windows(n_days, in_days, out_days):
     return windows
 
 
-def _stack_meteo(fwi_stack, t2m_stack, d2m_stack):
-    """
-    Stack three [T,H,W] arrays into [T,H,W,3].
-    Channels: [FWI, 2t, 2d]
-    """
-    return np.stack([fwi_stack, t2m_stack, d2m_stack], axis=-1)
-
-
 # ------------------------------------------------------------------ #
 # Main
 # ------------------------------------------------------------------ #
 
 def main():
-    run_started_at = time.time()
+    run_started_at  = time.time()
     run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
 
     ap = argparse.ArgumentParser(description="Train 7-Day Fire Probability Transformer")
     add_config_argument(ap)
-    ap.add_argument("--data_start", type=str, default="2023-05-05",
+    ap.add_argument("--data_start",        type=str,   default="2023-05-05",
                     help="First date for data loading (YYYY-MM-DD)")
-    ap.add_argument("--pred_start", type=str, default="2025-07-01",
+    ap.add_argument("--pred_start",        type=str,   default="2025-07-01",
                     help="First prediction date; also used as train/val split boundary")
-    ap.add_argument("--pred_end",   type=str, default="2025-08-14",
+    ap.add_argument("--pred_end",          type=str,   default="2025-08-14",
                     help="Last prediction date (inclusive)")
-    ap.add_argument("--in_days",    type=int, default=7,  help="History window (days)")
-    ap.add_argument("--out_days",   type=int, default=7,  help="Forecast horizon (days)")
-    ap.add_argument("--patch_size", type=int, default=16, help="Spatial patch size")
-    ap.add_argument("--d_model",    type=int, default=128)
-    ap.add_argument("--nhead",      type=int, default=4)
-    ap.add_argument("--enc_layers", type=int, default=2)
-    ap.add_argument("--dec_layers", type=int, default=2)
-    ap.add_argument("--epochs",     type=int, default=50)
-    ap.add_argument("--batch_size", type=int, default=256)
-    ap.add_argument("--lr",         type=float, default=3e-4)
-    ap.add_argument("--num_workers",type=int, default=0)
-    ap.add_argument("--seed",       type=int, default=42)
+    ap.add_argument("--in_days",           type=int,   default=7,
+                    help="History window (days)")
+    ap.add_argument("--out_days",          type=int,   default=7,
+                    help="Forecast horizon (days)")
+    ap.add_argument("--patch_size",        type=int,   default=16,
+                    help="Spatial patch size (pixels)")
+    ap.add_argument("--n_patches_per_win", type=int,   default=500,
+                    help="Patches sampled per time window during training "
+                         "(0 = use all ~24000 patches, not recommended)")
+    ap.add_argument("--d_model",           type=int,   default=128)
+    ap.add_argument("--nhead",             type=int,   default=4)
+    ap.add_argument("--enc_layers",        type=int,   default=2)
+    ap.add_argument("--dec_layers",        type=int,   default=2)
+    ap.add_argument("--epochs",            type=int,   default=50)
+    ap.add_argument("--batch_size",        type=int,   default=256)
+    ap.add_argument("--lr",               type=float,  default=3e-4)
+    ap.add_argument("--seed",             type=int,    default=42)
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    cfg = load_config(args.config)
-    fwi_dir        = get_path(cfg, "fwi_dir")
-    obs_root       = get_path(cfg, "observation_dir") if "observation_dir" in cfg.get("paths", {}) \
-                     else get_path(cfg, "ecmwf_dir")
-    ciffc_csv      = get_path(cfg, "ciffc_csv")
-    output_dir     = os.path.join(get_path(cfg, "output_dir"), "transformer7d_fire_prob")
-    ckpt_dir       = os.path.join(get_path(cfg, "checkpoint_dir"), "transformer_7day")
+    # ----------------------------------------------------------------
+    # Config & paths
+    # ----------------------------------------------------------------
+    cfg       = load_config(args.config)
+    fwi_dir   = get_path(cfg, "fwi_dir")
+    paths_cfg = cfg.get("paths", {})
+    obs_root  = get_path(cfg, "observation_dir") if "observation_dir" in paths_cfg \
+                else get_path(cfg, "ecmwf_dir")
+    ciffc_csv  = get_path(cfg, "ciffc_csv")
+    output_dir = os.path.join(get_path(cfg, "output_dir"), "transformer7d_fire_prob")
+    ckpt_dir   = os.path.join(get_path(cfg, "checkpoint_dir"), "transformer_7day")
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(ckpt_dir,   exist_ok=True)
 
-    run_stamp    = dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    run_stamp     = dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
     run_meta_path = os.path.join(ckpt_dir, f"run_{run_stamp}.json")
     run_meta = {
         "run_started_at_utc": run_started_iso,
@@ -188,23 +232,23 @@ def main():
         parts = s.split("-")
         return date(int(parts[0]), int(parts[1]), int(parts[2]))
 
-    data_start_date  = _date(args.data_start)
-    pred_start_date  = _date(args.pred_start)
-    pred_end_date    = _date(args.pred_end)
-
-    in_days  = args.in_days
-    out_days = args.out_days
+    data_start_date = _date(args.data_start)
+    pred_start_date = _date(args.pred_start)
+    pred_end_date   = _date(args.pred_end)
+    in_days         = args.in_days
+    out_days        = args.out_days
 
     print("\n" + "=" * 70)
     print("7-DAY FIRE PROBABILITY TRANSFORMER")
     print("=" * 70)
-    print(f"  data_start : {data_start_date}")
-    print(f"  pred_start : {pred_start_date}  (train/val split boundary)")
-    print(f"  pred_end   : {pred_end_date}")
-    print(f"  in_days    : {in_days}   out_days: {out_days}")
-    print(f"  patch_size : {args.patch_size}")
-    print(f"  d_model    : {args.d_model}  nhead: {args.nhead}")
-    print(f"  epochs     : {args.epochs}  batch: {args.batch_size}  lr: {args.lr}")
+    print(f"  data_start        : {data_start_date}")
+    print(f"  pred_start        : {pred_start_date}  (train/val split boundary)")
+    print(f"  pred_end          : {pred_end_date}")
+    print(f"  in_days / out_days: {in_days} / {out_days}")
+    print(f"  patch_size        : {args.patch_size}")
+    print(f"  n_patches_per_win : {args.n_patches_per_win}")
+    print(f"  d_model / nhead   : {args.d_model} / {args.nhead}")
+    print(f"  epochs / batch    : {args.epochs} / {args.batch_size}  lr={args.lr}")
     print("=" * 70)
 
     # ----------------------------------------------------------------
@@ -218,36 +262,15 @@ def main():
         if d:
             fwi_dict[d] = p
 
-    d2m_dict = {}
-    for p in sorted(glob.glob(os.path.join(obs_root, "2d", "2d_*.tif"))
-                    or glob.glob(os.path.join(obs_root, "2d_*.tif"))):
-        d = extract_date_from_filename(os.path.basename(p))
-        if d:
-            d2m_dict[d] = p
-    if not d2m_dict:
-        for p in sorted(glob.glob(os.path.join(obs_root, "2d_*.tif"))):
-            d = extract_date_from_filename(os.path.basename(p))
-            if d:
-                d2m_dict[d] = p
-
-    t2m_dict = {}
-    for p in sorted(glob.glob(os.path.join(obs_root, "2t", "2t_*.tif"))
-                    or glob.glob(os.path.join(obs_root, "2t_*.tif"))):
-        d = extract_date_from_filename(os.path.basename(p))
-        if d:
-            t2m_dict[d] = p
-    if not t2m_dict:
-        for p in sorted(glob.glob(os.path.join(obs_root, "2t_*.tif"))):
-            d = extract_date_from_filename(os.path.basename(p))
-            if d:
-                t2m_dict[d] = p
+    d2m_dict = _build_file_dict(obs_root, "2d")
+    t2m_dict = _build_file_dict(obs_root, "2t")
 
     if not fwi_dict:
-        raise RuntimeError(f"No FWI files in {fwi_dir}")
+        raise RuntimeError(f"No FWI .tif files found in {fwi_dir}")
     if not d2m_dict:
-        raise RuntimeError(f"No 2d files under {obs_root}")
+        raise RuntimeError(f"No 2d .tif files found under {obs_root}")
     if not t2m_dict:
-        raise RuntimeError(f"No 2t files under {obs_root}")
+        raise RuntimeError(f"No 2t .tif files found under {obs_root}")
 
     print(f"  FWI: {len(fwi_dict)} days  2t: {len(t2m_dict)} days  2d: {len(d2m_dict)} days")
 
@@ -256,7 +279,7 @@ def main():
     # ----------------------------------------------------------------
     print("\n[STEP 2] Aligning dates...")
 
-    # We need data up to pred_end + out_days (target labels extend beyond pred_end)
+    # Labels extend out_days beyond pred_end
     required_end = pred_end_date + timedelta(days=out_days)
     fwi_paths, t2m_paths, d2m_paths, aligned_dates = [], [], [], []
     cur = data_start_date
@@ -269,18 +292,21 @@ def main():
         cur += timedelta(days=1)
 
     if len(aligned_dates) < in_days + out_days:
-        raise RuntimeError(f"Only {len(aligned_dates)} aligned days, need ≥ {in_days + out_days}")
-    print(f"  Aligned dates: {len(aligned_dates)}  ({aligned_dates[0]} → {aligned_dates[-1]})")
+        raise RuntimeError(
+            f"Only {len(aligned_dates)} aligned days, need >= {in_days + out_days}"
+        )
+    print(f"  Aligned dates: {len(aligned_dates)}  ({aligned_dates[0]} -> {aligned_dates[-1]})")
+    run_meta["aligned_days"] = len(aligned_dates)
 
     # ----------------------------------------------------------------
     # STEP 3  Load raster stacks
     # ----------------------------------------------------------------
     print("\n[STEP 3] Loading raster stacks...")
     fwi_stack = read_singleband_stack(fwi_paths)   # [T, H, W]
-    t2m_stack = read_singleband_stack(t2m_paths)
-    d2m_stack = read_singleband_stack(d2m_paths)
+    t2m_stack = read_singleband_stack(t2m_paths)   # [T, H, W]
+    d2m_stack = read_singleband_stack(d2m_paths)   # [T, H, W]
     T, H, W = fwi_stack.shape
-    print(f"  Shape: T={T}, H={H}, W={W}")
+    print(f"  Shape: T={T}  H={H}  W={W}")
 
     with rasterio.open(fwi_paths[0]) as src:
         profile = src.profile
@@ -292,14 +318,14 @@ def main():
     ciffc_df   = load_ciffc_data(ciffc_csv)
     fire_stack = rasterize_fires_batch(ciffc_df, aligned_dates, profile)  # [T, H, W] uint8
     pos_rate   = fire_stack.mean()
-    print(f"  Fire records: {len(ciffc_df)}  positive_rate: {pos_rate:.4%}")
-    run_meta["fire_records"] = int(len(ciffc_df))
+    print(f"  Fire records: {len(ciffc_df)}  positive_rate: {pos_rate:.6%}")
+    run_meta["fire_records"]  = int(len(ciffc_df))
     run_meta["positive_rate"] = float(pos_rate)
 
     # ----------------------------------------------------------------
     # STEP 5  Find train/val split index
     # ----------------------------------------------------------------
-    print("\n[STEP 5] Splitting train / val...")
+    print("\n[STEP 5] Splitting train / val by pred_start...")
 
     train_end_idx = None
     for i, d in enumerate(aligned_dates):
@@ -307,26 +333,31 @@ def main():
             train_end_idx = i
             break
     if train_end_idx is None:
-        raise RuntimeError(f"pred_start={pred_start_date} not found in aligned dates")
+        raise RuntimeError(
+            f"pred_start={pred_start_date} is beyond all aligned dates"
+        )
+    print(f"  Training dates: 0 -> {train_end_idx - 1}  "
+          f"({aligned_dates[0]} -> {aligned_dates[train_end_idx-1]})")
+    print(f"  Val/pred dates: {train_end_idx} -> {T-1}  "
+          f"({aligned_dates[train_end_idx]} -> {aligned_dates[-1]})")
 
     # ----------------------------------------------------------------
-    # STEP 6  Standardise meteorological data (stats from training dates only)
+    # STEP 6  Standardise meteorological data (stats from training only)
     # ----------------------------------------------------------------
-    print("\n[STEP 6] Standardising...")
+    print("\n[STEP 6] Standardising per-channel (FWI, 2t, 2d)...")
 
-    # Stack FWI+2t+2d into [T, H, W, 3]
-    meteo_stack = _stack_meteo(fwi_stack, t2m_stack, d2m_stack)   # [T, H, W, 3]
+    # Stack [T, H, W, 3]
+    meteo_stack = np.stack([fwi_stack, t2m_stack, d2m_stack], axis=-1).astype(np.float32)
 
-    # Compute per-channel stats from training period only
-    train_meteo = meteo_stack[:train_end_idx]                       # [T_train, H, W, 3]
+    train_meteo = meteo_stack[:train_end_idx]          # [T_train, H, W, 3]
     meteo_means = train_meteo.reshape(-1, 3).mean(axis=0)
     meteo_stds  = train_meteo.reshape(-1, 3).std(axis=0) + 1e-6
 
     meteo_norm = (meteo_stack - meteo_means) / meteo_stds
-    meteo_norm = np.clip(meteo_norm, -10, 10).astype(np.float32)
+    meteo_norm = np.clip(meteo_norm, -10.0, 10.0).astype(np.float32)
 
-    print(f"  Meteo means: {meteo_means.round(3)}")
-    print(f"  Meteo stds:  {meteo_stds.round(3)}")
+    print(f"  Means (FWI,2t,2d): {meteo_means.round(3)}")
+    print(f"  Stds  (FWI,2t,2d): {meteo_stds.round(3)}")
 
     run_meta["norm_stats"] = {
         "meteo_means": meteo_means.tolist(),
@@ -336,85 +367,61 @@ def main():
             np.stack([meteo_means, meteo_stds]))
 
     # ----------------------------------------------------------------
-    # STEP 7  Patchify & build windowed samples
+    # STEP 7  Build windowed index and lazy Dataset (no OOM risk)
     # ----------------------------------------------------------------
-    print("\n[STEP 7] Patchifying...")
+    print("\n[STEP 7] Building lazy-loading datasets...")
 
-    # patchify expects (D, H, W, C) for multi-channel
-    # We'll build windows first, then patchify per-window to avoid OOM
-    windows = _build_windows(T, in_days, out_days)
-    print(f"  Total windows: {len(windows)}")
+    all_windows = _build_windows(T, in_days, out_days)
+    print(f"  Total windows: {len(all_windows)}")
 
-    # Determine patch grid from a single frame
-    sample_frame = meteo_norm[0]                                  # (H, W, 3)
-    _, hw, grid = patchify(sample_frame[np.newaxis], args.patch_size)
-    n_patches = grid[0] * grid[1]
-    P = args.patch_size
-    patch_dim_in  = P * P * 3
-    patch_dim_out = P * P
-
-    # Split windows by pred_start
-    train_wins = [(hs, he, fs, fe) for hs, he, fs, fe in windows
-                  if aligned_dates[he - 1] < pred_start_date
-                  and fe <= len(aligned_dates)]
-    val_wins   = [(hs, he, fs, fe) for hs, he, fs, fe in windows
-                  if aligned_dates[hs] >= pred_start_date
-                  and fe <= len(aligned_dates)]
+    # Training: history ends before pred_start
+    # Validation: history starts at or after pred_start
+    train_wins = [w for w in all_windows
+                  if aligned_dates[w[1] - 1] < pred_start_date and w[3] <= T]
+    val_wins   = [w for w in all_windows
+                  if aligned_dates[w[0]] >= pred_start_date and w[3] <= T]
 
     print(f"  Train windows: {len(train_wins)}  Val windows: {len(val_wins)}")
 
-    def _build_patches(wins, meteo, fire):
-        """Build (N_patches, days, patch_dim) arrays for a list of windows."""
-        X_list, Y_list = [], []
-        for hs, he, fs, fe in wins:
-            hist = meteo[hs:he]   # (in_days, H, W, 3)
-            fut  = fire[fs:fe]    # (out_days, H, W)
+    P    = args.patch_size
+    n_ppw = args.n_patches_per_win
 
-            # patchify input: (in_days, H, W, 3) → (n_patches, in_days, P²×3)
-            xp, _, _ = patchify(hist, P)   # (n_patches, in_days, P²×3)
-
-            # patchify labels: (out_days, H, W) → (n_patches, out_days, P²)
-            yp, _, _ = patchify(fut.astype(np.float32), P)
-
-            X_list.append(xp)
-            Y_list.append(yp)
-
-        X = np.concatenate(X_list, axis=0)  # (N*n_patches, in_days, P²×3)
-        Y = np.concatenate(Y_list, axis=0)
-        return X, Y
-
-    print("  Building train patches...")
-    X_train, Y_train = _build_patches(train_wins, meteo_norm, fire_stack)
-    print(f"  Train patches: {X_train.shape}")
-
+    train_ds = Fire7DayDataset(
+        meteo_norm, fire_stack, train_wins, P,
+        n_patches_per_win=n_ppw, seed=args.seed
+    )
     if val_wins:
-        print("  Building val patches...")
-        X_val, Y_val = _build_patches(val_wins, meteo_norm, fire_stack)
-        print(f"  Val patches: {X_val.shape}")
+        val_ds = Fire7DayDataset(
+            meteo_norm, fire_stack, val_wins, P,
+            n_patches_per_win=n_ppw, seed=args.seed + 1
+        )
     else:
-        X_val, Y_val = X_train[:1], Y_train[:1]
-        print("  Warning: no val windows, using dummy val")
+        val_ds = train_ds
+        print("  WARNING: no val windows, using train set as val proxy")
 
-    train_ds = Fire7DayDataset(X_train, Y_train)
-    val_ds   = Fire7DayDataset(X_val,   Y_val)
+    hw   = train_ds.hw
+    grid = train_ds.grid
+    patch_dim_in  = P * P * 3
+    patch_dim_out = P * P
 
-    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                          num_workers=args.num_workers, pin_memory=True)
-    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
-                          num_workers=args.num_workers, pin_memory=True)
+    print(f"  Train samples: {len(train_ds):,}   Val samples: {len(val_ds):,}")
+    print(f"  Grid: {grid[0]}x{grid[1]} patches/frame  "
+          f"(dim_in={patch_dim_in}  dim_out={patch_dim_out})")
+
+    # num_workers=0: avoids Windows multiprocessing spawn issues
+    train_dl = DataLoader(train_ds, batch_size=args.batch_size,
+                          shuffle=True, num_workers=0)
+    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size,
+                          shuffle=False, num_workers=0)
 
     # ----------------------------------------------------------------
     # STEP 8  Compute pos_weight for class imbalance
     # ----------------------------------------------------------------
-    # Use training fire labels only
     train_fire = fire_stack[:train_end_idx]
     n_pos = float(train_fire.sum())
     n_neg = float(train_fire.size) - n_pos
-    if n_pos == 0:
-        pos_w = 1.0
-    else:
-        pos_w = n_neg / n_pos
-    print(f"\n[STEP 8] pos_weight = {pos_w:.1f}  (neg/pos from training set)")
+    pos_w = (n_neg / n_pos) if n_pos > 0 else 1.0
+    print(f"\n[STEP 8] pos_weight = {pos_w:.1f}  (neg/pos from training fire labels)")
     run_meta["pos_weight"] = pos_w
 
     # ----------------------------------------------------------------
@@ -438,13 +445,14 @@ def main():
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Parameters: {n_params:,}")
+    run_meta["n_params"] = n_params
 
     pos_weight_tensor = torch.tensor([pos_w], device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     best_val_loss = float("inf")
-    best_ckpt = os.path.join(ckpt_dir, "best_model.pt")
+    best_ckpt     = os.path.join(ckpt_dir, "best_model.pt")
 
     for epoch in range(1, args.epochs + 1):
         # -- train --
@@ -454,7 +462,7 @@ def main():
             xb = xb.to(device)
             yb = yb.to(device)
             logits = model(xb)
-            loss = criterion(logits, yb)
+            loss   = criterion(logits, yb)
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -478,18 +486,18 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save({
-                "epoch":        epoch,
-                "model_state":  model.state_dict(),
-                "meteo_means":  meteo_means,
-                "meteo_stds":   meteo_stds,
-                "patch_dim_in": patch_dim_in,
-                "patch_dim_out":patch_dim_out,
-                "hw":           hw,
-                "grid":         grid,
-                "args":         vars(args),
+                "epoch":         epoch,
+                "model_state":   model.state_dict(),
+                "meteo_means":   meteo_means,
+                "meteo_stds":    meteo_stds,
+                "patch_dim_in":  patch_dim_in,
+                "patch_dim_out": patch_dim_out,
+                "hw":            hw,
+                "grid":          grid,
+                "args":          vars(args),
             }, best_ckpt)
 
-    print(f"\n  Best val loss: {best_val_loss:.5f}  saved to {best_ckpt}")
+    print(f"\n  Best val loss: {best_val_loss:.5f}  saved -> {best_ckpt}")
     run_meta["best_val_loss"] = best_val_loss
 
     # ----------------------------------------------------------------
@@ -497,7 +505,6 @@ def main():
     # ----------------------------------------------------------------
     print("\n[STEP 10] Generating forecast tifs...")
 
-    # Reload best model
     ckpt = torch.load(best_ckpt, map_location=device)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
@@ -520,15 +527,14 @@ def main():
         if base_idx < in_days:
             continue
 
+        # Use ALL patches (no subsampling) for full spatial prediction
         hist = meteo_norm[base_idx - in_days: base_idx]   # (in_days, H, W, 3)
+        xp, pred_hw, pred_grid = patchify(hist, P)         # (n_patches, in_days, P^2*3)
 
-        # patchify → (n_patches, in_days, patch_dim_in)
-        xp, _, _ = patchify(hist, P)
-        xb = torch.from_numpy(xp).float().to(device)      # (n_patches, in_days, P²×3)
-
+        xb = torch.from_numpy(xp).float().to(device)      # (n_patches, in_days, P^2*3)
         with torch.no_grad():
-            logits = model(xb)                             # (n_patches, out_days, P²)
-            probs  = torch.sigmoid(logits).cpu().numpy()   # (n_patches, out_days, P²)
+            logits = model(xb)                             # (n_patches, out_days, P^2)
+            probs  = torch.sigmoid(logits).cpu().numpy()   # (n_patches, out_days, P^2)
 
         base_str = base_date.strftime("%Y%m%d")
         day_out  = os.path.join(output_dir, base_str)
@@ -541,16 +547,21 @@ def main():
                 day_out, f"fire_prob_lead{lead:02d}d_{target_date_str}.tif"
             )
 
-            # probs[:, lead-1, :] shape: (n_patches, P²)
-            prob_patches = probs[:, lead - 1, :]    # (n_patches, P²)
+            # (n_patches, P^2) → depatchify → (Hc, Wc)
+            prob_patches_lead = probs[:, lead - 1, :]      # (n_patches, P^2)
 
-            # depatchify: expects (n_patches, 1, P²) → (1, Hc, Wc)
-            prob_day = depatchify(
-                prob_patches[:, np.newaxis, :], grid, P, hw, num_channels=1
-            )                                        # (1, Hc, Wc)
-            prob_map = prob_day[0]                   # (Hc, Wc)
+            # depatchify expects (n_patches, D, P^2*C): add D dim, num_channels=1
+            prob_vol = depatchify(
+                prob_patches_lead[:, np.newaxis, :],        # (n_patches, 1, P^2)
+                pred_grid, P, pred_hw, num_channels=1
+            )                                               # (1, Hc, Wc) squeezed -> (Hc, Wc)
+            # depatchify squeezes C==1 out, result is (D, Hc, Wc) -> take D=0
+            if prob_vol.ndim == 3:
+                prob_map = prob_vol[0]
+            else:
+                prob_map = prob_vol
 
-            # Pad back to original H, W if cropped
+            # Pad back to original H x W if crop was applied
             if prob_map.shape != (H, W):
                 full = np.zeros((H, W), dtype=np.float32)
                 full[:prob_map.shape[0], :prob_map.shape[1]] = prob_map
@@ -559,7 +570,7 @@ def main():
             with rasterio.open(out_path, "w", **out_profile) as dst:
                 dst.write(prob_map.astype(np.float32), 1)
 
-        print(f"  [DONE] {base_date} → {out_days} lead tifs")
+        print(f"  [DONE] {base_date} -> {out_days} lead tifs")
 
     print("\n" + "=" * 70)
     print("TRAINING COMPLETE")
@@ -567,7 +578,7 @@ def main():
     print(f"  Checkpoint: {best_ckpt}")
     print("=" * 70)
 
-    run_meta["status"] = "success"
+    run_meta["status"]           = "success"
     run_meta["duration_seconds"] = round(time.time() - run_started_at, 3)
     with open(run_meta_path, "w") as f:
         json.dump(run_meta, f, indent=2)
