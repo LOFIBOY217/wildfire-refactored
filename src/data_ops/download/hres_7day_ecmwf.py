@@ -1,29 +1,40 @@
 #!/usr/bin/env python3
 """
-Download ECMWF HRES medium-range forecasts (1–7 day) for a date range.
+Download ECMWF TIGGE 7-day ensemble control forecasts for a date range.
 =======================================================================
-Downloads the operational high-resolution deterministic forecast (HRES)
-from the ECMWF MARS archive.  Parameters and structure mirror s2s_ecmwf.py
-so both scripts can be used as parallel data sources:
+TIGGE (THORPEX Interactive Grand Global Ensemble) is a public dataset
+accessible to all registered ECMWF users. It contains real historical
+forecast values (not reanalysis), making it suitable as a 7-day decoder
+input for comparison experiments with logistic baseline.
 
     S2S  (s2s_ecmwf.py)      : 14-46 day forecasts  ->  data/ecmwf_s2s/
-    HRES (hres_7day_ecmwf.py): 1-7  day forecasts  ->  data/ecmwf_hres/
+    TIGGE (hres_7day_ecmwf.py): 1-7  day forecasts  ->  data/ecmwf_hres/
 
-Key MARS differences vs S2S:
-    class   : od        (operational)
-    stream  : oper      (deterministic HRES)
-    type    : fc        (forecast)
-    step    : 24/48/72/96/120/144/168  (days 1-7 in hours)
-    No dataset / model / origin / expver fields needed.
+MARS parameters:
+    class   : ti          (TIGGE)
+    dataset : tigge
+    origin  : ecmf        (ECMWF deterministic-equivalent control)
+    type    : cf          (control forecast, 1 member = deterministic)
+    stream  : glob
+    expver  : prod
+    step    : 24/48/72/96/120/144/168  (days 1-7)
+    grid    : 0.5/0.5     (TIGGE standard, finer than S2S but coarser than ERA5)
+
+Variables (param):
+    167  2m temperature          (2t)
+    168  2m dewpoint temperature  (2d)
+    136  total column water       (tcw)
+    soil moisture and soil temperature are requested separately
+    (TIGGE uses WMO GRIB2 IDs, not ECMWF-local IDs)
 
 Output files:
-    data/ecmwf_hres/hres_ecmf_<YYYY-MM-DD>.grib
+    data/ecmwf_hres/tigge_ecmf_<YYYY-MM-DD>.grib
 
 Usage:
     Single date:   python -m src.data_ops.download.hres_7day_ecmwf 2023-04-28
     Date range:    python -m src.data_ops.download.hres_7day_ecmwf 2023-04-28 2025-08-21
     Batch mode:    python -m src.data_ops.download.hres_7day_ecmwf --batch
-                   python -m src.data_ops.download.hres_7day_ecmwf --batch --batch-start 2023-04-28 --batch-end 2025-08-21
+                   python -m src.data_ops.download.hres_7day_ecmwf --batch-start 2023-04-28 --batch-end 2025-08-21
 """
 
 import argparse
@@ -33,7 +44,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ecmwfapi import ECMWFService
+from ecmwfapi import ECMWFDataServer
 
 try:
     from src.config import load_config, get_path, add_config_argument
@@ -53,7 +64,12 @@ except ModuleNotFoundError:
 # Steps: 24h to 168h (day 1 through day 7)
 STEP_STRING = "24/48/72/96/120/144/168"
 
-# params: 2t / 2d / tcw / sm20 / st20  (same as S2S)
+# TIGGE params available for ECMWF origin:
+#   167 = 2m temperature (2t)
+#   168 = 2m dewpoint    (2d)
+#   136 = total column water (tcw)
+#   228086 = volumetric soil moisture  (swvl1, 0-7cm)
+#   228095 = soil temperature layer 1  (stl1,  0-7cm)
 PARAM_STRING = "136/167/168/228086/228095"
 
 
@@ -63,7 +79,7 @@ PARAM_STRING = "136/167/168/228086/228095"
 
 def download_single_date(server, date_str, outdir):
     """
-    Download ECMWF HRES 1-7 day forecast for a single date.
+    Download ECMWF TIGGE 7-day control forecast for a single date.
 
     Args:
         server:   ECMWFDataServer instance
@@ -73,28 +89,32 @@ def download_single_date(server, date_str, outdir):
     Returns:
         True on success, False on failure.
     """
-    target = outdir / f"hres_ecmf_{date_str}.grib"
+    target = outdir / f"tigge_ecmf_{date_str}.grib"
 
     if target.exists() and target.stat().st_size > 0:
         print(f"[SKIP] {date_str} - already exists: {target}")
         return True
 
     req = {
-        "class":   "od",          # operational
-        "stream":  "oper",        # HRES deterministic
-        "type":    "fc",          # forecast
+        "class":   "ti",          # TIGGE
+        "dataset": "tigge",
+        "origin":  "ecmf",        # ECMWF control forecast
+        "type":    "cf",          # control forecast (deterministic equivalent)
+        "stream":  "glob",
+        "expver":  "prod",
         "levtype": "sfc",
         "param":   PARAM_STRING,
         "date":    date_str,
         "time":    "00:00:00",
         "step":    STEP_STRING,
-        "grid":    "0.25/0.25",   # 0.25° global grid
+        "grid":    "0.5/0.5",     # TIGGE standard resolution
         "area":    "83/-141/41/-52",  # Canada bounding box (N/W/S/E)
+        "target":  str(target),
     }
 
     try:
         print(f"[DOWNLOADING] {date_str} -> {target}")
-        server.execute(req, str(target))
+        server.retrieve(req)
 
         if target.exists() and target.stat().st_size > 0:
             print(f"[SUCCESS] {date_str} - {target.stat().st_size / 1e6:.1f} MB")
@@ -189,7 +209,7 @@ def download_batch(server, dates, outdir, wait_time=5):
 
 def _build_parser():
     parser = argparse.ArgumentParser(
-        description="Download ECMWF HRES 1-7 day forecasts (sfc, 0.25°, Canada)"
+        description="Download ECMWF TIGGE 7-day control forecasts (sfc, 0.5°, Canada)"
     )
     add_config_argument(parser)
 
@@ -251,7 +271,6 @@ def main(argv=None):
     if args.outdir:
         outdir = Path(args.outdir)
     else:
-        # Fall back to data/ecmwf_hres next to the project root
         project_root = Path(get_path(cfg, "fwi_dir")).parent.parent
         outdir = project_root / "data" / "ecmwf_hres"
 
@@ -273,11 +292,8 @@ def main(argv=None):
         sys.exit(2)
 
     # ---- Connect to ECMWF ----
-    # ECMWFService (not ECMWFDataServer) is used here because HRES operational
-    # forecasts (class=od) live in the raw MARS archive, not the public datasets
-    # API endpoint that ECMWFDataServer routes through.
-    server = ECMWFService(
-        "mars",
+    # TIGGE is a public dataset accessible via ECMWFDataServer (same as S2S).
+    server = ECMWFDataServer(
         url="https://api.ecmwf.int/v1",
         key=ecmwf_key,
         email=ecmwf_email,
