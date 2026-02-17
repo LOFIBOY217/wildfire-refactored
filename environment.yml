@@ -1,13 +1,16 @@
 # Base environment shared by all platforms.
 # Then apply one optional overlay:
 # - Local with pygrib: environments/environment.local-pygrib.yml
-# - HPC with cfgrib: environments/environment.hpc-cfgrib.yml
+# - HPC with cfgrib:   environments/environment.hpc-cfgrib.yml
+#
+# NOTE: channel_priority: strict is required so that conda-forge packages
+# (especially rasterio/GDAL) are not mixed with defaults channel DLLs,
+# which causes silent crashes on Windows.
 name: wildfore-r
 channels:
   - conda-forge
-  - https://repo.anaconda.com/pkgs/main
-  - https://repo.anaconda.com/pkgs/r
-  - https://repo.anaconda.com/pkgs/msys2
+  - defaults
+channel_priority: strict
 dependencies:
   - python=3.11
   - pyyaml
@@ -26,3 +29,8 @@ dependencies:
   - geopandas
   - libpysal
   - spreg
+  - pip:
+    # GPU PyTorch must be installed via pip with the CUDA index URL.
+    # Run manually after conda env create:
+    #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    - torch
