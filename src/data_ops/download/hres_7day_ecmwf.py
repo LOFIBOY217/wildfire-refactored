@@ -33,7 +33,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ecmwfapi import ECMWFDataServer
+from ecmwfapi import ECMWFService
 
 try:
     from src.config import load_config, get_path, add_config_argument
@@ -90,12 +90,11 @@ def download_single_date(server, date_str, outdir):
         "step":    STEP_STRING,
         "grid":    "0.25/0.25",   # 0.25° global grid
         "area":    "83/-141/41/-52",  # Canada bounding box (N/W/S/E)
-        "target":  str(target),
     }
 
     try:
         print(f"[DOWNLOADING] {date_str} -> {target}")
-        server.retrieve(req)
+        server.execute(req, str(target))
 
         if target.exists() and target.stat().st_size > 0:
             print(f"[SUCCESS] {date_str} - {target.stat().st_size / 1e6:.1f} MB")
@@ -274,7 +273,11 @@ def main(argv=None):
         sys.exit(2)
 
     # ---- Connect to ECMWF ----
-    server = ECMWFDataServer(
+    # ECMWFService (not ECMWFDataServer) is used here because HRES operational
+    # forecasts (class=od) live in the raw MARS archive, not the public datasets
+    # API endpoint that ECMWFDataServer routes through.
+    server = ECMWFService(
+        "mars",
         url="https://api.ecmwf.int/v1",
         key=ecmwf_key,
         email=ecmwf_email,
