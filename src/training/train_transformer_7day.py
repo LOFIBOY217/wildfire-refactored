@@ -49,7 +49,7 @@ except ModuleNotFoundError:
     from src.config import load_config, get_path, add_config_argument
 
 from src.utils.date_utils import extract_date_from_filename
-from src.utils.raster_io import read_singleband_stack
+from src.utils.raster_io import read_singleband_stack, clean_nodata
 from src.utils.patch_utils import patchify, depatchify
 from src.data_ops.processing.rasterize_fires import load_ciffc_data, rasterize_fires_batch
 from src.models.transformer_7day import FireProb7DayTransformer
@@ -308,6 +308,22 @@ def main():
     T, H, W = fwi_stack.shape
     print(f"  Shape: T={T}  H={H}  W={W}")
 
+    # Clean NoData values (e.g. -3.4e38 sentinel) before any statistics.
+    # Mirrors load_fwi_file() in raster_io.py used by the S2S transformer.
+    def _clean_stack(stack):
+        stack = clean_nodata(stack.astype(np.float32))   # extreme neg/inf -> NaN
+        fill = float(np.nanmean(stack))
+        if not np.isfinite(fill):
+            fill = 0.0
+        return np.nan_to_num(stack, nan=fill, posinf=fill, neginf=fill)
+
+    fwi_stack = _clean_stack(fwi_stack)
+    t2m_stack = _clean_stack(t2m_stack)
+    d2m_stack = _clean_stack(d2m_stack)
+    print(f"  FWI  range after clean: [{fwi_stack.min():.2f}, {fwi_stack.max():.2f}]")
+    print(f"  2t   range after clean: [{t2m_stack.min():.2f}, {t2m_stack.max():.2f}]")
+    print(f"  2d   range after clean: [{d2m_stack.min():.2f}, {d2m_stack.max():.2f}]")
+
     with rasterio.open(fwi_paths[0]) as src:
         profile = src.profile
 
@@ -420,8 +436,8 @@ def main():
     train_fire = fire_stack[:train_end_idx]
     n_pos = float(train_fire.sum())
     n_neg = float(train_fire.size) - n_pos
-    pos_w = (n_neg / n_pos) if n_pos > 0 else 1.0
-    print(f"\n[STEP 8] pos_weight = {pos_w:.1f}  (neg/pos from training fire labels)")
+    pos_w = min((n_neg / n_pos) if n_pos > 0 else 1.0, 1000.0)
+    print(f"\n[STEP 8] pos_weight = {pos_w:.1f}  (neg/pos clamped to max 1000)")
     run_meta["pos_weight"] = pos_w
 
     # ----------------------------------------------------------------
