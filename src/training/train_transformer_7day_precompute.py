@@ -354,15 +354,21 @@ def main():
     # ----------------------------------------------------------------
     print("\n[STEP 6] Standardising per-channel (FWI, 2t, 2d)...")
 
-    # Stack [T, H, W, 3]
+    # Stack [T, H, W, 3] then free the three separate stacks immediately
     meteo_stack = np.stack([fwi_stack, t2m_stack, d2m_stack], axis=-1).astype(np.float32)
+    del fwi_stack, t2m_stack, d2m_stack   # free ~58 GB before normalising
 
-    train_meteo = meteo_stack[:train_end_idx]          # [T_train, H, W, 3]
+    train_meteo = meteo_stack[:train_end_idx]          # [T_train, H, W, 3] (view, no copy)
     meteo_means = train_meteo.reshape(-1, 3).mean(axis=0)
     meteo_stds  = train_meteo.reshape(-1, 3).std(axis=0) + 1e-6
+    del train_meteo
 
-    meteo_norm = (meteo_stack - meteo_means) / meteo_stds
-    meteo_norm = np.clip(meteo_norm, -10.0, 10.0).astype(np.float32)
+    # Normalise in-place to avoid allocating a second 58 GB array
+    meteo_stack -= meteo_means
+    meteo_stack /= meteo_stds
+    np.clip(meteo_stack, -10.0, 10.0, out=meteo_stack)
+    meteo_norm = meteo_stack   # rename; meteo_stack reference dropped below
+    del meteo_stack
 
     print(f"  Means (FWI,2t,2d): {meteo_means.round(3)}")
     print(f"  Stds  (FWI,2t,2d): {meteo_stds.round(3)}")
