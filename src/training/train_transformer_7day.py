@@ -521,7 +521,7 @@ def main():
     # ----------------------------------------------------------------
     print("\n[STEP 10] Generating forecast tifs...")
 
-    ckpt = torch.load(best_ckpt, map_location=device)
+    ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
