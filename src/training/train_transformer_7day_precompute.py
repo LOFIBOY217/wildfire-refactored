@@ -354,21 +354,26 @@ def main():
     # ----------------------------------------------------------------
     print("\n[STEP 6] Standardising per-channel (FWI, 2t, 2d)...")
 
-    # Stack [T, H, W, 3] then free the three separate stacks immediately
-    meteo_stack = np.stack([fwi_stack, t2m_stack, d2m_stack], axis=-1).astype(np.float32)
-    del fwi_stack, t2m_stack, d2m_stack   # free ~58 GB before normalising
+    # Build meteo_norm [T, H, W, 3] channel by channel to avoid peak of 116 GB.
+    # np.stack() would allocate a new 58 GB array while the three 19.5 GB sources
+    # are still alive → 116 GB peak.  Instead, allocate the target once, then
+    # move each channel in and immediately delete the source.
+    meteo_norm = np.empty((T, H, W, 3), dtype=np.float32)
+    meteo_norm[..., 0] = fwi_stack;  del fwi_stack   # write + free 19.5 GB
+    meteo_norm[..., 1] = t2m_stack;  del t2m_stack   # write + free 19.5 GB
+    meteo_norm[..., 2] = d2m_stack;  del d2m_stack   # write + free 19.5 GB
+    # Peak so far: 58 GB (meteo_norm only)
 
-    train_meteo = meteo_stack[:train_end_idx]          # [T_train, H, W, 3] (view, no copy)
+    # Compute normalisation stats from training slice (view, no copy)
+    train_meteo = meteo_norm[:train_end_idx]           # [T_train, H, W, 3]
     meteo_means = train_meteo.reshape(-1, 3).mean(axis=0)
     meteo_stds  = train_meteo.reshape(-1, 3).std(axis=0) + 1e-6
     del train_meteo
 
-    # Normalise in-place to avoid allocating a second 58 GB array
-    meteo_stack -= meteo_means
-    meteo_stack /= meteo_stds
-    np.clip(meteo_stack, -10.0, 10.0, out=meteo_stack)
-    meteo_norm = meteo_stack   # rename; meteo_stack reference dropped below
-    del meteo_stack
+    # Normalise in-place — no extra 58 GB allocation
+    meteo_norm -= meteo_means
+    meteo_norm /= meteo_stds
+    np.clip(meteo_norm, -10.0, 10.0, out=meteo_norm)
 
     print(f"  Means (FWI,2t,2d): {meteo_means.round(3)}")
     print(f"  Stds  (FWI,2t,2d): {meteo_stds.round(3)}")
