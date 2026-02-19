@@ -462,20 +462,34 @@ def main():
                           shuffle=False, num_workers=0)
 
     # ----------------------------------------------------------------
-    # STEP 8  Compute Focal Loss alpha from true positive rate
+    # STEP 8  Compute Focal Loss alpha from true negative rate
     # ----------------------------------------------------------------
-    # alpha = true positive rate in training data (no clamping).
-    # The precompute version used pos_weight=min(neg/pos, 1000) which was
-    # far below the true ~135,000:1 ratio, causing the trivial-zero solution.
-    # Focal Loss with alpha=pos_rate handles this correctly without
-    # the gradient explosion risk of a raw pos_weight=135,000.
+    # In binary Focal Loss, alpha is the weight assigned to the POSITIVE class.
+    # alpha must be in (0,1) and should be LARGE (close to 1) to upweight
+    # the rare positive class.
+    #
+    # The natural choice for extreme imbalance:
+    #   alpha = neg_rate = n_neg / (n_pos + n_neg)  ≈ 0.9999
+    #   1 - alpha = pos_rate ≈ 0.000007  → negative class weight (tiny)
+    #
+    # Concretely in forward():
+    #   positive pixel (y=1): alpha_t = alpha           ≈ 0.9999  (high weight)
+    #   negative pixel (y=0): alpha_t = 1 - alpha       ≈ 0.0001  (near-zero)
+    #
+    # This is the correct dual role of alpha:
+    #   1. Down-weights the flood of easy negatives via (1-alpha) ≈ 0
+    #   2. The (1-p_t)^gamma term further suppresses confident easy examples
+    #
+    # Do NOT use pos_rate as alpha — that would flip the weights and give
+    # positive pixels near-zero weight, causing loss → 0 immediately.
     train_fire = fire_stack[:train_end_idx]
     n_pos  = float(train_fire.sum())
     n_neg  = float(train_fire.size) - n_pos
-    alpha  = n_pos / (n_pos + n_neg)   # true positive rate ≈ 0.000742%
+    pos_rate = n_pos / (n_pos + n_neg)
+    alpha  = 1.0 - pos_rate              # weight for positive class ≈ 0.9999
     gamma  = args.focal_gamma
     print(f"\n[STEP 8] Focal Loss  alpha={alpha:.7f}  gamma={gamma}")
-    print(f"         true neg/pos ratio = {n_neg/n_pos:.0f}:1  (no artificial cap)")
+    print(f"         pos_rate={pos_rate:.7f}  neg/pos ratio = {n_neg/n_pos:.0f}:1")
     run_meta["focal_alpha"] = alpha
     run_meta["focal_gamma"] = gamma
 
