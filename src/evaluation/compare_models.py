@@ -45,13 +45,47 @@ _PALETTE = [
 
 
 def _load_model(result_dir: str) -> pd.DataFrame:
-    """Load and deduplicate all_results.csv from a model's evaluation dir."""
-    csv_path = os.path.join(result_dir, "all_results.csv")
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(
-            f"all_results.csv not found in {result_dir}\n"
-            f"Run evaluate_forecast.py first."
-        )
+    """Load and deduplicate all_results.csv from a model's evaluation dir.
+
+    result_dir can be:
+    1. A direct path to an all_results.csv file
+    2. A directory that directly contains all_results.csv
+    3. A parent directory — will auto-search one level of subdirectories
+    """
+    # Case 1: user passed the csv file directly
+    if result_dir.endswith(".csv") and os.path.isfile(result_dir):
+        csv_path = result_dir
+    else:
+        csv_path = os.path.join(result_dir, "all_results.csv")
+        # Case 3: not found directly → search one level of subdirectories
+        if not os.path.exists(csv_path):
+            found = []
+            if os.path.isdir(result_dir):
+                for sub in sorted(os.listdir(result_dir)):
+                    candidate = os.path.join(result_dir, sub, "all_results.csv")
+                    if os.path.isfile(candidate):
+                        found.append(candidate)
+            if len(found) == 1:
+                print(f"  [auto-found] {found[0]}")
+                csv_path = found[0]
+            elif len(found) > 1:
+                raise FileNotFoundError(
+                    f"Multiple all_results.csv found under {result_dir}:\n"
+                    + "\n".join(f"  {p}" for p in found)
+                    + "\nPlease specify the exact subdirectory."
+                )
+            else:
+                contents = ""
+                if os.path.isdir(result_dir):
+                    entries = os.listdir(result_dir)
+                    contents = "\nDirectory contents:\n" + "\n".join(
+                        f"  {e}" for e in sorted(entries)
+                    )
+                raise FileNotFoundError(
+                    f"all_results.csv not found in: {result_dir}{contents}\n"
+                    f"Run evaluate_forecast.py first, or pass the correct path."
+                )
+
     df = pd.read_csv(csv_path)
     # Each (base_date, lead_time) row is duplicated across thresholds for AUC/Brier
     # (those metrics don't depend on threshold). Deduplicate to get one row per date×lead.
