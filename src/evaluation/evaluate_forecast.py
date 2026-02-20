@@ -47,6 +47,9 @@ def main():
     ap.add_argument("--eval_start", type=str, default="2025-08-01")
     ap.add_argument("--eval_end", type=str, default="2025-12-31")
     ap.add_argument("--forecast_horizon", type=int, default=7)
+    ap.add_argument("--run_name", type=str, default=None,
+                    help="Sub-directory name for this evaluation run. "
+                         "Defaults to the basename of --forecast_dir.")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -55,7 +58,9 @@ def main():
     )
     ciffc_csv = get_path(cfg, 'ciffc_csv')
     fwi_dir = get_path(cfg, 'fwi_dir')
-    output_dir = os.path.join(get_path(cfg, 'output_dir'), 'evaluation_confusion_matrix')
+    model_name = args.run_name or os.path.basename(forecast_dir.rstrip('/\\'))
+    output_dir = os.path.join(get_path(cfg, 'output_dir'),
+                              'evaluation_confusion_matrix', model_name)
 
     thresholds = cfg.get('evaluation', {}).get('thresholds', [0.01, 0.05, 0.1, 0.2, 0.3, 0.5])
 
@@ -71,6 +76,7 @@ def main():
     print(f"Evaluation period: {eval_start} to {eval_end}")
     print(f"Forecast horizon: {args.forecast_horizon} days")
     print(f"Thresholds: {thresholds}")
+    print(f"Output dir  : {output_dir}")
     print("=" * 70)
 
     os.makedirs(output_dir, exist_ok=True)
