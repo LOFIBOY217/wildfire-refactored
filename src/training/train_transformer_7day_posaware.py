@@ -175,7 +175,7 @@ def main():
     ap.add_argument("--nhead",        type=int,   default=4)
     ap.add_argument("--enc_layers",   type=int,   default=2)
     ap.add_argument("--dec_layers",   type=int,   default=2)
-    ap.add_argument("--epochs",       type=int,   default=50)
+    ap.add_argument("--epochs",       type=int,   default=30)
     ap.add_argument("--batch_size",   type=int,   default=256)
     ap.add_argument("--lr",           type=float, default=3e-4)
     ap.add_argument("--seed",         type=int,   default=42)
@@ -458,9 +458,9 @@ def main():
         pos_pixels += p
         neg_pixels += patch_fire.size - p
 
-    pos_weight_val = neg_pixels / max(pos_pixels, 1)
+    pos_weight_val = min(neg_pixels / max(pos_pixels, 1), 10.0)
     print(f"  Within positive patches:  pos={pos_pixels:,}  neg={neg_pixels:,}")
-    print(f"  pos_weight = {pos_weight_val:.2f}  (true ratio within positive patches)")
+    print(f"  pos_weight = {pos_weight_val:.2f}  (capped at 10; raw ratio = {neg_pixels/max(pos_pixels,1):.1f})")
     run_meta["pos_weight"] = pos_weight_val
 
     # ----------------------------------------------------------------
