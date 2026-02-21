@@ -1,39 +1,36 @@
 """
-Train 7-Day Fire Probability Transformer  (Positive-Aware Sampling Version)
-============================================================================
-This is a variant of train_transformer_7day_precompute.py that fixes the
-extreme class imbalance problem (positive rate ≈ 0.000742%) by filtering
-training samples to only patches that contain at least one positive fire pixel.
+Train 7-Day Fire Probability Transformer  (Mixed Sampling Version)
+==================================================================
+Builds on train_transformer_7day_posaware.py with an additional fix:
+training now includes both positive-only patches AND a controlled number
+of pure-negative patches, so the model learns to distinguish fire from
+background at the patch level.
 
-Problem with focal/precompute versions:
-    Each 16×16 patch = 256 pixels → avg 0.0019 fire pixels/patch.
-    A batch of 256 patches has on average only 0.46 positive pixels.
-    Most batches have ZERO positive samples → zero gradient signal.
-    The model finds the trivial solution (predict 0 everywhere) and
-    training loss collapses to near-0. AUC ≈ 0.50 (random).
+Problem with posaware-only version:
+    Training set contained ONLY patches with ≥1 fire pixel.
+    Model never saw pure-background patches → outputs similar mid-range
+    probabilities for all patches at inference → FAR=1.0 at all thresholds,
+    CSI≈0 despite AUC=0.78.
 
-Fix — Positive-Aware Patch Filtering:
-    After pre-computing fire_patched (T, n_patches, 256), scan all
-    training (window, patch) pairs and keep only those where the fire
-    label contains ≥1 positive pixel.
+Fix — Mixed Patch Sampling:
+    training pairs = pos_pairs  ∪  neg_pairs (randomly sampled)
+    --neg_ratio controls how many neg patches per positive patch (default=3).
 
-    Within a positive-containing patch: neg:pos ≈ 3:1 → manageable with
-    standard BCEWithLogitsLoss + true pos_weight (no clamping needed).
+    neg patches are sampled randomly from the full (window, patch) space,
+    excluding any pair already in pos_pairs, using a set for O(1) lookup.
 
     Validation set remains UNFILTERED for honest evaluation on all pixels.
 
-All other logic (pre-computed patches, STEP 1-6, STEP 10) is identical
-to train_transformer_7day_precompute.py.
-
 Output format (compatible with evaluate_forecast.py):
-    outputs/transformer7d_fire_prob_posaware/YYYYMMDD/fire_prob_lead{k:02d}d_YYYYMMDD.tif
+    outputs/transformer7d_fire_prob_mixed/YYYYMMDD/fire_prob_lead{k:02d}d_YYYYMMDD.tif
 
 Usage:
     python -m src.training.train_transformer_7day_posaware \\
         --config configs/paths_windows.yaml \\
         --data_start 2023-05-05 \\
         --pred_start 2025-07-01 \\
-        --pred_end   2025-08-14
+        --pred_end   2025-08-14 \\
+        --neg_ratio  3
 """
 
 import argparse
@@ -73,28 +70,28 @@ from src.models.transformer_7day import FireProb7DayTransformer
 # Datasets
 # ------------------------------------------------------------------ #
 
-class Fire7DayDatasetPosAware(Dataset):
+class Fire7DayDatasetMixed(Dataset):
     """
-    Training dataset: only (window, patch) pairs containing ≥1 positive pixel.
+    Training dataset: pos_pairs (patches with ≥1 fire pixel) mixed with
+    randomly sampled neg_pairs (pure-background patches).
 
-    pos_pairs : list of (win_i, patch_i) indices pre-filtered from training windows.
-    Every sample returned is guaranteed to have at least one fire pixel,
-    ensuring every training batch contains meaningful gradient signal.
+    all_pairs : pre-shuffled list of (win_i, patch_i) tuples.
+    Each __getitem__ is pure O(1) array indexing.
     """
 
-    def __init__(self, meteo_patched, fire_patched, windows, hw, grid, pos_pairs):
+    def __init__(self, meteo_patched, fire_patched, windows, hw, grid, all_pairs):
         self.meteo     = meteo_patched
         self.fire      = fire_patched
         self.windows   = windows
         self.hw        = hw
         self.grid      = grid
-        self.pos_pairs = pos_pairs  # list of (win_i, patch_i)
+        self.all_pairs = all_pairs  # list of (win_i, patch_i)
 
     def __len__(self):
-        return len(self.pos_pairs)
+        return len(self.all_pairs)
 
     def __getitem__(self, idx):
-        win_i, patch_i = self.pos_pairs[idx]
+        win_i, patch_i = self.all_pairs[idx]
         hs, he, fs, fe = self.windows[win_i]
         x = self.meteo[hs:he, patch_i, :]   # (in_days, in_dim)
         y = self.fire[fs:fe, patch_i, :]     # (out_days, out_dim)
@@ -179,6 +176,9 @@ def main():
     ap.add_argument("--batch_size",   type=int,   default=256)
     ap.add_argument("--lr",           type=float, default=3e-4)
     ap.add_argument("--seed",         type=int,   default=42)
+    ap.add_argument("--neg_ratio",    type=float, default=3.0,
+                    help="Neg-only patches per positive patch in training set (default=3). "
+                         "Higher = more background exposure, better calibration.")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -194,9 +194,9 @@ def main():
                 else get_path(cfg, "ecmwf_dir")
     ciffc_csv  = get_path(cfg, "ciffc_csv")
     output_dir = os.path.join(get_path(cfg, "output_dir"),
-                              "transformer7d_fire_prob_posaware")
+                              "transformer7d_fire_prob_mixed")
     ckpt_dir   = os.path.join(get_path(cfg, "checkpoint_dir"),
-                              "transformer_7day_posaware")
+                              "transformer_7day_mixed")
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(ckpt_dir,   exist_ok=True)
 
@@ -230,13 +230,14 @@ def main():
     out_days        = args.out_days
 
     print("\n" + "=" * 70)
-    print("7-DAY FIRE PROBABILITY TRANSFORMER  [Positive-Aware Sampling]")
+    print("7-DAY FIRE PROBABILITY TRANSFORMER  [Mixed Sampling]")
     print("=" * 70)
     print(f"  data_start        : {data_start_date}")
     print(f"  pred_start        : {pred_start_date}  (train/val split boundary)")
     print(f"  pred_end          : {pred_end_date}")
     print(f"  in_days / out_days: {in_days} / {out_days}")
     print(f"  patch_size        : {args.patch_size}")
+    print(f"  neg_ratio         : {args.neg_ratio}  (neg patches per pos patch)")
     print(f"  d_model / nhead   : {args.d_model} / {args.nhead}")
     print(f"  epochs / batch    : {args.epochs} / {args.batch_size}  lr={args.lr}")
     print("=" * 70)
@@ -418,10 +419,12 @@ def main():
     print(f"  Train windows: {len(train_wins)}  Val windows: {len(val_wins)}")
 
     # ----------------------------------------------------------------
-    # STEP 7b  Filter training pairs to positive-containing patches
+    # STEP 7b  Build positive pairs; sample negative pairs
     # ----------------------------------------------------------------
-    print("\n[STEP 7b] Filtering training pairs to positive-containing patches...")
+    print("\n[STEP 7b] Filtering positive patches + sampling negative patches...")
     t0_filter = time.time()
+
+    # -- find positive (window, patch) pairs --
     pos_pairs = []
     for win_i, (hs, he, fs, fe) in enumerate(train_wins):
         for patch_i in range(n_patches):
@@ -435,9 +438,6 @@ def main():
     total_pairs = len(train_wins) * n_patches
     pct = 100.0 * len(pos_pairs) / max(total_pairs, 1)
     print(f"  Positive pairs: {len(pos_pairs):,} / {total_pairs:,}  ({pct:.3f}%)")
-    print(f"  Filter time: {time.time()-t0_filter:.0f}s")
-    run_meta["pos_pairs"]   = len(pos_pairs)
-    run_meta["total_pairs"] = total_pairs
 
     if len(pos_pairs) == 0:
         raise RuntimeError(
@@ -445,29 +445,61 @@ def main():
             "Check ciffc_csv and date alignment."
         )
 
+    # -- randomly sample negative patches (no enumeration of full 18M set) --
+    n_neg_target = int(len(pos_pairs) * args.neg_ratio)
+    pos_set  = set(pos_pairs)   # O(1) lookup
+    neg_set  = set()
+    rng      = np.random.default_rng(args.seed)
+    n_wins   = len(train_wins)
+    t0_neg   = time.time()
+    while len(neg_set) < n_neg_target:
+        win_i   = int(rng.integers(0, n_wins))
+        patch_i = int(rng.integers(0, n_patches))
+        pair    = (win_i, patch_i)
+        if pair not in pos_set:
+            neg_set.add(pair)
+    neg_pairs = list(neg_set)
+
+    # -- combine and shuffle --
+    all_pairs = list(pos_pairs) + neg_pairs
+    rng.shuffle(all_pairs)
+    print(f"  Neg pairs sampled: {len(neg_pairs):,}  (neg_ratio={args.neg_ratio})")
+    print(f"  Total train pairs: {len(all_pairs):,}  "
+          f"(pos {len(pos_pairs)/len(all_pairs)*100:.1f}% / "
+          f"neg {len(neg_pairs)/len(all_pairs)*100:.1f}%)")
+    print(f"  Sampling time: {time.time()-t0_filter:.0f}s")
+
+    run_meta["pos_pairs"]   = len(pos_pairs)
+    run_meta["neg_pairs"]   = len(neg_pairs)
+    run_meta["total_pairs"] = len(all_pairs)
+
     # ----------------------------------------------------------------
-    # STEP 8  Compute pos_weight from filtered patches; build criterion
+    # STEP 8  Compute pos_weight; build BCE criterion
     # ----------------------------------------------------------------
-    print("\n[STEP 8] Computing BCE pos_weight from positive-containing patches...")
+    print("\n[STEP 8] Computing BCE pos_weight...")
     pos_pixels = 0
-    neg_pixels = 0
+    neg_pixels_in_pos = 0
     for win_i, patch_i in pos_pairs:
         hs, he, fs, fe = train_wins[win_i]
-        patch_fire = fire_patched[fs:fe, patch_i, :]
-        p = int(patch_fire.sum())
-        pos_pixels += p
-        neg_pixels += patch_fire.size - p
+        pf = fire_patched[fs:fe, patch_i, :]
+        p  = int(pf.sum())
+        pos_pixels        += p
+        neg_pixels_in_pos += pf.size - p
 
-    pos_weight_val = min(neg_pixels / max(pos_pixels, 1), 10.0)
-    print(f"  Within positive patches:  pos={pos_pixels:,}  neg={neg_pixels:,}")
-    print(f"  pos_weight = {pos_weight_val:.2f}  (capped at 10; raw ratio = {neg_pixels/max(pos_pixels,1):.1f})")
+    # neg patches contribute only negative pixels
+    neg_pixels_total = neg_pixels_in_pos + len(neg_pairs) * out_dim * out_days
+    raw_ratio        = neg_pixels_total / max(pos_pixels, 1)
+    pos_weight_val   = min(raw_ratio, 100.0)   # cap to avoid numerical instability
+    print(f"  pos_pixels : {pos_pixels:,}")
+    print(f"  neg_pixels : {neg_pixels_total:,}  (pos patches + neg patches)")
+    print(f"  raw ratio  : {raw_ratio:.1f}   pos_weight (capped at 100) = {pos_weight_val:.2f}")
     run_meta["pos_weight"] = pos_weight_val
 
     # ----------------------------------------------------------------
     # Build datasets and dataloaders
     # ----------------------------------------------------------------
-    train_ds = Fire7DayDatasetPosAware(
-        meteo_patched, fire_patched, train_wins, hw, grid, pos_pairs
+    train_ds = Fire7DayDatasetMixed(
+        meteo_patched, fire_patched, train_wins, hw, grid, all_pairs
     )
     if val_wins:
         val_ds = Fire7DayDatasetPrecompute(
@@ -480,7 +512,7 @@ def main():
     patch_dim_in  = in_dim
     patch_dim_out = out_dim
 
-    print(f"\n  Train samples (pos-filtered): {len(train_ds):,}")
+    print(f"\n  Train samples (mixed pos+neg): {len(train_ds):,}")
     print(f"  Val   samples (unfiltered)  : {len(val_ds):,}")
     print(f"  Grid: {grid[0]}x{grid[1]} patches/frame  "
           f"(dim_in={patch_dim_in}  dim_out={patch_dim_out})")
