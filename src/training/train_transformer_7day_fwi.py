@@ -159,6 +159,9 @@ def main():
     ap.add_argument("--val_sample",   type=float, default=0.1,
                     help="Fraction of all-patch val pairs to use (default=0.1). "
                          "Full val set is large; subsample for speed.")
+    ap.add_argument("--train_sample", type=float, default=0.02,
+                    help="Fraction of all (window,patch) train pairs per epoch (default=0.02). "
+                         "Full set is ~18M+ on Canada-wide grid; 0.02 → ~375K pairs.")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -218,7 +221,7 @@ def main():
     print(f"  patch_size        : {args.patch_size}")
     print(f"  d_model / nhead   : {args.d_model} / {args.nhead}")
     print(f"  epochs / batch    : {args.epochs} / {args.batch_size}  lr={args.lr}")
-    print(f"  val_sample        : {args.val_sample}")
+    print(f"  train_sample      : {args.train_sample}  val_sample: {args.val_sample}")
     print("=" * 70)
 
     # ----------------------------------------------------------------
@@ -295,12 +298,23 @@ def main():
         profile = src.profile
 
     # ----------------------------------------------------------------
-    # STEP 4  Save raw FWI as regression target (BEFORE normalisation)
+    # STEP 4  Normalise FWI target (BEFORE meteo normalisation uses train_end_idx)
     # ----------------------------------------------------------------
-    print("\n[STEP 4] Saving raw FWI stack as regression target...")
-    # fwi_raw keeps the original scale (0–100+) used as y in MSELoss
-    fwi_raw = fwi_stack.copy()   # (T, H, W)  raw FWI values
-    print(f"  fwi_raw shape: {fwi_raw.shape}  range: [{fwi_raw.min():.2f}, {fwi_raw.max():.2f}]")
+    # We must normalise the FWI regression target to prevent NaN loss:
+    # raw FWI can reach 200+, MSELoss on raw scale causes gradient explosion.
+    # Stats are computed from training period only; saved to checkpoint for
+    # de-normalisation when writing output tifs.
+    print("\n[STEP 4] Normalising FWI regression target (training-set stats)...")
+    # train_end_idx not yet computed — derive it here temporarily
+    _train_end_tmp = next(
+        (i for i, d in enumerate(aligned_dates) if d >= pred_start_date), len(aligned_dates)
+    )
+    fwi_train_mean = float(fwi_stack[:_train_end_tmp].mean())
+    fwi_train_std  = float(fwi_stack[:_train_end_tmp].std()) + 1e-6
+    fwi_raw_norm   = (fwi_stack.copy() - fwi_train_mean) / fwi_train_std
+    np.clip(fwi_raw_norm, -10.0, 10.0, out=fwi_raw_norm)
+    print(f"  fwi_train_mean={fwi_train_mean:.3f}  fwi_train_std={fwi_train_std:.3f}")
+    print(f"  fwi_raw_norm range: [{fwi_raw_norm.min():.2f}, {fwi_raw_norm.max():.2f}]")
 
     # ----------------------------------------------------------------
     # STEP 5  Find train/val split index
@@ -377,15 +391,14 @@ def main():
     t0_fwi = time.time()
     fwi_target_patched = np.empty((T, n_patches, out_dim), dtype=np.float32)
     for t in range(T):
-        # patchify expects (1, H, W) or (C, H, W); fwi_raw is (T, H, W)
-        patches, _, _ = patchify(fwi_raw[t:t + 1], P)
+        patches, _, _ = patchify(fwi_raw_norm[t:t + 1], P)
         fwi_target_patched[t] = patches[:, 0, :]
         if t % 50 == 0 or t == T - 1:
             print(f"  fwi   frame {t:4d}/{T}  ({time.time()-t0_fwi:.0f}s elapsed)")
     print(f"  fwi_target_patched: {fwi_target_patched.shape}  "
           f"{fwi_target_patched.nbytes/1e9:.2f} GB  ({time.time()-t0_fwi:.0f}s)")
 
-    del fwi_raw  # free memory
+    del fwi_raw_norm  # free memory
 
     all_windows = _build_windows(T, in_days, out_days)
     print(f"\n  Total time windows: {len(all_windows)}")
@@ -406,13 +419,17 @@ def main():
     rng = np.random.default_rng(args.seed)
 
     # All windows × all patches — no positive/negative discrimination
-    all_train_pairs = [
+    all_train_pairs_full = [
         (win_i, patch_i)
         for win_i in range(len(train_wins))
         for patch_i in range(n_patches)
     ]
+    n_train   = max(1, int(len(all_train_pairs_full) * args.train_sample))
+    train_idx = rng.choice(len(all_train_pairs_full), size=n_train, replace=False)
+    all_train_pairs = [all_train_pairs_full[i] for i in sorted(train_idx)]
     rng.shuffle(all_train_pairs)
-    print(f"  Total train pairs: {len(all_train_pairs):,}  ({time.time()-t0:.0f}s)")
+    print(f"  Total train pairs (sampled {args.train_sample*100:.1f}%): "
+          f"{len(all_train_pairs):,} / {len(all_train_pairs_full):,}  ({time.time()-t0:.0f}s)")
 
     # Subsample validation pairs for speed (full set can be very large)
     all_val_pairs = [
@@ -529,15 +546,17 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save({
-                "epoch":         epoch,
-                "model_state":   model.state_dict(),
-                "meteo_means":   meteo_means,
-                "meteo_stds":    meteo_stds,
-                "patch_dim_in":  patch_dim_in,
-                "patch_dim_out": patch_dim_out,
-                "hw":            hw,
-                "grid":          grid,
-                "args":          vars(args),
+                "epoch":          epoch,
+                "model_state":    model.state_dict(),
+                "meteo_means":    meteo_means,
+                "meteo_stds":     meteo_stds,
+                "fwi_train_mean": fwi_train_mean,
+                "fwi_train_std":  fwi_train_std,
+                "patch_dim_in":   patch_dim_in,
+                "patch_dim_out":  patch_dim_out,
+                "hw":             hw,
+                "grid":           grid,
+                "args":           vars(args),
             }, best_ckpt)
 
     best_rmse = best_val_loss ** 0.5
@@ -553,6 +572,8 @@ def main():
     ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
+    fwi_train_mean = ckpt["fwi_train_mean"]
+    fwi_train_std  = ckpt["fwi_train_std"]
 
     out_profile = profile.copy()
     out_profile.update(dtype=rasterio.float32, count=1, compress="lzw")
@@ -598,7 +619,8 @@ def main():
                 day_out, f"fwi_pred_lead{lead:02d}d_{target_date_str}.tif"
             )
 
-            fwi_patches_lead = preds[:, lead - 1, :]  # (n_patches, out_dim)
+            # De-normalise: model output is in normalised space, convert back to raw FWI scale
+            fwi_patches_lead = preds[:, lead - 1, :] * fwi_train_std + fwi_train_mean
 
             fwi_vol = depatchify(
                 fwi_patches_lead[:, np.newaxis, :],
