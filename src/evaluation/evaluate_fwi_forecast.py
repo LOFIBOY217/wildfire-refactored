@@ -43,6 +43,7 @@ from scipy.stats import pearsonr
 
 try:
     from src.utils.date_utils import extract_date_from_filename
+    from src.config import load_config, get_path, add_config_argument
 except ModuleNotFoundError:
     from pathlib import Path
     for _p in Path(__file__).resolve().parents:
@@ -50,6 +51,7 @@ except ModuleNotFoundError:
             sys.path.insert(0, str(_p))
             break
     from src.utils.date_utils import extract_date_from_filename
+    from src.config import load_config, get_path, add_config_argument
 
 
 # ------------------------------------------------------------------ #
@@ -108,11 +110,13 @@ def main():
     ap = argparse.ArgumentParser(
         description="Evaluate FWI regression forecasts (MAE / RMSE / Pearson R)"
     )
+    add_config_argument(ap)
     ap.add_argument("--pred_dir",    type=str, required=True,
                     help="Root directory of predicted FWI GeoTIFFs "
                          "(sub-folders named YYYYMMDD).")
-    ap.add_argument("--fwi_dir",     type=str, required=True,
-                    help="Directory containing actual FWI GeoTIFFs.")
+    ap.add_argument("--fwi_dir",     type=str, default=None,
+                    help="Directory containing actual FWI GeoTIFFs. "
+                         "If omitted, read from --config.")
     ap.add_argument("--output_dir",  type=str, default="outputs/evaluation_fwi",
                     help="Where to save CSV and plots.")
     ap.add_argument("--max_lead",    type=int, default=7,
@@ -121,6 +125,13 @@ def main():
                     help="Fraction of valid pixels to sample per raster (default=1.0). "
                          "Use <1.0 to speed up evaluation on large grids.")
     args = ap.parse_args()
+
+    # Resolve fwi_dir from config if not provided directly
+    if args.fwi_dir is None:
+        if args.config is None:
+            ap.error("--fwi_dir is required unless --config is provided.")
+        cfg = load_config(args.config)
+        args.fwi_dir = get_path(cfg, "fwi_dir")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
