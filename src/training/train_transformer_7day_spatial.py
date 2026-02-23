@@ -182,6 +182,9 @@ def main():
     ap.add_argument("--seed",         type=int,   default=42)
     ap.add_argument("--neg_ratio",    type=float, default=3.0,
                     help="Neg-only patches per positive patch in training set (default=3).")
+    ap.add_argument("--infer_chunk",  type=int,   default=1024,
+                    help="Patch batch size during STEP 10 inference. "
+                         "Reduce if CUDA OOM occurs (default=1024).")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -647,11 +650,18 @@ def main():
         n_pred_patches = xp.shape[0]
         patch_idx_all  = torch.arange(n_pred_patches, dtype=torch.long).to(device)
 
-        xb  = torch.from_numpy(xp).float().to(device)
-        xfb = torch.from_numpy(fp).float().to(device)
+        # Chunked inference: avoid GPU OOM with 96k patches
+        chunk = args.infer_chunk
+        probs_list = []
         with torch.no_grad():
-            logits = model(xb, xfb, patch_idx_all)
-            probs  = torch.sigmoid(logits).cpu().numpy()
+            for start in range(0, n_pred_patches, chunk):
+                end      = min(start + chunk, n_pred_patches)
+                xb_c     = torch.from_numpy(xp[start:end]).float().to(device)
+                xfb_c    = torch.from_numpy(fp[start:end]).float().to(device)
+                pidx_c   = patch_idx_all[start:end]
+                logits_c = model(xb_c, xfb_c, pidx_c)
+                probs_list.append(torch.sigmoid(logits_c).cpu().numpy())
+        probs = np.concatenate(probs_list, axis=0)  # (n_pred_patches, out_days, out_dim)
 
         base_str = base_date.strftime("%Y%m%d")
         day_out  = os.path.join(output_dir, base_str)
