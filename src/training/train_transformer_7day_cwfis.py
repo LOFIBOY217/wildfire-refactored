@@ -407,15 +407,19 @@ def main():
         available_gb = vm.available / 1e9
         total_gb     = vm.total    / 1e9
         print(f"  System RAM   : {available_gb:.1f} GB available / {total_gb:.1f} GB total")
-        if needed_gb > available_gb * 0.85:
-            # How many days would fit in 80% of available RAM?
-            safe_T = int(available_gb * 0.80 / ((n_patches * (in_dim + out_dim) * 4) / 1e9))
+        if needed_gb > total_gb * 0.85:
+            # Check against TOTAL RAM — available RAM fluctuates with OS cache.
+            # Only abort if the data physically cannot fit in the machine.
+            safe_T = int(total_gb * 0.80 / ((n_patches * (in_dim + out_dim) * 4) / 1e9))
             safe_date = aligned_dates[max(0, T - safe_T)]
             print(f"\n  *** OOM WARNING ***")
-            print(f"  Need {needed_gb:.1f} GB but only {available_gb:.1f} GB available.")
+            print(f"  Need {needed_gb:.1f} GB but machine total is only {total_gb:.1f} GB.")
             print(f"  Suggested: --data_start {safe_date}  (reduces T to ~{safe_T} days)")
             print(f"  Aborting to avoid system freeze. Re-run with a later --data_start.\n")
             raise SystemExit(1)
+        elif needed_gb > available_gb:
+            print(f"  NOTE: Need {needed_gb:.1f} GB, currently {available_gb:.1f} GB free "
+                  f"(total {total_gb:.1f} GB). OS will reclaim cache — continuing.")
     except ImportError:
         print("  (pip install psutil to enable RAM pre-flight check)")
 
