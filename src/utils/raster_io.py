@@ -97,7 +97,11 @@ def read_singleband_stack(tif_paths):
             with rasterio.open(path) as src:
                 arr = src.read(1)
             last_good = arr
-        except Exception as exc:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            # Use BaseException (not Exception) to catch GDAL/rasterio C-level
+            # errors on Windows/network drives that bypass Python's Exception.
             if last_good is None:
                 raise IOError(
                     f"First file in stack is corrupt and there is no previous "
