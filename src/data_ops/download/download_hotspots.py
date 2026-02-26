@@ -102,7 +102,12 @@ def _extract_rows(geojson: dict) -> list[tuple]:
 
     rep_date format: '2018-07-01T07:15:00Z' → acq_date: '2018-07-01'
     geometry.coordinates: [longitude, latitude]
+
+    Only returns records within Canada's bounding box to exclude US fire data
+    that the public:hotspots layer also contains.
     """
+    W, S, E, N = -141.0, 41.7, -52.6, 83.1   # Canada bbox
+
     rows = []
     for feature in geojson.get("features", []):
         try:
@@ -112,7 +117,9 @@ def _extract_rows(geojson: dict) -> list[tuple]:
             rep_date = feature["properties"].get("rep_date", "")
             acq_date = rep_date[:10]          # 'YYYY-MM-DD'
             if acq_date and lat and lon:
-                rows.append((lat, lon, acq_date))
+                # Filter to Canada bounding box
+                if S <= lat <= N and W <= lon <= E:
+                    rows.append((lat, lon, acq_date))
         except (KeyError, TypeError, IndexError):
             continue
     return rows

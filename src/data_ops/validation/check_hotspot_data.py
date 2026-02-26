@@ -60,7 +60,49 @@ DEFAULT_VAL_END   = "2023-07-16"
 
 # NASA FIRMS API
 FIRMS_API = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
-FIRMS_DATASET = "VIIRS_SNPP_NRT"   # S-NPP VIIRS 375m
+FIRMS_DATASET = "VIIRS_SNPP_SP"    # S-NPP VIIRS Standard Processing (has historical archive)
+
+
+# ------------------------------------------------------------------ #
+# Cleanup — remove non-Canada records from existing CSV
+# ------------------------------------------------------------------ #
+
+def cleanup_bbox(csv_path: str) -> pd.DataFrame:
+    """
+    Filter the hotspot CSV in-place to only keep records within Canada's
+    bounding box, removing US and other non-Canada fire records that the
+    public:hotspots WFS layer also contains.
+
+    Args:
+        csv_path: Path to the hotspot CSV file (modified in-place).
+
+    Returns:
+        Filtered DataFrame.
+    """
+    print(f"\n{'='*55}")
+    print(f"CLEANUP — Filtering to Canada bounding box")
+    print(f"{'='*55}")
+
+    df = pd.read_csv(csv_path)
+    n_before = len(df)
+
+    w, s, e, n = BBOX_CANADA
+    mask = (
+        (df["latitude"]  >= s) & (df["latitude"]  <= n) &
+        (df["longitude"] >= w) & (df["longitude"] <= e)
+    )
+    df_clean = df[mask].copy()
+    n_after   = len(df_clean)
+    n_removed = n_before - n_after
+
+    print(f"  Before : {n_before:,} rows")
+    print(f"  Removed: {n_removed:,} rows ({n_removed/n_before*100:.1f}% outside Canada)")
+    print(f"  After  : {n_after:,} rows")
+
+    df_clean.to_csv(csv_path, index=False)
+    print(f"  Saved  : {csv_path}")
+
+    return df_clean
 
 
 # ------------------------------------------------------------------ #
@@ -129,9 +171,9 @@ def check_basic(df: pd.DataFrame, csv_path: str) -> bool:
         (df["longitude"] >= w) & (df["longitude"] <= e)
     )
     pct = in_bbox.mean() * 100
-    ok = pct >= 99.0
+    ok = pct >= 99.9   # Should be 100% after cleanup_bbox()
     all_ok &= ok
-    _print_check("In Canada bbox", f"{pct:.2f}%", ">= 99%", ok)
+    _print_check("In Canada bbox", f"{pct:.2f}%", "100% (after cleanup)", ok)
 
     # 6. Per-year record counts (2023 should be the peak fire year)
     df["year"] = pd.to_datetime(df["acq_date"]).dt.year
@@ -368,6 +410,9 @@ def main(argv=None):
         print(f"[ERROR] File not found: {csv_path}")
         print("Run download_hotspots.py first.")
         sys.exit(1)
+
+    # Cleanup: remove non-Canada records from the CSV (in-place)
+    df = cleanup_bbox(csv_path)
 
     # Part A
     part_a_ok = check_basic(df, csv_path)
