@@ -11,6 +11,7 @@ paths:
   observation_dir: "data/ecmwf_observation"
   hres_dir: "data/ecmwf_hres"
   ciffc_csv: "data/ciffc/ciffc_logistic_20230505_20250821.csv"
+  hotspot_csv: "data/hotspot/hotspot_2018_2025.csv"
   output_dir: "outputs"
   checkpoint_dir: "checkpoints"
 
