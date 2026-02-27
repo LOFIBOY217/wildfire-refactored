@@ -13,13 +13,13 @@ Key differences from posaware (CIFFC) version:
 Precompute approach (identical to posaware):
   STEP 7 pre-computes ALL frames into two dense arrays:
     meteo_patched : (T, n_patches, P²*3)  float32
-    fire_patched  : (T, n_patches, P²)    float32
+    fire_patched  : (T, n_patches, P²)    uint8   ← binary 0/1, 4× smaller than float32
   After that, __getitem__ is pure O(1) array indexing.
 
 ⚠️  Memory requirement:
   P=16, Canada grid → n_patches ≈ 24 310
-  meteo_patched ≈ T × 74.7 MB   (e.g. T=1000 → ~73 GB, T=2300 → ~172 GB)
-  fire_patched  ≈ T × 24.9 MB   (e.g. T=1000 → ~24 GB, T=2300 →  ~57 GB)
+  meteo_patched ≈ T × 74.7 MB  float32  (e.g. T=1000 → ~73 GB, T=2300 → ~172 GB)
+  fire_patched  ≈ T ×  6.2 MB  uint8    (e.g. T=1000 →  ~6 GB, T=2300 →  ~14 GB)
   Reduce T by narrowing --data_start if RAM is limited.
 
 Mixed sampling (identical to posaware):
@@ -97,9 +97,9 @@ class Fire7DayDatasetMixed(Dataset):
     def __getitem__(self, idx):
         win_i, patch_i = self.all_pairs[idx]
         hs, he, fs, fe = self.windows[win_i]
-        x = self.meteo[hs:he, patch_i, :]    # (in_days,  in_dim)
-        y = self.fire[fs:fe,  patch_i, :]    # (out_days, out_dim)
-        return torch.from_numpy(x.copy()), torch.from_numpy(y.copy())
+        x = self.meteo[hs:he, patch_i, :]              # (in_days,  in_dim)  float32
+        y = self.fire[fs:fe,  patch_i, :].astype(np.float32)  # uint8 → float32 for BCE
+        return torch.from_numpy(x.copy()), torch.from_numpy(y)
 
 
 class Fire7DayDatasetPrecompute(Dataset):
@@ -123,9 +123,9 @@ class Fire7DayDatasetPrecompute(Dataset):
         win_i   = idx // self.n_patches
         patch_i = idx %  self.n_patches
         hs, he, fs, fe = self.windows[win_i]
-        x = self.meteo[hs:he, patch_i, :]
-        y = self.fire[fs:fe,  patch_i, :]
-        return torch.from_numpy(x.copy()), torch.from_numpy(y.copy())
+        x = self.meteo[hs:he, patch_i, :]                      # float32
+        y = self.fire[fs:fe,  patch_i, :].astype(np.float32)  # uint8 → float32 for BCE
+        return torch.from_numpy(x.copy()), torch.from_numpy(y)
 
 
 # ------------------------------------------------------------------ #
@@ -391,14 +391,14 @@ def main():
     in_dim    = P * P * 3
     out_dim   = P * P
 
-    meteo_gb  = T * n_patches * in_dim  * 4 / 1e9
-    fire_gb   = T * n_patches * out_dim * 4 / 1e9
+    meteo_gb  = T * n_patches * in_dim  * 4 / 1e9   # float32 = 4 bytes
+    fire_gb   = T * n_patches * out_dim * 1 / 1e9   # uint8   = 1 byte  (4× smaller)
     needed_gb = meteo_gb + fire_gb
 
     print(f"\n[STEP 7] Pre-computing patches for T={T} frames...")
     print(f"  n_patches={n_patches}  in_dim={in_dim}  out_dim={out_dim}")
-    print(f"  Estimated RAM: meteo={meteo_gb:.1f} GB  fire={fire_gb:.1f} GB  "
-          f"total={needed_gb:.1f} GB")
+    print(f"  Estimated RAM: meteo={meteo_gb:.1f} GB (float32)  "
+          f"fire={fire_gb:.1f} GB (uint8)  total={needed_gb:.1f} GB")
 
     # -- Memory pre-flight check --
     try:
@@ -410,7 +410,8 @@ def main():
         if needed_gb > total_gb * 0.85:
             # Check against TOTAL RAM — available RAM fluctuates with OS cache.
             # Only abort if the data physically cannot fit in the machine.
-            safe_T = int(total_gb * 0.80 / ((n_patches * (in_dim + out_dim) * 4) / 1e9))
+            bytes_per_frame = n_patches * (in_dim * 4 + out_dim * 1)  # mixed dtypes
+            safe_T = int(total_gb * 0.80 * 1e9 / bytes_per_frame)
             safe_date = aligned_dates[max(0, T - safe_T)]
             print(f"\n  *** OOM WARNING ***")
             print(f"  Need {needed_gb:.1f} GB but machine total is only {total_gb:.1f} GB.")
@@ -443,23 +444,24 @@ def main():
     print(f"  meteo_patched: {meteo_patched.shape}  "
           f"{meteo_patched.nbytes/1e9:.1f} GB  ({time.time()-t0_meteo:.0f}s)")
 
-    # -- fire_patched --
+    # -- fire_patched  (uint8 — binary 0/1 fire labels, 4× smaller than float32) --
     t0_fire = time.time()
     try:
-        fire_patched = np.empty((T, n_patches, out_dim), dtype=np.float32)
+        fire_patched = np.empty((T, n_patches, out_dim), dtype=np.uint8)
     except MemoryError:
         raise RuntimeError(
-            f"MemoryError allocating fire_patched ({fire_gb:.1f} GB). "
+            f"MemoryError allocating fire_patched ({fire_gb:.1f} GB as uint8). "
             f"meteo_patched already occupies {meteo_gb:.1f} GB. "
             f"Try --data_start with a later date."
         )
     for t in range(T):
+        # patchify expects float; cast back to uint8 before storing
         fut1 = fire_stack[t:t + 1].astype(np.float32)
         patches, _, _ = patchify(fut1, P)
-        fire_patched[t] = patches[:, 0, :]
+        fire_patched[t] = patches[:, 0, :].astype(np.uint8)
         if t % 100 == 0 or t == T - 1:
             print(f"  fire  frame {t:4d}/{T}  ({time.time()-t0_fire:.0f}s)")
-    print(f"  fire_patched:  {fire_patched.shape}  "
+    print(f"  fire_patched:  {fire_patched.shape}  dtype=uint8  "
           f"{fire_patched.nbytes/1e9:.1f} GB  ({time.time()-t0_fire:.0f}s)")
 
     all_windows = _build_windows(T, in_days, out_days)
