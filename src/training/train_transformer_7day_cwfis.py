@@ -600,10 +600,9 @@ def main():
     best_val_loss = float("inf")
     best_ckpt     = os.path.join(ckpt_dir, "best_model.pt")
 
-    nan_epochs = 0
     for epoch in range(1, args.epochs + 1):
         model.train()
-        train_loss   = 0.0
+        train_loss    = 0.0
         train_samples = 0
         for xb, yb in train_dl:
             xb, yb = xb.to(device), yb.to(device)
@@ -618,7 +617,13 @@ def main():
             optimizer.step()
             train_loss    += loss.item() * xb.size(0)
             train_samples += xb.size(0)
-        train_loss = train_loss / max(train_samples, 1)
+
+        # train_samples==0 means ALL batches were NaN → model weights are dead
+        if train_samples == 0:
+            print(f"  Epoch {epoch:3d}/{args.epochs}  "
+                  f"*** ALL TRAIN BATCHES NaN — model weights corrupted. Stopping.")
+            break
+        train_loss = train_loss / train_samples
 
         model.eval()
         val_loss    = 0.0
@@ -630,21 +635,18 @@ def main():
                 if torch.isfinite(vl):
                     val_loss    += vl.item() * xb.size(0)
                     val_samples += xb.size(0)
-        val_loss = val_loss / max(val_samples, 1)
+
+        if val_samples == 0:
+            # All val batches NaN — don't update best, just report and stop
+            print(f"  Epoch {epoch:3d}/{args.epochs}  train={train_loss:.6f}  "
+                  f"val=NaN (all batches invalid) — stopping early.")
+            break
+        val_loss = val_loss / val_samples
 
         print(f"  Epoch {epoch:3d}/{args.epochs}  train={train_loss:.6f}  val={val_loss:.6f}")
 
-        # Early stop if NaN persists (2 consecutive NaN epochs → give up)
-        if not np.isfinite(train_loss) or not np.isfinite(val_loss):
-            nan_epochs += 1
-            print(f"  WARNING: NaN/Inf loss at epoch {epoch} (consecutive: {nan_epochs})")
-            if nan_epochs >= 2:
-                print("  Stopping early — 2 consecutive NaN epochs. Using best checkpoint.")
-                break
-        else:
-            nan_epochs = 0
-
-        if val_loss < best_val_loss:
+        # Only save when val_loss is a real finite improvement (not a 0.0 from NaN samples)
+        if val_samples > 0 and np.isfinite(val_loss) and val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save({
                 "epoch":         epoch,
