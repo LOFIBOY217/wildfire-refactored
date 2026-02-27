@@ -53,6 +53,7 @@ import numpy as np
 import rasterio
 import torch
 import torch.nn as nn
+from scipy.ndimage import binary_dilation
 from torch.utils.data import Dataset, DataLoader
 
 try:
@@ -189,6 +190,11 @@ def main():
     ap.add_argument("--pred_batch_size", type=int, default=512,
                     help="Patch chunk size for GPU inference in STEP 10 (default=512). "
                          "Reduce if CUDA OOM during forecast generation.")
+    ap.add_argument("--dilate_radius",   type=int, default=5,
+                    help="Spatial dilation radius applied to CWFIS hotspot labels (pixels). "
+                         "Each hotspot point is expanded to a filled circle of this radius. "
+                         "Grid resolution is ~2 km/pixel, so radius=5 → 10 km buffer. "
+                         "Set 0 to disable. Default=5.")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -336,8 +342,34 @@ def main():
     fire_stack = rasterize_hotspots_batch(hotspot_df, aligned_dates, profile)   # [T,H,W] uint8
     pos_rate   = fire_stack.mean()
     print(f"  Fire stack shape     : {fire_stack.shape}")
-    print(f"  Mean fire pixel rate : {pos_rate:.6%}")
-    run_meta["positive_rate"] = float(pos_rate)
+    print(f"  Mean fire pixel rate : {pos_rate:.6%}  (raw hotspot points)")
+    run_meta["positive_rate_raw"] = float(pos_rate)
+
+    # -- Spatial dilation: expand each hotspot point to a filled circle --
+    if args.dilate_radius > 0:
+        r = args.dilate_radius
+        yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
+        disk   = (xx ** 2 + yy ** 2 <= r ** 2)          # circular kernel
+        print(f"\n  Dilating fire labels: radius={r} px  "
+              f"(~{r * 2} km buffer, kernel {disk.shape[0]}×{disk.shape[1]}, "
+              f"{disk.sum()} pixels/hotspot)...")
+        t0_dil = time.time()
+        for t in range(T):
+            if fire_stack[t].any():                      # skip empty frames (fast)
+                fire_stack[t] = binary_dilation(
+                    fire_stack[t], structure=disk
+                ).astype(np.uint8)
+            if t % 200 == 0 or t == T - 1:
+                print(f"    dilate frame {t:4d}/{T}  ({time.time()-t0_dil:.0f}s)")
+        pos_rate_dil = fire_stack.mean()
+        print(f"  After dilation: positive_rate={pos_rate_dil:.4%}  "
+              f"({pos_rate_dil/pos_rate:.1f}× increase)  "
+              f"({time.time()-t0_dil:.0f}s)")
+        run_meta["dilate_radius"]        = r
+        run_meta["positive_rate_dilated"] = float(pos_rate_dil)
+    else:
+        run_meta["dilate_radius"] = 0
+        run_meta["positive_rate_dilated"] = float(pos_rate)
 
     # ----------------------------------------------------------------
     # STEP 5  Train / val split
