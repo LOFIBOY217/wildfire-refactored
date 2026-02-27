@@ -183,9 +183,12 @@ def main():
     ap.add_argument("--batch_size",   type=int,   default=256)
     ap.add_argument("--lr",           type=float, default=3e-4)
     ap.add_argument("--seed",         type=int,   default=42)
-    ap.add_argument("--neg_ratio",    type=float, default=3.0,
+    ap.add_argument("--neg_ratio",      type=float, default=3.0,
                     help="Neg-only patches per positive patch (default=3). "
                          "Higher = more background exposure, better calibration.")
+    ap.add_argument("--pred_batch_size", type=int, default=512,
+                    help="Patch chunk size for GPU inference in STEP 10 (default=512). "
+                         "Reduce if CUDA OOM during forecast generation.")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -597,29 +600,49 @@ def main():
     best_val_loss = float("inf")
     best_ckpt     = os.path.join(ckpt_dir, "best_model.pt")
 
+    nan_epochs = 0
     for epoch in range(1, args.epochs + 1):
         model.train()
-        train_loss = 0.0
+        train_loss   = 0.0
+        train_samples = 0
         for xb, yb in train_dl:
             xb, yb = xb.to(device), yb.to(device)
-            logits  = model(xb)
-            loss    = criterion(logits, yb)
+            logits = model(xb)
+            loss   = criterion(logits, yb)
+            if not torch.isfinite(loss):          # skip NaN/Inf batches
+                optimizer.zero_grad()
+                continue
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            train_loss += loss.item() * xb.size(0)
-        train_loss /= len(train_ds)
+            train_loss    += loss.item() * xb.size(0)
+            train_samples += xb.size(0)
+        train_loss = train_loss / max(train_samples, 1)
 
         model.eval()
-        val_loss = 0.0
+        val_loss    = 0.0
+        val_samples = 0
         with torch.no_grad():
             for xb, yb in val_dl:
                 xb, yb = xb.to(device), yb.to(device)
-                val_loss += criterion(model(xb), yb).item() * xb.size(0)
-        val_loss /= len(val_ds)
+                vl = criterion(model(xb), yb)
+                if torch.isfinite(vl):
+                    val_loss    += vl.item() * xb.size(0)
+                    val_samples += xb.size(0)
+        val_loss = val_loss / max(val_samples, 1)
 
         print(f"  Epoch {epoch:3d}/{args.epochs}  train={train_loss:.6f}  val={val_loss:.6f}")
+
+        # Early stop if NaN persists (2 consecutive NaN epochs → give up)
+        if not np.isfinite(train_loss) or not np.isfinite(val_loss):
+            nan_epochs += 1
+            print(f"  WARNING: NaN/Inf loss at epoch {epoch} (consecutive: {nan_epochs})")
+            if nan_epochs >= 2:
+                print("  Stopping early — 2 consecutive NaN epochs. Using best checkpoint.")
+                break
+        else:
+            nan_epochs = 0
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -665,12 +688,18 @@ def main():
             continue
 
         hist = meteo_norm[base_idx - in_days: base_idx]     # (in_days, H, W, 3)
-        xp, pred_hw, pred_grid = patchify(hist, P)
+        xp, pred_hw, pred_grid = patchify(hist, P)          # (n_patches, in_days, in_dim)
 
-        xb = torch.from_numpy(xp).float().to(device)
+        # Chunk-wise inference to avoid CUDA OOM on large grids
+        chunk    = args.pred_batch_size
+        n_p      = xp.shape[0]
+        prob_list = []
         with torch.no_grad():
-            logits = model(xb)                               # (n_patches, out_days, P²)
-            probs  = torch.sigmoid(logits).cpu().numpy()
+            for cs in range(0, n_p, chunk):
+                ce  = min(cs + chunk, n_p)
+                xb  = torch.from_numpy(xp[cs:ce]).float().to(device)
+                prob_list.append(torch.sigmoid(model(xb)).cpu().numpy())
+        probs = np.concatenate(prob_list, axis=0)           # (n_patches, out_days, P²)
 
         base_str = base_date.strftime("%Y%m%d")
         day_out  = os.path.join(output_dir, base_str)
