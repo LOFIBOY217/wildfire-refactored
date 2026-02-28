@@ -156,6 +156,187 @@ def _build_windows(n_days, in_days, out_days):
 
 
 # ------------------------------------------------------------------ #
+# Forecast-only helper
+# ------------------------------------------------------------------ #
+
+def _run_forecast_only(args, cfg, fwi_dir, obs_root, output_dir, ckpt_dir):
+    """
+    Load the best checkpoint and generate forecast tifs for specified years.
+    Skips all training steps (STEP 1-9).  Normalises each year's meteo data
+    using the saved training statistics so the model sees the same feature
+    distribution it was trained on.
+    """
+    best_ckpt = os.path.join(ckpt_dir, "best_model.pt")
+    if not os.path.exists(best_ckpt):
+        raise FileNotFoundError(
+            f"Checkpoint not found: {best_ckpt}\n"
+            "Run training first (without --forecast_only)."
+        )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\n[FORECAST ONLY] Loading checkpoint: {best_ckpt}")
+    ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
+
+    saved_args   = ckpt["args"]
+    P            = saved_args["patch_size"]
+    in_days      = saved_args["in_days"]
+    out_days     = saved_args["out_days"]
+    meteo_means  = ckpt["meteo_means"]   # shape (3,)
+    meteo_stds   = ckpt["meteo_stds"]    # shape (3,)
+    patch_dim_in  = ckpt["patch_dim_in"]
+    patch_dim_out = ckpt["patch_dim_out"]
+
+    model = FireProb7DayTransformer(
+        patch_dim_in=patch_dim_in,
+        patch_dim_out=patch_dim_out,
+        d_model=saved_args["d_model"],
+        nhead=saved_args["nhead"],
+        num_encoder_layers=saved_args["enc_layers"],
+        num_decoder_layers=saved_args["dec_layers"],
+        dim_feedforward=saved_args["d_model"] * 4,
+        forecast_days=out_days,
+        encoder_days=in_days,
+    ).to(device)
+    model.load_state_dict(ckpt["model_state"])
+    model.eval()
+    print(f"  Device={device}  params={sum(p.numel() for p in model.parameters()):,}")
+    print(f"  in_days={in_days}  out_days={out_days}  patch_size={P}")
+    print(f"  norm means={meteo_means.round(3)}  stds={meteo_stds.round(3)}")
+
+    # Build full file indices (covers all available years)
+    fwi_dict = {}
+    for p in sorted(glob.glob(os.path.join(fwi_dir, "*.tif"))):
+        d = extract_date_from_filename(os.path.basename(p))
+        if d:
+            fwi_dict[d] = p
+    d2m_dict = _build_file_dict(obs_root, "2d")
+    t2m_dict = _build_file_dict(obs_root, "2t")
+
+    # Raster profile + dimensions from first FWI file
+    first_fwi = sorted(fwi_dict.values())[0]
+    with rasterio.open(first_fwi) as src:
+        profile = src.profile
+        H, W    = profile["height"], profile["width"]
+    out_profile = profile.copy()
+    out_profile.update(dtype=rasterio.float32, count=1, compress="lzw")
+
+    # Parse target years
+    if args.forecast_years:
+        years = [int(y.strip()) for y in args.forecast_years.split(",")]
+    else:
+        years = [int(args.pred_start.split("-")[0])]
+    print(f"  Forecast years: {years}")
+
+    def _clean(stack):
+        stack = clean_nodata(stack.astype(np.float32))
+        fill  = float(np.nanmean(stack))
+        if not np.isfinite(fill):
+            fill = 0.0
+        return np.nan_to_num(stack, nan=fill, posinf=fill, neginf=fill)
+
+    for year in years:
+        print(f"\n{'='*60}")
+        print(f"  Year {year}: May 1 – Oct 31")
+        print(f"{'='*60}")
+
+        pred_start   = date(year, 5, 1)
+        pred_end     = date(year, 10, 31)
+        # Need in_days of history before the first prediction date
+        data_start   = pred_start - timedelta(days=in_days + 5)
+        required_end = pred_end   + timedelta(days=out_days)
+
+        fwi_p, t2m_p, d2m_p, dates_y = [], [], [], []
+        cur = data_start
+        while cur <= required_end:
+            if cur in fwi_dict and cur in t2m_dict and cur in d2m_dict:
+                fwi_p.append(fwi_dict[cur])
+                t2m_p.append(t2m_dict[cur])
+                d2m_p.append(d2m_dict[cur])
+                dates_y.append(cur)
+            cur += timedelta(days=1)
+
+        T_y = len(dates_y)
+        if T_y < in_days + out_days:
+            print(f"  Only {T_y} aligned days (need >= {in_days + out_days}). Skipping {year}.")
+            continue
+        print(f"  Aligned: {T_y} days  ({dates_y[0]} → {dates_y[-1]})")
+
+        fwi_s = read_singleband_stack(fwi_p)
+        t2m_s = read_singleband_stack(t2m_p)
+        d2m_s = read_singleband_stack(d2m_p)
+
+        meteo_y = np.empty((T_y, H, W, 3), dtype=np.float32)
+        meteo_y[..., 0] = _clean(fwi_s); del fwi_s
+        meteo_y[..., 1] = _clean(t2m_s); del t2m_s
+        meteo_y[..., 2] = _clean(d2m_s); del d2m_s
+
+        # Normalise using TRAINING statistics (not recomputed)
+        meteo_y -= meteo_means
+        meteo_y /= meteo_stds
+        np.clip(meteo_y, -10.0, 10.0, out=meteo_y)
+
+        date_to_idx_y = {d: i for i, d in enumerate(dates_y)}
+        n_pred = (pred_end - pred_start).days + 1
+        pred_dates_y = [pred_start + timedelta(days=k) for k in range(n_pred)]
+
+        n_done = 0
+        for base_date in pred_dates_y:
+            if base_date not in date_to_idx_y:
+                continue
+            base_idx = date_to_idx_y[base_date]
+            if base_idx < in_days:
+                continue
+
+            hist = meteo_y[base_idx - in_days: base_idx]       # (in_days, H, W, 3)
+            xp, pred_hw, pred_grid = patchify(hist, P)          # (n_patches, in_days, in_dim)
+
+            chunk = args.pred_batch_size
+            n_p   = xp.shape[0]
+            prob_list = []
+            with torch.no_grad():
+                for cs in range(0, n_p, chunk):
+                    ce  = min(cs + chunk, n_p)
+                    xb  = torch.from_numpy(xp[cs:ce]).float().to(device)
+                    prob_list.append(torch.sigmoid(model(xb)).cpu().numpy())
+            probs = np.concatenate(prob_list, axis=0)           # (n_patches, out_days, P²)
+
+            base_str = base_date.strftime("%Y%m%d")
+            day_out  = os.path.join(output_dir, base_str)
+            os.makedirs(day_out, exist_ok=True)
+
+            for lead in range(1, out_days + 1):
+                target_date     = base_date + timedelta(days=lead)
+                target_date_str = target_date.strftime("%Y%m%d")
+                out_path = os.path.join(
+                    day_out, f"fire_prob_lead{lead:02d}d_{target_date_str}.tif"
+                )
+                prob_patches_lead = probs[:, lead - 1, :]
+                prob_vol = depatchify(
+                    prob_patches_lead[:, np.newaxis, :],
+                    pred_grid, P, pred_hw, num_channels=1
+                )
+                prob_map = prob_vol[0] if prob_vol.ndim == 3 else prob_vol
+                if prob_map.shape != (H, W):
+                    full = np.zeros((H, W), dtype=np.float32)
+                    full[:prob_map.shape[0], :prob_map.shape[1]] = prob_map
+                    prob_map = full
+                with rasterio.open(out_path, "w", **out_profile) as dst:
+                    dst.write(prob_map.astype(np.float32), 1)
+
+            n_done += 1
+            if n_done % 30 == 0 or base_date == pred_dates_y[-1]:
+                print(f"  [{n_done}/{len(pred_dates_y)}] {base_date} → {out_days} tifs")
+
+        del meteo_y
+        print(f"  Year {year}: {n_done} base dates, {n_done * out_days} tifs")
+
+    print("\n" + "=" * 70)
+    print("FORECAST-ONLY COMPLETE")
+    print(f"  Output: {output_dir}")
+    print("=" * 70)
+
+
+# ------------------------------------------------------------------ #
 # Main
 # ------------------------------------------------------------------ #
 
@@ -195,6 +376,12 @@ def main():
                          "Each hotspot point is expanded to a filled circle of this radius. "
                          "Grid resolution is ~2 km/pixel, so radius=5 → 10 km buffer. "
                          "Set 0 to disable. Default=5.")
+    ap.add_argument("--forecast_only", action="store_true",
+                    help="Skip training — load best checkpoint and generate forecast tifs "
+                         "for --forecast_years. Useful for extending predictions to new years.")
+    ap.add_argument("--forecast_years", type=str, default=None,
+                    help="Comma-separated years for forecast generation (used with "
+                         "--forecast_only), e.g. '2022,2023'. Each year runs May 1 – Oct 31.")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -213,6 +400,11 @@ def main():
     ckpt_dir    = os.path.join(get_path(cfg, "checkpoint_dir"), "transformer_7day_cwfis")
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(ckpt_dir,   exist_ok=True)
+
+    # -- Forecast-only shortcut: skip training entirely --
+    if args.forecast_only:
+        _run_forecast_only(args, cfg, fwi_dir, obs_root, output_dir, ckpt_dir)
+        return
 
     run_stamp     = dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
     run_meta_path = os.path.join(ckpt_dir, f"run_{run_stamp}.json")
