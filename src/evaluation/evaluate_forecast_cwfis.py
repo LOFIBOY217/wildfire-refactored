@@ -54,7 +54,9 @@ except ModuleNotFoundError:
     from src.config import load_config, get_path, add_config_argument
 
 from src.data_ops.processing.rasterize_hotspots import (
-    load_hotspot_data, rasterize_hotspots_single
+    load_hotspot_data,
+    _build_transformer,
+    _rasterize_points,
 )
 from src.evaluation.metrics import compute_confusion_metrics
 from src.evaluation.visualize import (
@@ -134,7 +136,8 @@ def main():
     with rasterio.open(fwi_files[0]) as src:
         profile = src.profile
         H, W    = profile["height"], profile["width"]
-        nodata  = profile.get("nodata", -9999)
+        nodata_raw = profile.get("nodata")
+        nodata     = nodata_raw if nodata_raw is not None else -9999
     print(f"  Raster: {H} x {W}  nodata={nodata}")
 
     # Pre-build dilation kernel if needed
@@ -145,6 +148,25 @@ def main():
         print(f"  Dilation kernel: radius={r}  size={disk.shape}  pixels={disk.sum()}")
     else:
         disk = None
+
+    # ------------------------------------------------------------------
+    # Performance optimisation: pre-group hotspot records by date and
+    # build the coordinate transformer ONCE — avoids O(9.2M) pandas scan
+    # and repeated pyproj initialisation inside the evaluation loop.
+    # ------------------------------------------------------------------
+    print("  Pre-grouping hotspot data by date (one-time cost)...")
+    hotspot_by_date: dict = {}
+    for d, g in hotspot_df.groupby("date"):
+        hotspot_by_date[d] = (
+            g["field_latitude"].values,
+            g["field_longitude"].values,
+        )
+    print(f"  Unique fire dates indexed: {len(hotspot_by_date):,}")
+
+    transformer  = _build_transformer(profile)   # built once, reused for every call
+    raster_tf    = profile["transform"]
+    raster_H     = profile["height"]
+    raster_W     = profile["width"]
 
     # ----------------------------------------------------------------
     # STEP 3  Evaluate predictions
@@ -176,8 +198,13 @@ def main():
             with rasterio.open(pred_file) as src:
                 y_pred = src.read(1).flatten()
 
-            # Build ground truth: raw hotspot raster, optionally dilated
-            fire_raster = rasterize_hotspots_single(hotspot_df, target_date, profile)
+            # Build ground truth: O(1) dict lookup + pre-built transformer
+            lats, lons = hotspot_by_date.get(
+                target_date, (np.array([]), np.array([]))
+            )
+            fire_raster = _rasterize_points(
+                lats, lons, transformer, raster_tf, raster_H, raster_W
+            )
             if disk is not None:
                 fire_raster = binary_dilation(fire_raster, structure=disk).astype(np.uint8)
             y_true = fire_raster.flatten()
