@@ -29,6 +29,8 @@ Usage:
 """
 
 import argparse
+import calendar
+import os
 import sys
 from io import StringIO
 from pathlib import Path
@@ -61,6 +63,150 @@ DEFAULT_VAL_END   = "2023-07-16"
 # NASA FIRMS API
 FIRMS_API = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 FIRMS_DATASET = "VIIRS_SNPP_SP"    # S-NPP VIIRS Standard Processing (has historical archive)
+
+
+# ------------------------------------------------------------------ #
+# File integrity check
+# ------------------------------------------------------------------ #
+
+def check_file_integrity(csv_path: str) -> bool:
+    """
+    Detect null-byte padding at the end of the file (Windows sparse-file
+    artifact that occurs when a write is interrupted and the OS pre-allocates
+    disk space).
+
+    On Windows Server, if download_hotspots.py is killed mid-write the OS
+    leaves zero-filled sectors at the end, making the file appear much larger
+    than the actual data it contains.
+
+    Returns True if file looks clean, False if significant null padding found.
+    """
+    print(f"\n{'='*55}")
+    print(f"FILE INTEGRITY CHECK")
+    print(f"  File: {csv_path}")
+    print(f"{'='*55}")
+
+    total_size = os.path.getsize(csv_path)
+    print(f"  File size on disk : {total_size:>15,} bytes ({total_size/1024/1024:.1f} MB)")
+
+    # Walk backwards through the file to find the last non-null byte
+    chunk = 1024 * 1024   # 1 MB
+    real_end = 0
+    pos = total_size
+    with open(csv_path, "rb") as f:
+        while pos > 0:
+            read_size = min(chunk, pos)
+            pos -= read_size
+            f.seek(pos)
+            data = f.read(read_size)
+            last_nz = len(data) - 1
+            while last_nz >= 0 and data[last_nz] == 0:
+                last_nz -= 1
+            if last_nz >= 0:
+                real_end = pos + last_nz + 1
+                break
+
+    null_bytes = total_size - real_end
+    ok = null_bytes <= 1024   # tolerate up to 1 KB of trailing nulls
+
+    print(f"  Real data size    : {real_end:>15,} bytes ({real_end/1024/1024:.1f} MB)")
+    print(f"  Null-byte padding : {null_bytes:>15,} bytes ({null_bytes/1024/1024:.1f} MB)")
+
+    if ok:
+        print(f"  ✅ File looks clean — no significant null-byte padding")
+    else:
+        print(f"  ❌ File has {null_bytes/1024/1024:.1f} MB of null-byte padding at the end")
+        print(f"     Cause: the download was interrupted mid-write on Windows Server.")
+        print(f"     pandas can still read the file correctly (stops at the last valid row).")
+        print(f"     To clean: run the fix command shown at the end of this report.")
+
+    return ok
+
+
+# ------------------------------------------------------------------ #
+# Coverage check — per-month grid
+# ------------------------------------------------------------------ #
+
+def check_coverage(
+    df: pd.DataFrame,
+    start_year: int = 2018,
+    end_year: int = 2025,
+    fire_months: tuple = (5, 6, 7, 8, 9, 10),
+) -> tuple[list, set]:
+    """
+    Print a per-month coverage grid and return (missing_months, partial_months).
+
+    A month is 'partial' if its last observed record is more than 1 day before
+    the actual last day of that calendar month (likely a mid-month interruption).
+
+    Returns
+    -------
+    missing  : sorted list of (year, month) tuples with NO data at all
+    partial  : set of (year, month) tuples where data stops before month end
+    """
+    month_names = {5: "May", 6: "Jun", 7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct"}
+
+    # Compute per-(year, month) record count and last observed day
+    df2 = df.copy()
+    df2["_dt"]    = pd.to_datetime(df2["acq_date"], errors="coerce")
+    df2["_year"]  = df2["_dt"].dt.year
+    df2["_month"] = df2["_dt"].dt.month
+    df2["_day"]   = df2["_dt"].dt.day
+
+    # Only fire-season months in expected year range
+    mask = (
+        df2["_year"].between(start_year, end_year) &
+        df2["_month"].isin(fire_months)
+    )
+    grp = (
+        df2[mask]
+        .groupby(["_year", "_month"])
+        .agg(count=("acq_date", "count"), last_day=("_day", "max"))
+    )
+
+    have_data: set = set(grp.index.tolist())
+    partial:   set = set()
+    for (y, m), row in grp.iterrows():
+        expected_last = calendar.monthrange(int(y), int(m))[1]
+        if int(row["last_day"]) < expected_last - 1:
+            partial.add((y, m))
+
+    expected = {(y, m) for y in range(start_year, end_year + 1) for m in fire_months}
+    missing  = sorted(expected - have_data)
+
+    # Print grid
+    print(f"\n  Coverage grid (fire season May–Oct, {start_year}–{end_year})")
+    header = f"  {'Year':>4}   " + "  ".join(f"{month_names[m]:>3}" for m in fire_months)
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+
+    for y in range(start_year, end_year + 1):
+        cells = []
+        for m in fire_months:
+            if (y, m) not in have_data:
+                cells.append(" ❌ ")
+            elif (y, m) in partial:
+                cells.append(" ⚠  ")
+            else:
+                cells.append(" ✅ ")
+        print(f"  {y:4d}   " + "   ".join(cells))
+
+    print()
+    if partial:
+        for (y, m) in sorted(partial):
+            last_obs = int(grp.loc[(y, m), "last_day"])
+            last_exp = calendar.monthrange(y, m)[1]
+            print(f"  ⚠  {y}-{m:02d}: data stops at day {last_obs} "
+                  f"(expected {last_exp}) — likely interrupted mid-download")
+
+    _print_check(
+        "Month coverage",
+        f"{len(have_data)}/{len(expected)} fire-season months present",
+        "all 48",
+        len(missing) == 0,
+    )
+
+    return missing, partial
 
 
 # ------------------------------------------------------------------ #
@@ -151,10 +297,43 @@ def check_basic(df: pd.DataFrame, csv_path: str) -> bool:
     all_ok &= ok
     _print_check("Null values", str(nulls.to_dict()), "0 nulls", ok)
 
-    # 4. Date range
-    df["acq_date"] = pd.to_datetime(df["acq_date"]).dt.date
-    date_min = df["acq_date"].min()
-    date_max = df["acq_date"].max()
+    # 3b. Per-row validity: coordinate ranges and date parseability
+    print(f"\n  Per-row validation:")
+
+    # Latitude must be -90 … 90
+    invalid_lat = int(((df["latitude"] < -90) | (df["latitude"] > 90)).sum())
+    ok_lat = invalid_lat == 0
+    all_ok &= ok_lat
+    _print_check("  Invalid latitude  (out of -90..90)", str(invalid_lat), "0", ok_lat)
+
+    # Longitude must be -180 … 180
+    invalid_lon = int(((df["longitude"] < -180) | (df["longitude"] > 180)).sum())
+    ok_lon = invalid_lon == 0
+    all_ok &= ok_lon
+    _print_check("  Invalid longitude (out of -180..180)", str(invalid_lon), "0", ok_lon)
+
+    # acq_date must be parseable as a date
+    parsed_dates = pd.to_datetime(df["acq_date"], errors="coerce")
+    invalid_date = int(parsed_dates.isna().sum())
+    ok_date = invalid_date == 0
+    all_ok &= ok_date
+    _print_check("  Unparseable acq_date", str(invalid_date), "0", ok_date)
+
+    # Dates must be in expected range (fire season only: May–Oct)
+    valid_dates = parsed_dates.dropna()
+    if len(valid_dates) > 0:
+        wrong_month = int(~valid_dates.dt.month.isin([5, 6, 7, 8, 9, 10])).sum() \
+            if False else 0   # script downloads fire season only — informational
+        off_season = int((~valid_dates.dt.month.isin([5, 6, 7, 8, 9, 10])).sum())
+        ok_season = off_season == 0
+        # This is informational (not all_ok since some files may include extra months)
+        _print_check("  Off-season rows (non May–Oct)", str(off_season),
+                     "0 (fire-season download)", ok_season)
+
+    # 4. Date range  (use errors='coerce' to handle the 1 unparseable NaN row)
+    df["acq_date"] = pd.to_datetime(df["acq_date"], errors="coerce").dt.date
+    date_min = df["acq_date"].dropna().min()
+    date_max = df["acq_date"].dropna().max()
     ok = (str(date_min) <= "2018-05-31") and (str(date_max) >= "2025-10-01")
     all_ok &= ok
     _print_check(
@@ -402,20 +581,70 @@ def main(argv=None):
     print("Hotspot Data Validator")
     print("="*55)
 
-    # Load CSV
-    print(f"\nLoading {csv_path} ...")
-    try:
-        df = pd.read_csv(csv_path)
-    except FileNotFoundError:
+    # ── 0. File integrity (null-byte detection) ──────────────────────
+    if not os.path.exists(csv_path):
         print(f"[ERROR] File not found: {csv_path}")
         print("Run download_hotspots.py first.")
         sys.exit(1)
+
+    file_ok = check_file_integrity(csv_path)
+
+    # Load CSV (pandas handles trailing null bytes correctly)
+    print(f"\nLoading {csv_path} ...")
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        print(f"[ERROR] Could not read CSV: {e}")
+        sys.exit(1)
+
+    print(f"  Rows loaded by pandas: {len(df):,}")
 
     # Cleanup: remove non-Canada records from the CSV (in-place)
     df = cleanup_bbox(csv_path)
 
     # Part A
     part_a_ok = check_basic(df, csv_path)
+
+    # ── Coverage grid + re-download suggestion ────────────────────────
+    print(f"\n{'='*55}")
+    print(f"COVERAGE CHECK — which fire-season months have data")
+    print(f"{'='*55}")
+    missing_months, partial_months = check_coverage(df)
+
+    if missing_months or partial_months:
+        print(f"\n  {'─'*51}")
+        print(f"  WHAT TO DO:")
+        if missing_months:
+            print(f"  Re-run download on the server — resume mode will")
+            print(f"  automatically fill in the {len(missing_months)} missing month(s):")
+            print(f"")
+            print(f"    python -m src.data_ops.download.download_hotspots \\")
+            print(f"        --config configs/default.yaml")
+            print(f"")
+        if partial_months:
+            print(f"  NOTE: {len(partial_months)} month(s) marked ⚠ are partially")
+            print(f"  downloaded (last few days missing). The resume logic will")
+            print(f"  NOT re-download them automatically (it sees any row for")
+            print(f"  that month as 'done'). To fix them, re-download manually:")
+            for (y, m) in sorted(partial_months):
+                print(f"    python -m src.data_ops.download.download_hotspots \\")
+                print(f"        --start_year {y} --end_year {y} \\")
+                print(f"        --start_month {m} --end_month {m} \\")
+                print(f"        --output /tmp/hotspot_{y}_{m:02d}_fix.csv")
+                print(f"    # then append /tmp/hotspot_{y}_{m:02d}_fix.csv to the main file")
+        if not file_ok:
+            print(f"")
+            print(f"  ALSO: strip null-byte padding from file (optional — pandas")
+            print(f"  reads it fine, but it wastes disk space):")
+            print(f"    python3 -c \"")
+            print(f"import os; path='{csv_path}'")
+            print(f"size=os.path.getsize(path)")
+            print(f"with open(path,'rb') as f:")
+            print(f"    data=f.read().rstrip(b'\\\\x00')")
+            print(f"with open(path,'wb') as f:")
+            print(f"    f.write(data)")
+            print(f"print('Done,',len(data),'bytes')\"")
+        print(f"  {'─'*51}")
 
     # Part B (optional, requires MAP key)
     part_b_ok = None
