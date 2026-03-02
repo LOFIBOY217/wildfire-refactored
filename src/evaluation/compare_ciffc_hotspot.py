@@ -199,11 +199,11 @@ def _print_data_summary(ciffc_df: pd.DataFrame, hotspot_df: pd.DataFrame) -> Non
     overlap = cif_date_set & hot_date_set
     print()
     if overlap:
-        print(f"  ✅ 时间重叠 : {len(overlap):,} 个共同日期（可进行匹配）")
+        print(f"  [OK] 时间重叠 : {len(overlap):,} 个共同日期（可进行匹配）")
     else:
-        print(f"  ⚠  时间无重叠：CIFFC {cif_dates.min().year}–{cif_dates.max().year}，"
+        print(f"  [WARN] 时间无重叠：CIFFC {cif_dates.min().year}–{cif_dates.max().year}，"
               f"Hotspot {hot_dates.min()}–{hot_dates.max()}")
-        print(f"     → 用服务器上覆盖 2023–2025 的完整 hotspot 文件运行才能看到真实匹配率")
+        print(f"     -> 用服务器上覆盖 2023–2025 的完整 hotspot 文件运行才能看到真实匹配率")
     print("=" * 65)
     print()
 
@@ -299,7 +299,7 @@ def match_ciffc_to_hotspot(
         nearest_hotspot_lat[i]       = float(combined[best_idx, 0])
         nearest_hotspot_lon[i]       = float(combined[best_idx, 1])
 
-    print(f"  匹配完成 ✅", flush=True)
+    print(f"  Matching done.", flush=True)
 
     # 拼接结果
     out = ciffc_df.copy()
@@ -374,8 +374,8 @@ def _print_match_summary(out: pd.DataFrame, window_days: int, match_km: float) -
 
     if no_win == n:
         print()
-        print("  ⚠  所有 CIFFC 记录在 hotspot 文件时间范围内均无数据。")
-        print("     → 请在服务器使用覆盖 2023–2025 年的完整 hotspot 文件重新运行。")
+        print("  [WARN] 所有 CIFFC 记录在 hotspot 文件时间范围内均无数据。")
+        print("     -> 请在服务器使用覆盖 2023–2025 年的完整 hotspot 文件重新运行。")
     print("=" * 65)
     print()
 

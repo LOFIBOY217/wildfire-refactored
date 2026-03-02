@@ -113,9 +113,9 @@ def check_file_integrity(csv_path: str) -> bool:
     print(f"  Null-byte padding : {null_bytes:>15,} bytes ({null_bytes/1024/1024:.1f} MB)")
 
     if ok:
-        print(f"  ✅ File looks clean — no significant null-byte padding")
+        print(f"  [OK]   File looks clean — no significant null-byte padding")
     else:
-        print(f"  ❌ File has {null_bytes/1024/1024:.1f} MB of null-byte padding at the end")
+        print(f"  [FAIL] File has {null_bytes/1024/1024:.1f} MB of null-byte padding at the end")
         print(f"     Cause: the download was interrupted mid-write on Windows Server.")
         print(f"     pandas can still read the file correctly (stops at the last valid row).")
         print(f"     To clean: run the fix command shown at the end of this report.")
@@ -184,11 +184,11 @@ def check_coverage(
         cells = []
         for m in fire_months:
             if (y, m) not in have_data:
-                cells.append(" ❌ ")
+                cells.append("MISS")
             elif (y, m) in partial:
-                cells.append(" ⚠  ")
+                cells.append("PART")
             else:
-                cells.append(" ✅ ")
+                cells.append(" OK ")
         print(f"  {y:4d}   " + "   ".join(cells))
 
     print()
@@ -196,8 +196,8 @@ def check_coverage(
         for (y, m) in sorted(partial):
             last_obs = int(grp.loc[(y, m), "last_day"])
             last_exp = calendar.monthrange(y, m)[1]
-            print(f"  ⚠  {y}-{m:02d}: data stops at day {last_obs} "
-                  f"(expected {last_exp}) — likely interrupted mid-download")
+            print(f"  [PART] {y}-{m:02d}: data stops at day {last_obs} "
+                  f"(expected {last_exp}) -- likely interrupted mid-download")
 
     _print_check(
         "Month coverage",
@@ -536,7 +536,7 @@ def check_nasa_comparison(df_cwfis: pd.DataFrame, map_key: str,
 # ------------------------------------------------------------------ #
 
 def _print_check(label: str, value: str, expected: str, ok: bool) -> None:
-    status = "✅" if ok else "❌"
+    status = "[OK]  " if ok else "[FAIL]"
     print(f"  {status} {label:30s}: {value}  (expected {expected})")
 
 
@@ -622,7 +622,7 @@ def main(argv=None):
             print(f"        --config configs/default.yaml")
             print(f"")
         if partial_months:
-            print(f"  NOTE: {len(partial_months)} month(s) marked ⚠ are partially")
+            print(f"  NOTE: {len(partial_months)} month(s) marked PART are partially")
             print(f"  downloaded (last few days missing). The resume logic will")
             print(f"  NOT re-download them automatically (it sees any row for")
             print(f"  that month as 'done'). To fix them, re-download manually:")
@@ -669,13 +669,13 @@ def main(argv=None):
         if part_b_ok is True:
             verdict = "PASS (Part A + B)"
         elif part_b_ok is False:
-            verdict = "PASS (Part A ✅ | Part B unavailable via API — expected for historical SP data)"
+            verdict = "PASS (Part A OK | Part B unavailable via API — expected for historical SP data)"
         else:
             verdict = "PASS (Part A only)"
     else:
         verdict = "FAIL"
 
-    symbol = "✅" if "PASS" in verdict else "❌"
+    symbol = "[OK]  " if "PASS" in verdict else "[FAIL]"
     print(f"  {symbol} Overall result: {verdict}")
     print(f"{'='*55}\n")
 

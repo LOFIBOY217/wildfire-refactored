@@ -16,7 +16,7 @@ Precompute approach (identical to posaware):
     fire_patched  : (T, n_patches, P²)    uint8   ← binary 0/1, 4× smaller than float32
   After that, __getitem__ is pure O(1) array indexing.
 
-⚠️  Memory requirement:
+NOTE  Memory requirement:
   P=16, Canada grid → n_patches ≈ 24 310
   meteo_patched ≈ T × 74.7 MB  float32  (e.g. T=1000 → ~73 GB, T=2300 → ~172 GB)
   fire_patched  ≈ T ×  6.2 MB  uint8    (e.g. T=1000 →  ~6 GB, T=2300 →  ~14 GB)

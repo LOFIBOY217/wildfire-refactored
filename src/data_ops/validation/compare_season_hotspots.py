@@ -58,7 +58,7 @@ OFF_SEASON_2  = {11, 12}              # Nov–Dec
 
 def _bar(value: float, total: float, width: int = 30) -> str:
     filled = int(round(width * value / total)) if total > 0 else 0
-    return "█" * filled + "░" * (width - filled)
+    return "#" * filled + "." * (width - filled)
 
 
 def _load(path: str, label: str) -> pd.DataFrame | None:
@@ -171,13 +171,13 @@ def run_comparison(
     print(f"\n{'='*65}")
     off_pct = 100 * off_n / total if total > 0 else 0
     if off_pct < 3.0:
-        verdict = (f"✅ Off-season fires are NEGLIGIBLE ({off_pct:.2f}% of all hotspots).\n"
-                   f"   Limiting training data to May–Oct is justified.")
+        verdict = (f"[PASS] Off-season fires are NEGLIGIBLE ({off_pct:.2f}% of all hotspots).\n"
+                   f"   Limiting training data to May-Oct is justified.")
     elif off_pct < 10.0:
-        verdict = (f"⚠  Off-season fires are MINOR ({off_pct:.2f}% of all hotspots).\n"
-                   f"   May–Oct captures the vast majority; consider your use case.")
+        verdict = (f"[WARN] Off-season fires are MINOR ({off_pct:.2f}% of all hotspots).\n"
+                   f"   May-Oct captures the vast majority; consider your use case.")
     else:
-        verdict = (f"❌ Off-season fires are SIGNIFICANT ({off_pct:.2f}% of all hotspots).\n"
+        verdict = (f"[FAIL] Off-season fires are SIGNIFICANT ({off_pct:.2f}% of all hotspots).\n"
                    f"   Consider extending the download to include off-season months.")
     print(f"\n  {verdict}")
     print(f"{'='*65}\n")

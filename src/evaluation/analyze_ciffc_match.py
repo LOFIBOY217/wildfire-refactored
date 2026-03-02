@@ -27,7 +27,7 @@ import pandas as pd
 def _bar(value: float, total: float = 100.0, width: int = 25) -> str:
     """ASCII progress bar: maps value/total onto <width> characters."""
     filled = int(round(width * value / total)) if total > 0 else 0
-    return "█" * filled + "░" * (width - filled)
+    return "#" * filled + "." * (width - filled)
 
 
 def _pct(n: int, total: int) -> str:
@@ -62,8 +62,8 @@ def section1_detection_rate(df: pd.DataFrame) -> None:
     n_und  = len(undetected)
 
     print(f"\n  Total CIFFC records          : {n:>7,}")
-    print(f"  ✅ Satellite detected (±7d)  : {_pct(n_det, n)}   {_bar(n_det, n)}")
-    print(f"  ❌ No satellite detection    : {_pct(n_und, n)}   {_bar(n_und, n)}")
+    print(f"  [OK]   Satellite detected (+-7d) : {_pct(n_det, n)}   {_bar(n_det, n)}")
+    print(f"  [MISS] No satellite detection    : {_pct(n_und, n)}   {_bar(n_und, n)}")
 
     same_day = (~df["same_day_nearest_km"].isna()).sum()
     print(f"\n  Of detected: same-day hotspot: {_pct(same_day, n)}")
@@ -111,7 +111,7 @@ def section3_distance_error(df: pd.DataFrame) -> None:
     # Remove obvious outliers (coordinate errors)
     n_outlier = (det["window_nearest_km"] > 5000).sum()
     if n_outlier > 0:
-        print(f"\n  ⚠  Removed {n_outlier} records with distance >5000 km (likely bad coordinates)")
+        print(f"\n  [WARN] Removed {n_outlier} records with distance >5000 km (likely bad coordinates)")
         det = det[det["window_nearest_km"] <= 5000]
 
     print(f"\n  Note: larger fires naturally show greater distance between the CIFFC")
