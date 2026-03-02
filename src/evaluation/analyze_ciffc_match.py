@@ -1,11 +1,11 @@
 """
 analyze_ciffc_match.py
 ======================
-对 compare_ciffc_hotspot.py 的输出进行深度分析，回答三个问题：
+Deep analysis of compare_ciffc_hotspot.py output, answering three questions:
 
-  1. 总体探测率：CIFFC 里的火，卫星有没有看到？
-  2. 误差量化：看到的那些，时间差多少？空间差多少？
-  3. 未探测特征：没看到的那些火，有什么共同特点？
+  1. Overall detection rate: did the satellite see the fire?
+  2. Error quantification: how large is the time gap? the spatial gap?
+  3. Undetected profile: what do undetected fires have in common?
 
 Usage:
     python -m src.evaluation.analyze_ciffc_match ^
@@ -21,11 +21,11 @@ import pandas as pd
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 工具
+# Utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _bar(value: float, total: float = 100.0, width: int = 25) -> str:
-    """生成 ASCII 进度条，value/total 映射到 width 个字符。"""
+    """ASCII progress bar: maps value/total onto <width> characters."""
     filled = int(round(width * value / total)) if total > 0 else 0
     return "█" * filled + "░" * (width - filled)
 
@@ -48,85 +48,82 @@ def _subsection(title: str) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 分析函数
+# Analysis sections
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section1_detection_rate(df: pd.DataFrame) -> None:
-    """【1】总体探测率：卫星有没有看到这场火？"""
-    _section("1. 总体探测率")
+    """Section 1: Overall detection rate — did the satellite see the fire?"""
+    _section("1. Overall Detection Rate")
 
     n          = len(df)
-    detected   = df[~df["no_hotspots_in_window"]]    # 窗口内有 hotspot
-    undetected = df[df["no_hotspots_in_window"]]      # 窗口内无 hotspot
+    detected   = df[~df["no_hotspots_in_window"]]   # hotspot found in window
+    undetected = df[df["no_hotspots_in_window"]]     # no hotspot in window
     n_det  = len(detected)
     n_und  = len(undetected)
 
-    print(f"\n  CIFFC 总记录数            : {n:>7,}")
-    print(f"  ✅ 卫星有探测（±7天窗口） : {_pct(n_det, n)}   {_bar(n_det, n)}")
-    print(f"  ❌ 卫星无探测             : {_pct(n_und, n)}   {_bar(n_und, n)}")
+    print(f"\n  Total CIFFC records          : {n:>7,}")
+    print(f"  ✅ Satellite detected (±7d)  : {_pct(n_det, n)}   {_bar(n_det, n)}")
+    print(f"  ❌ No satellite detection    : {_pct(n_und, n)}   {_bar(n_und, n)}")
 
-    # 进一步拆分"有探测"里的同日探测
     same_day = (~df["same_day_nearest_km"].isna()).sum()
-    print(f"\n  其中，同日即有卫星记录    : {_pct(same_day, n)}")
+    print(f"\n  Of detected: same-day hotspot: {_pct(same_day, n)}")
 
 
 def section2_time_error(df: pd.DataFrame) -> None:
-    """【2】时间误差：卫星和人工记录差了几天？"""
-    _section("2. 时间误差（有卫星探测的记录）")
+    """Section 2: Time error — how many days apart are the satellite and human records?"""
+    _section("2. Time Error  (records with satellite detection)")
 
-    det = df[~df["no_hotspots_in_window"]].copy()
+    det     = df[~df["no_hotspots_in_window"]].copy()
     offsets = det["window_nearest_day_offset"].dropna()
 
     if len(offsets) == 0:
-        print("\n  无数据")
+        print("\n  No data.")
         return
 
-    print(f"\n  样本量：{len(offsets):,} 条（窗口内有 hotspot 的记录）")
-    print(f"\n  偏移 = hotspot日期 − CIFFC日期（负 = 卫星先于人工上报）\n")
+    print(f"\n  Sample size : {len(offsets):,} records (those with a hotspot in window)")
+    print(f"\n  Offset = hotspot_date − CIFFC_date  (negative = satellite ahead of report)\n")
 
-    # 逐天分布（-7 到 +7）
-    print(f"  {'偏移天数':>6}  {'记录数':>8}  {'占比':>6}  分布")
+    print(f"  {'Offset':>8}  {'Count':>8}  {'Pct':>6}  Distribution")
     print(f"  {'─'*55}")
     for d in range(-7, 8):
         cnt = int((offsets == d).sum())
         pct = 100 * cnt / len(offsets)
         bar = _bar(pct, 20.0, 20)
-        tag = " ← 同日" if d == 0 else ""
-        print(f"  {d:>+6}天  {cnt:>8,}  {pct:>5.1f}%  {bar}{tag}")
+        tag = "  ← same day" if d == 0 else ""
+        print(f"  {d:>+7}d  {cnt:>8,}  {pct:>5.1f}%  {bar}{tag}")
 
-    print(f"\n  分位数摘要：")
-    for q, label in [(0, "最小"), (0.25, "P25"), (0.5, "中位"), (0.75, "P75"), (1.0, "最大")]:
-        print(f"    {label} : {offsets.quantile(q):>+.0f} 天")
+    print(f"\n  Percentile summary:")
+    for q, label in [(0, "Min"), (0.25, "P25"), (0.5, "Median"), (0.75, "P75"), (1.0, "Max")]:
+        print(f"    {label:<8} : {offsets.quantile(q):>+.0f} days")
 
 
 def section3_distance_error(df: pd.DataFrame) -> None:
-    """【3】距离误差：按火灾面积分组，误差有多大？"""
-    _section("3. 距离误差（按火灾面积分组）")
+    """Section 3: Distance error — grouped by fire size."""
+    _section("3. Distance Error  (grouped by fire size)")
 
     det = df[~df["no_hotspots_in_window"]].copy()
     det = det[det["window_nearest_km"].notna()]
 
     if len(det) == 0:
-        print("\n  无数据")
+        print("\n  No data.")
         return
 
-    # 去掉明显异常值（>5000 km，不可能的距离）
+    # Remove obvious outliers (coordinate errors)
     n_outlier = (det["window_nearest_km"] > 5000).sum()
     if n_outlier > 0:
-        print(f"\n  ⚠  去除 {n_outlier} 条距离 >5000km 的异常记录（坐标明显有误）")
+        print(f"\n  ⚠  Removed {n_outlier} records with distance >5000 km (likely bad coordinates)")
         det = det[det["window_nearest_km"] <= 5000]
 
-    print(f"\n  逻辑：火灾面积越大，CIFFC 汇报点与卫星热点的距离自然越远")
-    print(f"  （CIFFC 记录一个点，卫星记录整片燃烧区域）\n")
+    print(f"\n  Note: larger fires naturally show greater distance between the CIFFC")
+    print(f"  report point and the nearest satellite pixel (point vs. burn-area).\n")
 
-    # 面积分组
     bins   = [0, 1, 10, 100, 1_000, 10_000, float("inf")]
-    labels = ["极小 <1ha", "小 1–10ha", "中 10–100ha",
-              "大 100–1000ha", "超大 1000–10000ha", "巨大 >10000ha"]
+    labels = ["Tiny  <1ha", "Small  1–10ha", "Medium 10–100ha",
+              "Large 100–1000ha", "XLarge 1k–10kha", "Huge  >10kha"]
 
     if "field_fire_size" not in det.columns:
-        print("  （缺少 field_fire_size 列，跳过分组分析）")
-        _print_dist(det["window_nearest_km"], "全部")
+        print("  (field_fire_size column missing — skipping grouped analysis)")
+        _print_dist(det["window_nearest_km"], "All records")
         return
 
     det["_size_grp"] = pd.cut(
@@ -134,7 +131,7 @@ def section3_distance_error(df: pd.DataFrame) -> None:
         bins=bins, labels=labels, right=False
     )
 
-    print(f"  {'面积分组':<18} {'记录数':>6}  {'中位距离':>8}  "
+    print(f"  {'Size group':<20} {'N':>6}  {'Median dist':>11}  "
           f"{'<10km':>6}  {'<50km':>7}  {'<100km':>7}")
     print(f"  {'─'*70}")
 
@@ -142,140 +139,144 @@ def section3_distance_error(df: pd.DataFrame) -> None:
         sub = det[det["_size_grp"] == grp]["window_nearest_km"]
         if len(sub) == 0:
             continue
-        med    = sub.median()
-        lt10   = 100 * (sub < 10).mean()
-        lt50   = 100 * (sub < 50).mean()
-        lt100  = 100 * (sub < 100).mean()
-        print(f"  {grp:<18} {len(sub):>6,}  {med:>7.1f}km  "
+        med   = sub.median()
+        lt10  = 100 * (sub < 10).mean()
+        lt50  = 100 * (sub < 50).mean()
+        lt100 = 100 * (sub < 100).mean()
+        print(f"  {grp:<20} {len(sub):>6,}  {med:>10.1f}km  "
               f"{lt10:>5.1f}%  {lt50:>6.1f}%  {lt100:>6.1f}%")
 
-    # 全体分位数
-    print(f"\n  全体距离分位数（去异常后 {len(det):,} 条）：")
-    for q, label in [(0, "P0（最小）"), (0.1, "P10"), (0.25, "P25"),
-                     (0.5, "P50（中位）"), (0.75, "P75"), (0.9, "P90"), (1.0, "P100（最大）")]:
-        print(f"    {label:<12} : {det['window_nearest_km'].quantile(q):>8.2f} km")
+    print(f"\n  Overall distance percentiles (after outlier removal, n={len(det):,}):")
+    for q, label in [(0,   "P0  (min)"),  (0.1,  "P10"),
+                     (0.25,"P25"),         (0.5,  "P50 (median)"),
+                     (0.75,"P75"),         (0.9,  "P90"),
+                     (1.0, "P100 (max)")]:
+        print(f"    {label:<14} : {det['window_nearest_km'].quantile(q):>8.2f} km")
 
 
 def _print_dist(series: pd.Series, label: str) -> None:
-    print(f"\n  {label} 距离分布：")
+    print(f"\n  {label} distance distribution:")
     for q, ql in [(0, "P0"), (0.25, "P25"), (0.5, "P50"), (0.75, "P75"), (1.0, "P100")]:
         print(f"    {ql}: {series.quantile(q):.2f} km")
 
 
 def section4_undetected_profile(df: pd.DataFrame) -> None:
-    """【4】未探测记录的特征：没被卫星看到的火有什么规律？"""
-    _section("4. 未被卫星探测到的火灾特征分析")
+    """Section 4: Profile of undetected fires — what do they have in common?"""
+    _section("4. Undetected Fire Profile")
 
-    det = df[~df["no_hotspots_in_window"]]
-    und = df[df["no_hotspots_in_window"]]
+    det   = df[~df["no_hotspots_in_window"]]
+    und   = df[df["no_hotspots_in_window"]]
     n_und = len(und)
     n_det = len(det)
 
     if n_und == 0:
-        print("\n  所有记录都有卫星探测，无需分析。")
+        print("\n  All records have satellite detection — nothing to analyse.")
         return
 
-    print(f"\n  分析对象：{n_und:,} 条无卫星探测的记录\n")
+    print(f"\n  Analysing {n_und:,} records with no satellite detection in window\n")
 
-    # ── 4a. 火灾面积 ──────────────────────────────────────────────────
-    _subsection("a. 火灾面积（公顷）")
+    # ── 4a. Fire size ─────────────────────────────────────────────────
+    _subsection("a. Fire size (hectares)")
 
     if "field_fire_size" in df.columns:
         und_sz = und["field_fire_size"].dropna()
         det_sz = det["field_fire_size"].dropna()
 
-        print(f"  {'指标':<20} {'未探测':>12}  {'已探测':>12}")
+        print(f"  {'Statistic':<20} {'Undetected':>12}  {'Detected':>12}")
         print(f"  {'─'*48}")
-        for label, q in [("最小值", 0), ("P10", 0.1), ("中位数", 0.5),
-                          ("P90", 0.9), ("最大值", 1.0)]:
+        for label, q in [("Min", 0), ("P10", 0.1), ("Median", 0.5),
+                          ("P90", 0.9), ("Max", 1.0)]:
             u = und_sz.quantile(q) if len(und_sz) > 0 else float("nan")
             d = det_sz.quantile(q) if len(det_sz) > 0 else float("nan")
             print(f"  {label:<20} {u:>12.2f}  {d:>12.2f}")
 
-        # 极小火（<1ha）占比
         u_tiny = 100 * (und_sz < 1).mean() if len(und_sz) > 0 else 0
         d_tiny = 100 * (det_sz < 1).mean() if len(det_sz) > 0 else 0
-        print(f"\n  面积 < 1 ha 占比：未探测 {u_tiny:.1f}% vs 已探测 {d_tiny:.1f}%")
-        print(f"  → 小火更难被卫星探测，这符合预期（卫星分辨率约 375m）")
+        print(f"\n  Size < 1 ha:  undetected {u_tiny:.1f}%  vs  detected {d_tiny:.1f}%")
+        print(f"  → Small fires are below satellite detection threshold (~375m pixel)")
 
-    # ── 4b. 控制状态 ──────────────────────────────────────────────────
-    _subsection("b. 控制状态（火灾是否仍在燃烧？）")
+    # ── 4b. Control status ────────────────────────────────────────────
+    _subsection("b. Stage of control (is the fire still burning?)")
 
     status_col = "field_stage_of_control_status"
     if status_col in df.columns:
         status_map = {
-            "OUT": "OUT（已扑灭）",
-            "BH":  "BH（受控中）",
-            "UC":  "UC（失控）",
-            "OC":  "OC（观察中）",
-            "H":   "H（控制）",
+            "OUT": "OUT (extinguished)",
+            "BH":  "BH  (being held)",
+            "UC":  "UC  (out of control)",
+            "OC":  "OC  (under control)",
+            "H":   "H   (held)",
         }
-        print(f"\n  {'状态':<18} {'未探测数':>9}  {'未探测%':>8}  {'已探测数':>9}  {'已探测%':>8}")
-        print(f"  {'─'*60}")
+        print(f"\n  {'Status':<22} {'Undet. n':>9}  {'Undet. %':>9}  "
+              f"{'Det. n':>9}  {'Det. %':>8}")
+        print(f"  {'─'*65}")
 
-        all_statuses = df[status_col].dropna().unique()
-        for s in sorted(all_statuses):
-            u = (und[status_col] == s).sum()
-            d = (det[status_col] == s).sum()
+        for s in sorted(df[status_col].dropna().unique()):
+            u   = (und[status_col] == s).sum()
+            d   = (det[status_col] == s).sum()
             u_p = 100 * u / n_und if n_und > 0 else 0
             d_p = 100 * d / n_det if n_det > 0 else 0
             name = status_map.get(s, s)
-            print(f"  {name:<18} {u:>9,}  {u_p:>7.1f}%  {d:>9,}  {d_p:>7.1f}%")
+            print(f"  {name:<22} {u:>9,}  {u_p:>8.1f}%  {d:>9,}  {d_p:>7.1f}%")
 
         out_und = 100 * (und[status_col] == "OUT").sum() / n_und if n_und > 0 else 0
         out_det = 100 * (det[status_col] == "OUT").sum() / n_det if n_det > 0 else 0
-        print(f"\n  → 未探测组 OUT 占比 {out_und:.1f}% vs 已探测组 {out_det:.1f}%")
-        print(f"     OUT = 火已扑灭 → 无热量 → 卫星看不到，符合预期")
+        print(f"\n  → OUT share: undetected {out_und:.1f}%  vs  detected {out_det:.1f}%")
+        print(f"     OUT = already extinguished → no heat → satellite cannot see it (expected)")
 
-    # ── 4c. 火因 ─────────────────────────────────────────────────────
-    _subsection("c. 火灾原因")
+    # ── 4c. Fire cause ────────────────────────────────────────────────
+    _subsection("c. Fire cause")
 
     cause_col = "field_system_fire_cause"
     if cause_col in df.columns:
-        cause_map = {"N": "N（自然/雷电）", "H": "H（人为）", "U": "U（未知）"}
-        print(f"\n  {'火因':<20} {'未探测%':>8}  {'已探测%':>8}")
-        print(f"  {'─'*40}")
+        cause_map = {
+            "N": "N  (natural / lightning)",
+            "H": "H  (human)",
+            "U": "U  (unknown)",
+        }
+        print(f"\n  {'Cause':<26} {'Undetected %':>13}  {'Detected %':>11}")
+        print(f"  {'─'*55}")
         for c in sorted(df[cause_col].dropna().unique()):
-            u_p = 100 * (und[cause_col] == c).sum() / n_und if n_und > 0 else 0
-            d_p = 100 * (det[cause_col] == c).sum() / n_det if n_det > 0 else 0
+            u_p  = 100 * (und[cause_col] == c).sum() / n_und if n_und > 0 else 0
+            d_p  = 100 * (det[cause_col] == c).sum() / n_det if n_det > 0 else 0
             name = cause_map.get(c, c)
-            print(f"  {name:<20} {u_p:>7.1f}%  {d_p:>7.1f}%")
+            print(f"  {name:<26} {u_p:>12.1f}%  {d_p:>10.1f}%")
 
-    # ── 4d. 省份/机构 ─────────────────────────────────────────────────
-    _subsection("d. 省份/机构（未探测率最高的前10个）")
+    # ── 4d. Province / agency ─────────────────────────────────────────
+    _subsection("d. Province / agency  (top 10 by undetected rate)")
 
     agency_col = "field_agency_code"
     if agency_col in df.columns:
         grp = df.groupby(agency_col).agg(
-            total    = (agency_col, "count"),
-            undet    = ("no_hotspots_in_window", "sum"),
+            total = (agency_col, "count"),
+            undet = ("no_hotspots_in_window", "sum"),
         )
         grp["undet_pct"] = 100 * grp["undet"] / grp["total"]
         grp = grp.sort_values("undet_pct", ascending=False)
 
-        print(f"\n  {'省份':>6}  {'总记录':>8}  {'未探测':>8}  {'未探测率':>8}")
-        print(f"  {'─'*38}")
+        print(f"\n  {'Agency':>6}  {'Total':>8}  {'Undet.':>8}  {'Undet. %':>9}")
+        print(f"  {'─'*40}")
         for agency, row in grp.head(10).iterrows():
             print(f"  {str(agency):>6}  {int(row['total']):>8,}  "
-                  f"{int(row['undet']):>8,}  {row['undet_pct']:>7.1f}%")
+                  f"{int(row['undet']):>8,}  {row['undet_pct']:>8.1f}%")
 
-    # ── 4e. 时间分布 ──────────────────────────────────────────────────
-    _subsection("e. 时间分布（未探测集中在哪几个月？）")
+    # ── 4e. Monthly distribution ──────────────────────────────────────
+    _subsection("e. Monthly distribution  (which months have the most undetected?)")
 
     if "ciffc_date" in und.columns or "field_situation_report_date" in und.columns:
         und_copy = und.copy()
-        # 优先用原始时间戳列（格式确定），回退到 ciffc_date
+        # Prefer the original timestamp column (reliable format); fall back to ciffc_date
         date_col = ("field_situation_report_date"
                     if "field_situation_report_date" in und_copy.columns
                     else "ciffc_date")
         und_copy["_month"] = pd.to_datetime(
             und_copy[date_col], errors="coerce"
-        ).dt.month.astype("Int64")   # 用 nullable Int64，保留 NaN 但不影响 groupby
+        ).dt.month.astype("Int64")   # nullable Int64 so NaN rows don't corrupt dtype
         month_counts = und_copy.dropna(subset=["_month"]).groupby("_month").size()
-        month_names  = {5:"May",6:"Jun",7:"Jul",8:"Aug",9:"Sep",10:"Oct"}
+        month_names  = {5:"May", 6:"Jun", 7:"Jul", 8:"Aug", 9:"Sep", 10:"Oct"}
         total_und    = month_counts.sum()
 
-        print(f"\n  {'月份':<6} {'记录数':>7}  {'占比':>6}  分布")
+        print(f"\n  {'Month':<6} {'Count':>7}  {'Pct':>6}  Distribution")
         print(f"  {'─'*45}")
         for m in range(5, 11):
             cnt = int(month_counts.get(m, month_counts.get(np.int64(m), 0)))
@@ -285,32 +286,32 @@ def section4_undetected_profile(df: pd.DataFrame) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 主程序
+# Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(
-        description="分析 CIFFC vs hotspot 匹配结果（compare_ciffc_hotspot 的输出）"
+        description="Analyse CIFFC vs hotspot match results (output of compare_ciffc_hotspot.py)"
     )
     ap.add_argument("--match_csv", type=str, default="ciffc_hotspot_match.csv",
-                    help="compare_ciffc_hotspot.py 输出的 CSV（默认 ciffc_hotspot_match.csv）")
+                    help="CSV produced by compare_ciffc_hotspot.py (default: ciffc_hotspot_match.csv)")
     ap.add_argument("--window_days", type=int, default=7,
-                    help="当时使用的时间窗口天数（仅用于展示，默认 7）")
+                    help="Time window used when running the match (display only, default: 7)")
     args = ap.parse_args(argv)
 
     csv_path = args.match_csv
     if not Path(csv_path).exists():
-        sys.exit(f"[ERROR] 找不到文件：{csv_path}\n"
-                 f"请先运行 compare_ciffc_hotspot.py 生成匹配文件。")
+        sys.exit(f"[ERROR] File not found: {csv_path}\n"
+                 f"Run compare_ciffc_hotspot.py first to generate the match file.")
 
     print(f"\n{'='*65}")
-    print(f"  CIFFC vs Hotspot 深度分析报告")
-    print(f"  输入文件：{csv_path}")
-    print(f"  时间窗口：±{args.window_days} 天")
+    print(f"  CIFFC vs Hotspot — Deep Analysis Report")
+    print(f"  Input : {csv_path}")
+    print(f"  Window: ±{args.window_days} days")
     print(f"{'='*65}")
 
     df = pd.read_csv(csv_path)
-    print(f"\n  已加载 {len(df):,} 条记录")
+    print(f"\n  Loaded {len(df):,} records")
 
     section1_detection_rate(df)
     section2_time_error(df)
@@ -318,7 +319,7 @@ def main(argv=None) -> None:
     section4_undetected_profile(df)
 
     print(f"\n{'='*65}")
-    print(f"  分析完成")
+    print(f"  Analysis complete.")
     print(f"{'='*65}\n")
 
 
