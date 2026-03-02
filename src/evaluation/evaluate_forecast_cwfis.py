@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 import rasterio
 from scipy.ndimage import binary_dilation
-from sklearn.metrics import average_precision_score, brier_score_loss
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
 try:
     from src.config import load_config, get_path, add_config_argument
@@ -211,24 +211,46 @@ def main():
 
             valid_mask = (y_pred != nodata) & np.isfinite(y_pred)
 
-            # --- AUC-PR and BSS (threshold-independent, computed once per date) ---
+            # --- Pre-masked arrays (computed once, reused for every threshold) ---
+            # Avoids repeating expensive fancy-indexing inside compute_confusion_metrics.
             y_true_v = y_true[valid_mask].astype(np.float32)
             y_pred_v = y_pred[valid_mask].astype(np.float32)
 
-            if len(np.unique(y_true_v)) > 1:
-                ap = float(average_precision_score(y_true_v, y_pred_v))
-            else:
-                ap = float("nan")
+            # --- Sub-sample for AUC / AUC-PR (threshold-independent) ---
+            # Sorting 5.9 M floats per call × 7 calls/pair × 1288 pairs = 8–12 h.
+            # Sub-sampling to (all positives + 100 k random negatives) gives an
+            # essentially identical ranking metric in < 1 ms instead of 3–5 s.
+            _AUC_MAX_NEG = 100_000
+            _pos = np.where(y_true_v == 1)[0]
+            _neg = np.where(y_true_v == 0)[0]
+            if len(_neg) > _AUC_MAX_NEG:
+                _rng = np.random.default_rng(seed=base_date.toordinal() + lead)
+                _neg = _rng.choice(_neg, size=_AUC_MAX_NEG, replace=False)
+            _sub = np.concatenate([_pos, _neg])
+            y_true_s = y_true_v[_sub]
+            y_pred_s = y_pred_v[_sub]
 
+            if len(np.unique(y_true_s)) > 1:
+                ap      = float(average_precision_score(y_true_s, y_pred_s))
+                auc_pre = float(roc_auc_score(y_true_s, y_pred_s))
+            else:
+                ap = auc_pre = float("nan")
+
+            # BSS uses full valid arrays (just mean + MSE, O(n), no sort needed)
             clim_prob = float(y_true_v.mean())
             bs_raw    = float(brier_score_loss(y_true_v, y_pred_v))
             bs_clim   = clim_prob * (1.0 - clim_prob)   # BS of constant-climatology forecast
             bss = (1.0 - bs_raw / bs_clim) if bs_clim > 0 else float("nan")
 
             # --- Threshold-dependent metrics ---
+            # Pass pre-masked arrays directly (no nodata_mask) and skip_auc=True
+            # so compute_confusion_metrics does NOT call roc_auc_score internally.
             for threshold in thresholds:
-                metrics = compute_confusion_metrics(y_true, y_pred, threshold, valid_mask)
+                metrics = compute_confusion_metrics(
+                    y_true_v, y_pred_v, threshold, skip_auc=True
+                )
                 if metrics is not None:
+                    metrics["auc"]         = auc_pre   # sub-sampled value
                     metrics["base_date"]   = base_date
                     metrics["target_date"] = target_date
                     metrics["lead_time"]   = lead
@@ -236,8 +258,9 @@ def main():
                     metrics["bss"]         = bss
                     all_results.append(metrics)
 
-        if len(all_results) % 1000 == 0 and len(all_results) > 0:
-            print(f"  Processed {len(all_results):,} evaluations...")
+        # Per-base_date progress line so operator knows the script is alive
+        print(f"  {base_date}: done — total evaluations so far: {len(all_results):,}",
+              flush=True)
 
     print(f"  Total evaluations: {len(all_results):,}")
 

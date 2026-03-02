@@ -19,7 +19,7 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, roc_auc_score, brier_score_loss
 
 
-def compute_confusion_metrics(y_true, y_pred_prob, threshold, nodata_mask=None):
+def compute_confusion_metrics(y_true, y_pred_prob, threshold, nodata_mask=None, skip_auc=False):
     """
     Compute confusion matrix and derived metrics.
 
@@ -28,6 +28,9 @@ def compute_confusion_metrics(y_true, y_pred_prob, threshold, nodata_mask=None):
         y_pred_prob: [N] predicted probabilities
         threshold: Probability threshold for binary classification
         nodata_mask: [N] boolean mask for valid pixels (True = valid)
+        skip_auc: If True, skip roc_auc_score (caller will supply auc externally).
+                  Use when AUC is computed once from a sub-sampled array to avoid
+                  sorting the full ~6M-element array for every threshold.
 
     Returns:
         dict with confusion matrix and metrics, or None if no valid data
@@ -68,8 +71,10 @@ def compute_confusion_metrics(y_true, y_pred_prob, threshold, nodata_mask=None):
     # Brier Score
     brier = brier_score_loss(y_true, y_pred_prob)
 
-    # AUC-ROC
-    if len(np.unique(y_true)) > 1:
+    # AUC-ROC (skip when caller supplies a pre-computed sub-sampled value)
+    if skip_auc:
+        auc = float("nan")
+    elif len(np.unique(y_true)) > 1:
         auc = roc_auc_score(y_true, y_pred_prob)
     else:
         auc = np.nan
