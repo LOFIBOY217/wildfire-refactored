@@ -262,17 +262,23 @@ def section4_undetected_profile(df: pd.DataFrame) -> None:
     # ── 4e. 时间分布 ──────────────────────────────────────────────────
     _subsection("e. 时间分布（未探测集中在哪几个月？）")
 
-    if "ciffc_date" in und.columns:
+    if "ciffc_date" in und.columns or "field_situation_report_date" in und.columns:
         und_copy = und.copy()
-        und_copy["_month"] = pd.to_datetime(und_copy["ciffc_date"]).dt.month
-        month_counts = und_copy.groupby("_month").size()
+        # 优先用原始时间戳列（格式确定），回退到 ciffc_date
+        date_col = ("field_situation_report_date"
+                    if "field_situation_report_date" in und_copy.columns
+                    else "ciffc_date")
+        und_copy["_month"] = pd.to_datetime(
+            und_copy[date_col], errors="coerce"
+        ).dt.month.astype("Int64")   # 用 nullable Int64，保留 NaN 但不影响 groupby
+        month_counts = und_copy.dropna(subset=["_month"]).groupby("_month").size()
         month_names  = {5:"May",6:"Jun",7:"Jul",8:"Aug",9:"Sep",10:"Oct"}
         total_und    = month_counts.sum()
 
         print(f"\n  {'月份':<6} {'记录数':>7}  {'占比':>6}  分布")
         print(f"  {'─'*45}")
         for m in range(5, 11):
-            cnt = int(month_counts.get(m, 0))
+            cnt = int(month_counts.get(m, month_counts.get(np.int64(m), 0)))
             pct = 100 * cnt / total_und if total_und > 0 else 0
             bar = _bar(pct, 30.0, 20)
             print(f"  {month_names.get(m, str(m)):<6} {cnt:>7,}  {pct:>5.1f}%  {bar}")
