@@ -32,6 +32,7 @@ Optional dilation of ground truth (for sensitivity analysis):
 """
 
 import argparse
+import json
 import os
 import glob
 from datetime import datetime, timedelta
@@ -83,7 +84,20 @@ def main():
                     help="Dilate CWFIS hotspot ground truth by N pixels before evaluation. "
                          "0 = raw single-pixel hotspots (default). "
                          "Set to 5 to match the training-time dilation (sensitivity test).")
+    ap.add_argument("--calibration_file", type=str, default=None,
+                    help="Path to JSON file containing temperature scaling parameter T "
+                         "(e.g. checkpoints/temperature.json). "
+                         "If provided, applies calibrated_prob = sigmoid(logit / T) "
+                         "to all predictions before computing metrics.")
     args = ap.parse_args()
+
+    # Load temperature scaling parameter if calibration file is provided
+    _calib_T: float | None = None
+    if args.calibration_file:
+        with open(args.calibration_file, "r") as _f:
+            _calib_data = json.load(_f)
+        _calib_T = float(_calib_data["temperature"])
+        print(f"[Calibration] Loaded temperature T={_calib_T:.4f} from {args.calibration_file}")
 
     cfg          = load_config(args.config)
     forecast_dir = args.forecast_dir or os.path.join(
@@ -115,6 +129,7 @@ def main():
     print(f"Forecast horizon   : {args.forecast_horizon} days")
     print(f"Thresholds         : {thresholds}")
     print(f"Ground truth       : CWFIS hotspots (dilate_radius={args.dilate_radius})")
+    print(f"Calibration        : {'T=' + str(round(_calib_T, 4)) if _calib_T else 'none (raw model output)'}")
     print(f"Output dir         : {output_dir}")
     print("=" * 70)
 
@@ -174,6 +189,14 @@ def main():
     print("\n[STEP 3] Evaluating predictions...")
     all_results = []
 
+    # Reliability diagram accumulators (20 equal-width bins over [0, 1])
+    _N_RELIABILITY_BINS = 20
+    _bin_pred_sum = np.zeros(_N_RELIABILITY_BINS, dtype=np.float64)
+    _bin_true_sum = np.zeros(_N_RELIABILITY_BINS, dtype=np.float64)
+    _bin_counts   = np.zeros(_N_RELIABILITY_BINS, dtype=np.int64)
+    _R_MAX_NEG    = 10_000   # negatives to sample per (date, lead) for reliability bins
+    _bss_warned   = False    # print BSS calibration warning only once
+
     eval_dates = []
     cur = eval_start
     while cur <= eval_end:
@@ -216,6 +239,31 @@ def main():
             y_true_v = y_true[valid_mask].astype(np.float32)
             y_pred_v = y_pred[valid_mask].astype(np.float32)
 
+            # Apply temperature scaling calibration if requested
+            if _calib_T is not None:
+                _logit = np.log(
+                    np.clip(y_pred_v, 1e-7, 1.0 - 1e-7)
+                    / np.clip(1.0 - y_pred_v, 1e-7, 1.0)
+                )
+                y_pred_v = 1.0 / (1.0 + np.exp(-_logit / _calib_T))
+
+            # --- Accumulate for reliability diagram ---
+            # Sample all positives + up to _R_MAX_NEG negatives per (date, lead)
+            _r_pos = np.where(y_true_v == 1)[0]
+            _r_neg = np.where(y_true_v == 0)[0]
+            if len(_r_neg) > _R_MAX_NEG:
+                _r_rng = np.random.default_rng(seed=base_date.toordinal() + lead + 99)
+                _r_neg = _r_rng.choice(_r_neg, size=_R_MAX_NEG, replace=False)
+            _r_sub  = np.concatenate([_r_pos, _r_neg])
+            _r_pred = y_pred_v[_r_sub]
+            _r_true = y_true_v[_r_sub]
+            _bin_idx = np.clip(
+                (_r_pred * _N_RELIABILITY_BINS).astype(int), 0, _N_RELIABILITY_BINS - 1
+            )
+            np.add.at(_bin_counts,   _bin_idx, 1)
+            np.add.at(_bin_pred_sum, _bin_idx, _r_pred)
+            np.add.at(_bin_true_sum, _bin_idx, _r_true)
+
             # --- Sub-sample for AUC / AUC-PR (threshold-independent) ---
             # Sorting 5.9 M floats per call × 7 calls/pair × 1288 pairs = 8–12 h.
             # Sub-sampling to (all positives + 100 k random negatives) gives an
@@ -241,6 +289,12 @@ def main():
             bs_raw    = float(brier_score_loss(y_true_v, y_pred_v))
             bs_clim   = clim_prob * (1.0 - clim_prob)   # BS of constant-climatology forecast
             bss = (1.0 - bs_raw / bs_clim) if bs_clim > 0 else float("nan")
+            if bs_clim < 1e-4 and not _bss_warned:
+                print(f"\n  [WARN] Very low fire frequency (p={clim_prob:.5f}); "
+                      f"bs_clim={bs_clim:.2e}. BSS will be extreme for rare events.")
+                print("         AUC and AP are more reliable primary metrics.")
+                print("         Run calibrate_forecast.py to fix probability calibration.\n")
+                _bss_warned = True
 
             # --- Threshold-dependent metrics ---
             # Pass pre-masked arrays directly (no nodata_mask) and skip_auc=True
@@ -327,6 +381,45 @@ def main():
     print(lead_summary.to_string())
 
     lead_summary.to_csv(os.path.join(output_dir, "metrics_by_lead.csv"))
+
+    # ----------------------------------------------------------------
+    # STEP 4b  Reliability Diagram (calibration analysis)
+    # ----------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("RELIABILITY DIAGRAM (Calibration Analysis)")
+    print("=" * 70)
+    print("  Shows: when the model predicts probability P, what fraction of")
+    print("  pixels actually burn?  Perfect calibration => predicted = observed.")
+    print()
+    print(f"  {'Predicted':>10}  {'Observed':>12}  {'Count':>10}  {'Ratio':>8}  Note")
+    print("  " + "-" * 64)
+    over_ratios = []
+    for i in range(_N_RELIABILITY_BINS):
+        if _bin_counts[i] == 0:
+            continue
+        pred_mean = _bin_pred_sum[i] / _bin_counts[i]
+        obs_rate  = _bin_true_sum[i] / _bin_counts[i]
+        if obs_rate > 1e-9:
+            ratio = pred_mean / obs_rate
+            over_ratios.append(ratio)
+            note = " [WARN] over-predicting" if ratio > 5 else ""
+        else:
+            ratio = float("inf")
+            note  = " [WARN] zero observed fires"
+        print(f"  {pred_mean:10.4f}  {obs_rate:12.6f}  {_bin_counts[i]:10,}  "
+              f"{ratio:8.1f}x{note}")
+    if over_ratios:
+        median_ratio = float(np.median(over_ratios))
+        mean_bss     = float(results_df["bss"].mean())
+        print(f"\n  Median over-confidence ratio : {median_ratio:.1f}x")
+        print(f"  (model predicts {median_ratio:.0f}x higher probability than observed fire rate)")
+        print(f"  Mean BSS                     : {mean_bss:.1f}")
+        print()
+        if median_ratio > 5:
+            print("  Root cause: model trained on balanced data (1 pos : 3 neg patches)")
+            print("  but evaluated on full spatial grid with ~0.01-0.1% fire pixel rate.")
+            print("  Fix: run  python -m src.evaluation.calibrate_forecast  to compute T,")
+            print("  then re-evaluate with  --calibration_file checkpoints/temperature.json")
 
     # ----------------------------------------------------------------
     # STEP 5  Visualizations
