@@ -174,6 +174,8 @@ def main():
     print("\nCollecting predictions for calibration...")
     all_logits = []
     all_labels = []
+    total_fire_pixels  = 0   # true positive count across all (date, lead) pairs
+    total_valid_pixels = 0   # total valid pixel count across all (date, lead) pairs
 
     eval_dates = []
     cur = eval_start
@@ -216,6 +218,10 @@ def main():
             y_pred = y_pred_raw[valid].astype(np.float32)
             y_true = y_true_raw[valid].astype(np.float32)
 
+            # Track true positive rate across the FULL grid (before sampling)
+            total_fire_pixels  += int(y_true.sum())
+            total_valid_pixels += int(valid.sum())
+
             # Convert probability -> logit
             p      = np.clip(y_pred, 1e-7, 1.0 - 1e-7)
             logits = np.log(p / (1.0 - p))
@@ -239,10 +245,32 @@ def main():
 
     logits_all = np.concatenate(all_logits, dtype=np.float32)
     labels_all = np.concatenate(all_labels, dtype=np.float32)
+
+    # True positive rate on the full grid (no sampling bias)
+    true_rate   = total_fire_pixels / max(total_valid_pixels, 1)
+    sample_rate = float(labels_all.mean())
+
     print(f"\n  Total samples collected : {len(logits_all):,}")
     print(f"  Positive (fire) samples : {int(labels_all.sum()):,}  "
-          f"({labels_all.mean() * 100:.3f}%)")
+          f"({sample_rate * 100:.3f}%  — oversampled for calibration)")
+    print(f"  True positive rate      : {true_rate * 100:.4f}%  "
+          f"(from {total_valid_pixels:,} total grid pixels)")
+    print(f"  Oversampling factor     : {sample_rate / true_rate:.1f}x")
     print(f"  Files processed         : {n_files_found}")
+
+    # ------------------------------------------------------------------
+    # Importance weights: correct for positive oversampling
+    # The sample has `sample_rate` positives but the true grid has `true_rate`.
+    # Weight each sample so the effective distribution matches the true grid.
+    # ------------------------------------------------------------------
+    w_pos = true_rate   / max(sample_rate,        1e-12)
+    w_neg = (1.0 - true_rate) / max(1.0 - sample_rate, 1e-12)
+    weights = np.where(labels_all == 1, w_pos, w_neg).astype(np.float32)
+    # Normalise so mean weight = 1 (keeps NLL on the same scale)
+    weights /= weights.mean()
+
+    print(f"\n  Importance weights: w_pos={w_pos:.4f}, w_neg={w_neg:.4f}")
+    print("  (positives are downweighted to match true grid frequency)")
 
     # ------------------------------------------------------------------
     # Evaluate uncalibrated model
@@ -251,26 +279,34 @@ def main():
     nll_before   = _nll(labels_all, prob_uncalib)
     bss_before   = _bss(labels_all, prob_uncalib)
     brier_before = _brier(labels_all, prob_uncalib)
-    print(f"\nBefore calibration:")
+    print(f"\nBefore calibration (on sample, unweighted):")
     print(f"  NLL   : {nll_before:.6f}")
     print(f"  Brier : {brier_before:.6f}")
-    print(f"  BSS   : {bss_before:.2f}")
+    print(f"  BSS   : {bss_before:.2f}  (at {sample_rate*100:.3f}% positive rate)")
 
     # ------------------------------------------------------------------
-    # Optimise T to minimise NLL
+    # Optimise T using importance-weighted NLL
+    # This finds T calibrated to the TRUE positive rate (~0.01-0.1%)
+    # rather than the oversampled rate (~1.7%).
     # ------------------------------------------------------------------
-    print("\nOptimising temperature T to minimise NLL...")
+    print(f"\nOptimising T with importance-weighted NLL "
+          f"(target rate: {true_rate*100:.4f}%)...")
 
-    def objective(T: float) -> float:
+    def objective_weighted(T: float) -> float:
         if T <= 0:
             return 1e9
         prob = _sigmoid(logits_all / T)
-        return _nll(labels_all, prob)
+        p    = np.clip(prob, 1e-9, 1.0 - 1e-9)
+        nll  = -(labels_all * np.log(p) + (1.0 - labels_all) * np.log(1.0 - p))
+        return float(np.mean(weights * nll))
 
-    result = minimize_scalar(objective, bounds=(0.01, 50.0), method="bounded")
+    result = minimize_scalar(objective_weighted, bounds=(0.01, 200.0), method="bounded")
     T_opt  = float(result.x)
     print(f"  Optimal T : {T_opt:.4f}")
-    print(f"  (T > 1 means model was over-confident, as expected)")
+    if T_opt > 1:
+        print(f"  (T > 1: model outputs are too high — calibration scales them down)")
+    else:
+        print(f"  (T < 1: unusual — model may need retraining rather than calibration)")
 
     # ------------------------------------------------------------------
     # Evaluate calibrated model
@@ -280,24 +316,30 @@ def main():
     bss_after  = _bss(labels_all, prob_calib)
     brier_after = _brier(labels_all, prob_calib)
 
-    print(f"\nAfter calibration (T={T_opt:.4f}):")
-    print(f"  NLL   : {nll_after:.6f}  (was {nll_before:.6f}, change: {nll_after - nll_before:+.6f})")
+    print(f"\nAfter calibration (T={T_opt:.4f}, evaluated on sample):")
+    print(f"  NLL   : {nll_after:.6f}  (was {nll_before:.6f})")
     print(f"  Brier : {brier_after:.6f}  (was {brier_before:.6f})")
     print(f"  BSS   : {bss_after:.4f}  (was {bss_before:.2f})")
+    print()
+    print("  NOTE: Sample BSS uses oversampled positive rate "
+          f"({sample_rate*100:.3f}%), not the true rate ({true_rate*100:.4f}%).")
+    print("  Run evaluate_forecast_cwfis.py --calibration_file to see BSS on the full grid.")
 
     # ------------------------------------------------------------------
     # Save T
     # ------------------------------------------------------------------
     os.makedirs(os.path.dirname(os.path.abspath(output_T)), exist_ok=True)
     calib_data = {
-        "temperature": T_opt,
-        "eval_start":  str(eval_start),
-        "eval_end":    str(eval_end),
-        "n_samples":   int(len(logits_all)),
-        "nll_before":  nll_before,
-        "nll_after":   nll_after,
-        "bss_before":  bss_before,
-        "bss_after":   bss_after,
+        "temperature":       T_opt,
+        "eval_start":        str(eval_start),
+        "eval_end":          str(eval_end),
+        "n_samples":         int(len(logits_all)),
+        "true_positive_rate": true_rate,
+        "sample_positive_rate": sample_rate,
+        "nll_before":        nll_before,
+        "nll_after":         nll_after,
+        "bss_before":        bss_before,
+        "bss_after":         bss_after,
     }
     with open(output_T, "w") as f:
         json.dump(calib_data, f, indent=2)

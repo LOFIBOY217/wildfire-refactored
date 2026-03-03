@@ -347,8 +347,31 @@ def main():
         "fn":   "sum",
     }).round(4)
 
+    # --- Threshold-independent primary metrics (single value, not per-threshold) ---
+    mean_auc = results_df["auc"].mean()
+    mean_ap  = results_df["ap"].mean()
+    mean_bss = results_df["bss"].mean()
+    mean_brier = results_df["brier"].mean()
+
     print("\n" + "=" * 70)
-    print("PERFORMANCE BY THRESHOLD")
+    print("PRIMARY METRICS  (rank-based — valid regardless of calibration)")
+    print("=" * 70)
+    print(f"  AUC-ROC : {mean_auc:.4f}   (1.0 = perfect, 0.5 = random)")
+    print(f"  AUC-PR  : {mean_ap:.4f}   (higher = better, baseline ~ fire rate)")
+    print()
+    print("SECONDARY METRICS  (probability-based — require calibrated outputs)")
+    print("-" * 70)
+    print(f"  BSS     : {mean_bss:.2f}   (0=climatology baseline, >0=better, <0=worse)")
+    print(f"  Brier   : {mean_brier:.4f}")
+    if mean_bss < -10:
+        print()
+        print("  [NOTE] BSS is very negative because the model outputs a nearly uniform")
+        print("  probability (~0.38) for all pixels regardless of fire presence.")
+        print("  AUC/AP are the meaningful metrics. BSS requires a well-calibrated model")
+        print("  that outputs near-zero probability for the vast majority of non-fire pixels.")
+
+    print("\n" + "=" * 70)
+    print("PERFORMANCE BY THRESHOLD  (detection metrics at each probability cutoff)")
     print("=" * 70)
     print(threshold_summary[
         ["pod", "far", "csi", "bias", "auc", "ap", "bss", "brier"]
