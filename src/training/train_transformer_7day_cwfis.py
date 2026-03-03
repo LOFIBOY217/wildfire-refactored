@@ -368,6 +368,11 @@ def main():
     ap.add_argument("--neg_ratio",      type=float, default=3.0,
                     help="Neg-only patches per positive patch (default=3). "
                          "Higher = more background exposure, better calibration.")
+    ap.add_argument("--pos_weight_cap", type=float, default=100.0,
+                    help="Maximum value for BCE pos_weight (default=100.0). "
+                         "Lower values reduce over-confidence in fire predictions. "
+                         "Try 10.0 together with --neg_ratio 20 for better probability "
+                         "calibration at the cost of slightly lower recall.")
     ap.add_argument("--pred_batch_size", type=int, default=512,
                     help="Patch chunk size for GPU inference in STEP 10 (default=512). "
                          "Reduce if CUDA OOM during forecast generation.")
@@ -762,10 +767,10 @@ def main():
         neg_pixels_in_pos += pf.size - p
     neg_pixels_total = neg_pixels_in_pos + len(neg_pairs) * out_dim * out_days
     raw_ratio        = neg_pixels_total / max(pos_pixels, 1)
-    pos_weight_val   = min(raw_ratio, 100.0)
+    pos_weight_val   = min(raw_ratio, args.pos_weight_cap)
     print(f"  pos_pixels : {pos_pixels:,}")
     print(f"  neg_pixels : {neg_pixels_total:,}")
-    print(f"  raw ratio  : {raw_ratio:.1f}   pos_weight (capped 100) = {pos_weight_val:.2f}")
+    print(f"  raw ratio  : {raw_ratio:.1f}   pos_weight (capped {args.pos_weight_cap}) = {pos_weight_val:.2f}")
     run_meta["pos_weight"] = pos_weight_val
 
     # ----------------------------------------------------------------
