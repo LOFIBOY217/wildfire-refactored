@@ -842,7 +842,10 @@ def main():
                 continue
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            _gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if not torch.isfinite(_gnorm):   # NaN/Inf gradients → skip update
+                optimizer.zero_grad()
+                continue
             optimizer.step()
             train_loss    += loss.item() * xb.size(0)
             train_samples += xb.size(0)
@@ -857,13 +860,26 @@ def main():
         model.eval()
         val_loss    = 0.0
         val_samples = 0
+        _lfire_sum, _lfire_n = 0.0, 0   # logit diagnostics
+        _lbg_sum,   _lbg_n   = 0.0, 0
         with torch.no_grad():
             for xb, yb in val_dl:
                 xb, yb = xb.to(device), yb.to(device)
-                vl = criterion(model(xb), yb)
+                logits_v = model(xb)
+                vl = criterion(logits_v, yb)
                 if torch.isfinite(vl):
                     val_loss    += vl.item() * xb.size(0)
                     val_samples += xb.size(0)
+                # accumulate logit stats regardless of vl validity
+                _lv = logits_v.detach().float()
+                _yb = yb.detach().bool()
+                _f  = _lv[_yb]
+                _bg = _lv[~_yb]
+                if _f.numel() > 0:
+                    _lfire_sum += _f.sum().item()
+                    _lfire_n   += _f.numel()
+                _lbg_sum += _bg.sum().item()
+                _lbg_n   += _bg.numel()
 
         if val_samples == 0:
             # All val batches NaN — don't update best, just report and stop
@@ -873,6 +889,10 @@ def main():
         val_loss = val_loss / val_samples
 
         print(f"  Epoch {epoch:3d}/{args.epochs}  train={train_loss:.6f}  val={val_loss:.6f}")
+        if _lfire_n > 0:
+            print(f"           logit  fire={_lfire_sum/_lfire_n:+.3f}  "
+                  f"bg={_lbg_sum/_lbg_n:+.3f}  "
+                  f"({_lfire_n:,} fire px / {_lbg_n:,} bg px)")
 
         # Only save when val_loss is a real finite improvement (not a 0.0 from NaN samples)
         if val_samples > 0 and np.isfinite(val_loss) and val_loss < best_val_loss:
