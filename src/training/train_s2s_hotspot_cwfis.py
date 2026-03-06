@@ -438,6 +438,14 @@ def main():
                     help="Negative patches per positive patch (default=20).")
     ap.add_argument("--pos_weight_cap", type=float, default=10.0,
                     help="Maximum BCE pos_weight (default=10). Reduces over-confidence.")
+    ap.add_argument("--max_pos_pairs", type=int, default=0,
+                    help="Cap positive (window, patch) pairs used for training. "
+                         "0 = no cap (default). Recommended: 300000 for manageable "
+                         "training time when pos_pairs exceeds ~500K.")
+    ap.add_argument("--cache_dir", type=str, default="outputs/cache",
+                    help="Directory to cache the dilated fire_stack (.npy) so that "
+                         "the 76-min dilation step is skipped on repeated runs. "
+                         "Set to '' to disable caching.")
 
     # Forecast
     ap.add_argument("--pred_batch_size", type=int, default=256,
@@ -615,25 +623,46 @@ def main():
     run_meta["positive_rate_raw"] = float(pos_rate)
 
     # -- Spatial dilation: expand each hotspot to a filled circle --
+    # Cache the dilated fire_stack to disk so repeated runs skip the 76-min step.
     if args.dilate_radius > 0:
         r = args.dilate_radius
-        yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
-        disk   = (xx ** 2 + yy ** 2 <= r ** 2)
-        print(f"\n  Dilating fire labels: radius={r} px  "
-              f"(~{r * 2} km buffer, kernel {disk.shape[0]}×{disk.shape[1]}, "
-              f"{disk.sum()} pixels/hotspot)...")
-        t0_dil = time.time()
-        for t in range(T):
-            if fire_stack[t].any():
-                fire_stack[t] = binary_dilation(
-                    fire_stack[t], structure=disk
-                ).astype(np.uint8)
-            if t % 200 == 0 or t == T - 1:
-                print(f"    dilate frame {t:4d}/{T}  ({time.time()-t0_dil:.0f}s)")
-        pos_rate_dil = fire_stack.mean()
-        print(f"  After dilation: positive_rate={pos_rate_dil:.4%}  "
-              f"({pos_rate_dil/pos_rate:.1f}× increase)  "
-              f"({time.time()-t0_dil:.0f}s)")
+        cache_key  = (f"fire_dilated_r{r}"
+                      f"_{aligned_dates[0]}_{aligned_dates[-1]}"
+                      f"_{H}x{W}.npy")
+        cache_path = (os.path.join(args.cache_dir, cache_key)
+                      if args.cache_dir else None)
+
+        if cache_path and os.path.exists(cache_path):
+            print(f"\n  Loading cached dilated fire_stack: {cache_path}")
+            t0_load = time.time()
+            fire_stack = np.load(cache_path)
+            pos_rate_dil = fire_stack.mean()
+            print(f"  Loaded in {time.time()-t0_load:.0f}s  "
+                  f"positive_rate={pos_rate_dil:.4%}")
+        else:
+            yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
+            disk   = (xx ** 2 + yy ** 2 <= r ** 2)
+            print(f"\n  Dilating fire labels: radius={r} px  "
+                  f"(~{r * 2} km buffer, kernel {disk.shape[0]}×{disk.shape[1]}, "
+                  f"{disk.sum()} pixels/hotspot)...")
+            t0_dil = time.time()
+            for t in range(T):
+                if fire_stack[t].any():
+                    fire_stack[t] = binary_dilation(
+                        fire_stack[t], structure=disk
+                    ).astype(np.uint8)
+                if t % 200 == 0 or t == T - 1:
+                    print(f"    dilate frame {t:4d}/{T}  ({time.time()-t0_dil:.0f}s)")
+            pos_rate_dil = fire_stack.mean()
+            print(f"  After dilation: positive_rate={pos_rate_dil:.4%}  "
+                  f"({pos_rate_dil/pos_rate:.1f}× increase)  "
+                  f"({time.time()-t0_dil:.0f}s)")
+            if cache_path:
+                os.makedirs(args.cache_dir, exist_ok=True)
+                np.save(cache_path, fire_stack)
+                print(f"  Cached to: {cache_path}  "
+                      f"({os.path.getsize(cache_path)/1e9:.1f} GB)")
+
         run_meta["dilate_radius"]         = r
         run_meta["positive_rate_dilated"] = float(pos_rate_dil)
     else:
@@ -800,18 +829,30 @@ def main():
             "Check hotspot_csv and date alignment."
         )
 
-    n_neg_target = int(len(pos_pairs) * args.neg_ratio)
-    pos_set = set(pos_pairs)
-    neg_set = set()
-    rng     = np.random.default_rng(args.seed)
-    n_wins  = len(train_wins)
-    while len(neg_set) < n_neg_target:
-        win_i   = int(rng.integers(0, n_wins))
-        patch_i = int(rng.integers(0, n_patches))
-        pair    = (win_i, patch_i)
-        if pair not in pos_set:
-            neg_set.add(pair)
-    neg_pairs = list(neg_set)
+    # -- Optional: cap positive pairs to keep training size manageable --
+    rng = np.random.default_rng(args.seed)
+    if args.max_pos_pairs > 0 and len(pos_pairs) > args.max_pos_pairs:
+        idx_cap  = rng.choice(len(pos_pairs), size=args.max_pos_pairs, replace=False)
+        pos_pairs = [pos_pairs[i] for i in idx_cap]
+        print(f"  Capped pos_pairs → {len(pos_pairs):,}  (--max_pos_pairs={args.max_pos_pairs})")
+
+    # -- Vectorized negative sampling (replaces infinite while loop) --
+    # Bug fix: the old while loop required n_neg_target = pos*neg_ratio negatives,
+    # but when pos_rate is high (dilate_radius=14 → 6%), n_neg_target can exceed
+    # the total available negatives (total_pairs - pos_pairs), causing infinite loop.
+    max_available_neg = total_pairs - len(pos_pairs)
+    n_neg_target      = min(int(len(pos_pairs) * args.neg_ratio), max_available_neg)
+    print(f"  neg_target={n_neg_target:,}  max_available_neg={max_available_neg:,}")
+
+    # Build boolean mask over all flat pair indices, then sample from negatives
+    pos_flat = np.array([w * n_patches + p for w, p in pos_pairs], dtype=np.int64)
+    pos_mask = np.zeros(total_pairs, dtype=bool)
+    pos_mask[pos_flat] = True
+    neg_flat = np.where(~pos_mask)[0]                    # (max_available_neg,)
+    chosen      = rng.choice(neg_flat, size=n_neg_target, replace=False)
+    neg_wins    = (chosen // n_patches).astype(np.int32)
+    neg_patches = (chosen %  n_patches).astype(np.int32)
+    neg_pairs   = list(zip(neg_wins.tolist(), neg_patches.tolist()))
 
     all_pairs = list(pos_pairs) + neg_pairs
     rng.shuffle(all_pairs)
