@@ -5,7 +5,12 @@
 
 paths:
   project_root: "."
-  fwi_dir: "data/fwi_data"
+  fwi_dir:  "data/fwi_data"
+  ffmc_dir: "data/ffmc_data"   # Fine Fuel Moisture Code (surface fuel dryness)
+  dmc_dir:  "data/dmc_data"    # Duff Moisture Code (lightning ignition potential)
+  dc_dir:   "data/dc_data"     # Drought Code (deep drought, large fire risk)
+  isi_dir:  "data/isi_data"    # Initial Spread Index (fire spread rate)
+  bui_dir:  "data/bui_data"    # Buildup Index (total fuel available)
   ecmwf_dir: "data/ecmwf_observation"
   era5_dir: "data/era5_on_fwi_grid"
   observation_dir: "data/ecmwf_observation"

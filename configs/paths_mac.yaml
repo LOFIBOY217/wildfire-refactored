@@ -3,7 +3,12 @@
 
 paths:
   project_root: "."
-  fwi_dir: "data/fwi_data"
+  fwi_dir:  "data/fwi_data"
+  ffmc_dir: "data/ffmc_data"
+  dmc_dir:  "data/dmc_data"
+  dc_dir:   "data/dc_data"
+  isi_dir:  "data/isi_data"
+  bui_dir:  "data/bui_data"
   ecmwf_dir: "data/ecmwf_reproject"
   era5_dir: "data/era5_on_fwi_grid"
   ciffc_csv: "data/ciffc.csv"

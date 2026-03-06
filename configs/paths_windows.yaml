@@ -3,7 +3,12 @@
 
 paths:
   project_root: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored"
-  fwi_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\fwi_data"
+  fwi_dir:  "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\fwi_data"
+  ffmc_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ffmc_data"
+  dmc_dir:  "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\dmc_data"
+  dc_dir:   "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\dc_data"
+  isi_dir:  "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\isi_data"
+  bui_dir:  "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\bui_data"
   ecmwf_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ecmwf_observation"
   era5_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_on_fwi_grid"
   observation_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ecmwf_observation"

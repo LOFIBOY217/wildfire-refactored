@@ -64,6 +64,18 @@ CANADA_AREA = [84, -142, 41, -52]
 ALL_DAYS = [f"{d:02d}" for d in range(1, 32)]
 DEFAULT_CDS_API_KEY = "d952a10c-f9c0-4ff3-92e1-aac8756dd123"
 
+# CDS request variable name → (candidate NetCDF variable names, short output prefix)
+# The NetCDF internal name sometimes differs from the CDS request name, so we try
+# a list of candidates in order.
+FWI_VARIABLES = {
+    'fire_weather_index':      (['fwi', 'fire_weather_index', 'mark_4'], 'fwi'),
+    'fine_fuel_moisture_code': (['ffmc', 'fine_fuel_moisture_code'],      'ffmc'),
+    'duff_moisture_code':      (['dmc',  'duff_moisture_code'],           'dmc'),
+    'drought_code':            (['dc',   'drought_code'],                 'dc'),
+    'initial_spread_index':    (['isi',  'initial_spread_index'],         'isi'),
+    'build_up_index':          (['bui',  'build_up_index'],               'bui'),
+}
+
 
 def download_fwi_year_month(client, year, month, output_dir, area=None):
     """
@@ -83,7 +95,7 @@ def download_fwi_year_month(client, year, month, output_dir, area=None):
     year_str = str(year)
     month_str = f"{int(month):02d}"
 
-    outfile = output_dir / f"fwi_historical_{year_str}{month_str}.nc"
+    outfile = output_dir / f"fwi_components_{year_str}{month_str}.nc"
 
     if outfile.exists():
         print(f"  [SKIP] {outfile.name} already exists")
@@ -91,7 +103,7 @@ def download_fwi_year_month(client, year, month, output_dir, area=None):
 
     request = {
         'product_type': 'reanalysis',
-        'variable': 'fire_weather_index',
+        'variable': list(FWI_VARIABLES.keys()),   # all 6 components in one request
         'system_version': '4_1',
         'dataset_type': 'consolidated_dataset',
         'year': year_str,
@@ -145,21 +157,28 @@ def download_fwi_range(client, start_year, end_year, months, output_dir, area=No
 # NetCDF -> per-day GeoTIFF conversion + reprojection
 # ------------------------------------------------------------------ #
 
-def nc_to_daily_tifs(nc_path, tif_dir, reproject_to_fwi=True, fwi_reference=None):
+def nc_to_daily_tifs(nc_path, var_dirs, reproject_to_fwi=True, fwi_reference=None):
     """
-    Convert a monthly FWI NetCDF to per-day GeoTIFFs.
+    Convert a monthly FWI-components NetCDF to per-day GeoTIFFs for each variable.
+
+    Each variable is written to its own directory:
+        var_dirs['fwi']  / fwi_YYYYMMDD.tif
+        var_dirs['ffmc'] / ffmc_YYYYMMDD.tif
+        var_dirs['dmc']  / dmc_YYYYMMDD.tif
+        ...
 
     If reproject_to_fwi=True and fwi_reference is provided, reprojects
     each day from WGS84 0.25deg to the FWI grid (EPSG:3978, 2709x2281).
 
     Args:
-        nc_path: Path to NetCDF file
-        tif_dir: Output directory for GeoTIFFs
+        nc_path:         Path to NetCDF file
+        var_dirs:        dict mapping short name → output Path, e.g.
+                         {'fwi': Path(...), 'dmc': Path(...), ...}
         reproject_to_fwi: Whether to reproject to FWI grid
-        fwi_reference: Path to a reference FWI GeoTIFF (for target grid)
+        fwi_reference:   Path to a reference FWI GeoTIFF (for target grid)
 
     Returns:
-        int: Number of files created
+        int: Total number of TIF files written across all variables
     """
     import netCDF4
     import rasterio
@@ -168,51 +187,28 @@ def nc_to_daily_tifs(nc_path, tif_dir, reproject_to_fwi=True, fwi_reference=None
 
     ds = netCDF4.Dataset(str(nc_path))
 
-    # Find FWI variable
-    fwi_var = None
-    for name in ['fwi', 'FWI', 'fire_weather_index', 'mark_4']:
-        if name in ds.variables:
-            fwi_var = name
-            break
-
-    if fwi_var is None:
-        # Try any variable that isn't a coordinate
-        coord_names = {'time', 'latitude', 'longitude', 'lat', 'lon'}
-        for name in ds.variables:
-            if name not in coord_names:
-                fwi_var = name
-                break
-
-    if fwi_var is None:
-        print(f"  [WARN] Cannot find FWI variable in {nc_path.name}, available: {list(ds.variables.keys())}")
-        ds.close()
-        return 0
-
     # Get time, lat, lon
     time_var = ds.variables['time']
-    times = netCDF4.num2date(time_var[:], time_var.units, time_var.calendar if hasattr(time_var, 'calendar') else 'standard')
+    times = netCDF4.num2date(
+        time_var[:], time_var.units,
+        time_var.calendar if hasattr(time_var, 'calendar') else 'standard'
+    )
 
-    # Handle lat/lon naming
     lat_name = 'latitude' if 'latitude' in ds.variables else 'lat'
     lon_name = 'longitude' if 'longitude' in ds.variables else 'lon'
     lats = ds.variables[lat_name][:]
     lons = ds.variables[lon_name][:]
 
-    fwi_data = ds.variables[fwi_var]  # [time, lat, lon]
-
-    # Source grid info (WGS84)
     lat_min, lat_max = float(lats.min()), float(lats.max())
     lon_min, lon_max = float(lons.min()), float(lons.max())
     nlat, nlon = len(lats), len(lons)
-
-    # Check if lat is descending (north-up)
     lat_descending = lats[0] > lats[-1]
 
     src_transform = from_bounds(lon_min, lat_min, lon_max, lat_max, nlon, nlat)
     src_crs = 'EPSG:4326'
 
-    # Load FWI reference grid if reprojecting
-    dst_profile = None
+    # Load target grid for reprojection
+    dst_profile = dst_transform = dst_crs = dst_height = dst_width = None
     if reproject_to_fwi and fwi_reference and Path(fwi_reference).exists():
         with rasterio.open(fwi_reference) as ref:
             dst_profile = ref.profile.copy()
@@ -224,72 +220,80 @@ def nc_to_daily_tifs(nc_path, tif_dir, reproject_to_fwi=True, fwi_reference=None
         print("  [WARN] No FWI reference provided, saving in WGS84")
         reproject_to_fwi = False
 
-    count = 0
-    for t_idx in range(len(times)):
-        dt = times[t_idx]
-        # Handle different datetime types
+    # Build date strings once
+    date_strs = []
+    for dt in times:
         if hasattr(dt, 'strftime'):
-            date_str = dt.strftime("%Y%m%d")
+            date_strs.append(dt.strftime("%Y%m%d"))
         else:
-            date_str = str(dt)[:10].replace('-', '')
+            date_strs.append(str(dt)[:10].replace('-', ''))
 
-        outfile = tif_dir / f"fwi_{date_str}.tif"
-        if outfile.exists():
-            count += 1
+    total_count = 0
+
+    # Loop over each FWI component
+    for cds_name, (nc_candidates, short_name) in FWI_VARIABLES.items():
+        out_dir = var_dirs.get(short_name)
+        if out_dir is None:
             continue
 
-        # Read slice
-        arr = np.array(fwi_data[t_idx, :, :], dtype=np.float32)
+        # Find the variable name actually used inside this NetCDF
+        nc_var_name = None
+        for candidate in nc_candidates:
+            if candidate in ds.variables:
+                nc_var_name = candidate
+                break
+        if nc_var_name is None:
+            print(f"  [WARN] {cds_name} not found in {nc_path.name} "
+                  f"(tried: {nc_candidates}), skipping")
+            continue
 
-        # Ensure north-up orientation
-        if not lat_descending:
-            arr = np.flipud(arr)
+        var_data = ds.variables[nc_var_name]  # [time, lat, lon]
+        fill_val = getattr(var_data, '_FillValue', None)
+        count = 0
 
-        # Replace fill values with NaN
-        if hasattr(fwi_data, '_FillValue'):
-            arr[arr == fwi_data._FillValue] = np.nan
-        arr[~np.isfinite(arr)] = np.nan
+        for t_idx, date_str in enumerate(date_strs):
+            outfile = out_dir / f"{short_name}_{date_str}.tif"
+            if outfile.exists():
+                count += 1
+                continue
 
-        if reproject_to_fwi:
-            # Reproject to FWI grid
-            dst_arr = np.empty((dst_height, dst_width), dtype=np.float32)
-            dst_arr[:] = np.nan
+            arr = np.array(var_data[t_idx, :, :], dtype=np.float32)
+            if not lat_descending:
+                arr = np.flipud(arr)
+            if fill_val is not None:
+                arr[arr == fill_val] = np.nan
+            arr[~np.isfinite(arr)] = np.nan
 
-            reproject(
-                source=arr,
-                destination=dst_arr,
-                src_transform=src_transform,
-                src_crs=src_crs,
-                dst_transform=dst_transform,
-                dst_crs=dst_crs,
-                resampling=Resampling.bilinear,
-            )
+            if reproject_to_fwi:
+                dst_arr = np.full((dst_height, dst_width), np.nan, dtype=np.float32)
+                reproject(
+                    source=arr,
+                    destination=dst_arr,
+                    src_transform=src_transform,
+                    src_crs=src_crs,
+                    dst_transform=dst_transform,
+                    dst_crs=dst_crs,
+                    resampling=Resampling.bilinear,
+                )
+                out_profile = dst_profile.copy()
+                out_profile.update(dtype='float32', count=1, compress='lzw', nodata=np.nan)
+                with rasterio.open(outfile, 'w', **out_profile) as dst:
+                    dst.write(dst_arr, 1)
+            else:
+                profile = {
+                    'driver': 'GTiff', 'height': nlat, 'width': nlon,
+                    'count': 1, 'dtype': 'float32', 'crs': src_crs,
+                    'transform': src_transform, 'compress': 'lzw', 'nodata': np.nan,
+                }
+                with rasterio.open(outfile, 'w', **profile) as dst:
+                    dst.write(arr, 1)
+            count += 1
 
-            out_profile = dst_profile.copy()
-            out_profile.update(dtype='float32', count=1, compress='lzw', nodata=np.nan)
-
-            with rasterio.open(outfile, 'w', **out_profile) as dst:
-                dst.write(dst_arr, 1)
-        else:
-            # Save in WGS84
-            profile = {
-                'driver': 'GTiff',
-                'height': nlat,
-                'width': nlon,
-                'count': 1,
-                'dtype': 'float32',
-                'crs': src_crs,
-                'transform': src_transform,
-                'compress': 'lzw',
-                'nodata': np.nan,
-            }
-            with rasterio.open(outfile, 'w', **profile) as dst:
-                dst.write(arr, 1)
-
-        count += 1
+        print(f"    {short_name}: {count} TIFs → {out_dir}")
+        total_count += count
 
     ds.close()
-    return count
+    return total_count
 
 
 # ------------------------------------------------------------------ #
@@ -345,9 +349,21 @@ Examples:
     else:
         start_year, end_year = args.start, args.end
 
-    # Resolve directories
-    fwi_dir = Path(get_path(cfg, 'fwi_dir'))
-    fwi_dir.mkdir(parents=True, exist_ok=True)
+    # Resolve output directories for each FWI component
+    var_dirs = {}
+    for short_name, config_key in [
+        ('fwi',  'fwi_dir'),
+        ('ffmc', 'ffmc_dir'),
+        ('dmc',  'dmc_dir'),
+        ('dc',   'dc_dir'),
+        ('isi',  'isi_dir'),
+        ('bui',  'bui_dir'),
+    ]:
+        p = Path(get_path(cfg, config_key))
+        p.mkdir(parents=True, exist_ok=True)
+        var_dirs[short_name] = p
+
+    fwi_dir = var_dirs['fwi']  # used for reference file lookup and summary
 
     if args.nc_dir:
         nc_dir = Path(args.nc_dir)
@@ -426,7 +442,7 @@ Examples:
     for nc_file in sorted(nc_files):
         print(f"Processing {nc_file.name} ...")
         n = nc_to_daily_tifs(
-            nc_file, fwi_dir,
+            nc_file, var_dirs,
             reproject_to_fwi=not args.no_reproject,
             fwi_reference=ref_path,
         )
