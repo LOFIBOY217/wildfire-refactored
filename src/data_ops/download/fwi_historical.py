@@ -459,9 +459,12 @@ Examples:
         print("\n[ERROR] cdsapi not installed. Run: pip install cdsapi")
         sys.exit(1)
 
+    # Build CDS client kwargs.
+    # cdsapi >= 1.0 (post-2024 ECMWF migration) requires BOTH url AND key;
+    # without url it falls back to ~/.cdsapirc which may not exist on the server.
+    DEFAULT_CDS_URL = "https://cds.climate.copernicus.eu/api"
     client_kwargs = {}
-    if args.cds_url:
-        client_kwargs['url'] = args.cds_url
+    client_kwargs['url'] = args.cds_url if args.cds_url else DEFAULT_CDS_URL
     if args.cds_key:
         client_kwargs['key'] = args.cds_key
     elif os.environ.get('CDS_API_KEY'):
@@ -473,11 +476,13 @@ Examples:
         client = cdsapi.Client(**client_kwargs)
     except Exception as e:
         print(f"\n[ERROR] Cannot create CDS client: {e}")
-        print("Make sure you have:")
-        print("  1. Installed cdsapi:  pip install cdsapi")
-        print("  2. Created ~/.cdsapirc with your credentials, OR")
-        print("     Set CDS_API_KEY environment variable")
-        print("  3. Accepted the dataset licence at:")
+        print("Possible fixes:")
+        print("  1. Pass key explicitly:  --cds-key YOUR_KEY")
+        print("  2. Set env var:          export CDS_API_KEY=YOUR_KEY")
+        print("  3. Create ~/.cdsapirc with:")
+        print("       url: https://cds.climate.copernicus.eu/api")
+        print("       key: YOUR_KEY")
+        print("  4. Accept the dataset licence at:")
         print("     https://cds.climate.copernicus.eu/datasets/cems-fire-historical-v1")
         sys.exit(1)
 
