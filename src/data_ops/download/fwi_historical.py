@@ -462,7 +462,9 @@ Examples:
     # Build CDS client kwargs.
     # cdsapi >= 1.0 (post-2024 ECMWF migration) requires BOTH url AND key;
     # without url it falls back to ~/.cdsapirc which may not exist on the server.
-    DEFAULT_CDS_URL = "https://cds.climate.copernicus.eu/api"
+    # CEMS datasets (cems-fire-historical-v1) moved to EWDS in Sep 2024.
+    # Must use EWDS endpoint, NOT the regular CDS endpoint.
+    DEFAULT_CDS_URL = "https://ewds.climate.copernicus.eu/api"
     client_kwargs = {}
     client_kwargs['url'] = args.cds_url if args.cds_url else DEFAULT_CDS_URL
     if args.cds_key:
