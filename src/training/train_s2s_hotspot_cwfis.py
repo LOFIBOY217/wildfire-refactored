@@ -342,8 +342,8 @@ def _run_forecast_only(args, cfg, fwi_dir, obs_root, output_dir, ckpt_dir):
             with torch.no_grad():
                 for cs in range(0, n_p, chunk):
                     ce  = min(cs + chunk, n_p)
-                    xb_enc = torch.from_numpy(enc_patches[cs:ce]).float().to(device)
-                    xb_dec = torch.from_numpy(dec_patches[cs:ce]).float().to(device)
+                    xb_enc = torch.from_numpy(enc_patches[cs:ce].copy()).float().to(device)
+                    xb_dec = torch.from_numpy(dec_patches[cs:ce].copy()).float().to(device)
                     logits = model(xb_enc, xb_dec)
                     prob_list.append(torch.sigmoid(logits).cpu().numpy())
             probs = np.concatenate(prob_list, axis=0)   # (n_patches, decoder_days, P²)
@@ -398,12 +398,16 @@ def main():
     add_config_argument(ap)
 
     # Data
-    ap.add_argument("--data_start",   type=str,   default="2022-05-01",
-                    help="First date for data loading. Narrow to reduce RAM.")
-    ap.add_argument("--pred_start",   type=str,   default="2023-05-01",
-                    help="First prediction date; also train/val split boundary.")
-    ap.add_argument("--pred_end",     type=str,   default="2023-10-31",
-                    help="Last prediction date (inclusive).")
+    ap.add_argument("--data_start",   type=str,   default="2018-05-01",
+                    help="First date for data loading. Same span as 7-day model. "
+                         "Narrow (e.g. 2021-05-01) to reduce RAM if needed.")
+    ap.add_argument("--pred_start",   type=str,   default="2022-05-01",
+                    help="First prediction date; also train/val split boundary. "
+                         "Default 2022 gives 3 years of val (2022-2024) "
+                         "vs 4 years of train (2018-2022).")
+    ap.add_argument("--pred_end",     type=str,   default="2024-10-31",
+                    help="Last prediction date (inclusive). Dates near pred_end "
+                         "where dec_end > T are silently skipped.")
     ap.add_argument("--in_days",      type=int,   default=7,
                     help="Encoder history days (default=7).")
     ap.add_argument("--lead_start",   type=int,   default=14,
@@ -1020,23 +1024,26 @@ def main():
         if enc_start < 0 or dec_end > T:
             continue
 
-        # Extract encoder and decoder patches directly from precomputed arrays
-        x_enc_all = meteo_patched[enc_start:enc_end]   # (in_days, n_patches, enc_dim)
-        x_dec_all = meteo_patched[dec_start:dec_end]   # (decoder_days, n_patches, dec_dim)
-
-        # Transpose to (n_patches, days, dim) for the model
-        x_enc_all = x_enc_all.transpose(1, 0, 2)  # (n_patches, in_days, enc_dim)
-        x_dec_all = x_dec_all.transpose(1, 0, 2)  # (n_patches, decoder_days, dec_dim)
-
-        chunk  = args.pred_batch_size
-        n_p    = x_enc_all.shape[0]
+        # Process in chunks: slice patch axis (axis=1) then transpose to
+        # (chunk, days, dim).  np.ascontiguousarray ensures the memory is
+        # C-contiguous before torch.from_numpy (required by PyTorch).
+        chunk = args.pred_batch_size
+        n_p   = n_patches
         prob_list = []
         with torch.no_grad():
             for cs in range(0, n_p, chunk):
-                ce      = min(cs + chunk, n_p)
-                xb_enc  = torch.from_numpy(x_enc_all[cs:ce]).float().to(device)
-                xb_dec  = torch.from_numpy(x_dec_all[cs:ce]).float().to(device)
-                logits  = model(xb_enc, xb_dec)                          # (B, dec_days, P²)
+                ce = min(cs + chunk, n_p)
+                xb_enc = torch.from_numpy(
+                    np.ascontiguousarray(
+                        meteo_patched[enc_start:enc_end, cs:ce, :].transpose(1, 0, 2)
+                    )
+                ).float().to(device)                    # (chunk, in_days, enc_dim)
+                xb_dec = torch.from_numpy(
+                    np.ascontiguousarray(
+                        meteo_patched[dec_start:dec_end, cs:ce, :].transpose(1, 0, 2)
+                    )
+                ).float().to(device)                    # (chunk, decoder_days, dec_dim)
+                logits = model(xb_enc, xb_dec)          # (chunk, dec_days, P²)
                 prob_list.append(torch.sigmoid(logits).cpu().numpy())
         probs = np.concatenate(prob_list, axis=0)   # (n_patches, decoder_days, P²)
 
