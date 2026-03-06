@@ -133,7 +133,7 @@ def download_fwi_year_month(client, year, month, output_dir, area=None):
 
 def download_fwi_range(client, start_year, end_year, months, output_dir, area=None):
     """
-    Download FWI for a range of years and months.
+    Download FWI for a range of years and months (sequential).
 
     Returns:
         list of successfully downloaded file paths
@@ -151,6 +151,59 @@ def download_fwi_range(client, start_year, end_year, months, output_dir, area=No
                 files.append(f)
 
     return files
+
+
+def _worker_download(task):
+    """Thread-worker: creates its own CDS client and downloads one year-month."""
+    year, month, output_dir, area, client_kwargs = task
+    try:
+        import cdsapi
+        client = cdsapi.Client(**client_kwargs, quiet=True)
+        return download_fwi_year_month(client, year, month, output_dir, area)
+    except Exception as e:
+        print(f"  [WORKER ERROR] {year}-{month:02d}: {e}")
+        return None
+
+
+def download_fwi_range_parallel(client_kwargs, start_year, end_year, months,
+                                 output_dir, area=None, workers=4):
+    """
+    Download FWI for a range of years and months using a thread pool.
+
+    Each thread creates its own CDS client so they don't share state.
+    CDS API accepts concurrent requests from the same key.
+
+    Args:
+        client_kwargs: dict passed to cdsapi.Client (url, key, etc.)
+        workers:       number of parallel download threads (default 4)
+
+    Returns:
+        list of successfully downloaded file paths
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    tasks = [
+        (year, month, output_dir, area, client_kwargs)
+        for year in range(start_year, end_year + 1)
+        for month in months
+    ]
+    total = len(tasks)
+    print(f"  Parallel download: {total} year-months, {workers} workers")
+
+    files = []
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(_worker_download, t): t for t in tasks}
+        for future in as_completed(futures):
+            done += 1
+            year, month = futures[future][0], futures[future][1]
+            result = future.result()
+            status = "OK" if result else "FAIL"
+            print(f"  [{done}/{total}] {year}-{month:02d} [{status}]")
+            if result:
+                files.append(result)
+
+    return sorted(files)
 
 
 # ------------------------------------------------------------------ #
@@ -337,6 +390,9 @@ Examples:
                         help='CDS API URL (if different from default)')
     parser.add_argument('--cds-key', type=str, default=None,
                         help='CDS API key (overrides env var / .cdsapirc)')
+    parser.add_argument('--workers', type=int, default=1,
+                        help='Parallel download threads (default=1 sequential). '
+                             'Recommended: 3-4. Each thread opens its own CDS client.')
 
     args = parser.parse_args()
 
@@ -427,7 +483,13 @@ Examples:
 
     # Step 1: Download NetCDFs
     print("\n--- STEP 1: Downloading from CDS ---\n")
-    nc_files = download_fwi_range(client, start_year, end_year, args.months, nc_dir)
+    if args.workers > 1:
+        nc_files = download_fwi_range_parallel(
+            client_kwargs, start_year, end_year, args.months, nc_dir,
+            workers=args.workers,
+        )
+    else:
+        nc_files = download_fwi_range(client, start_year, end_year, args.months, nc_dir)
 
     if not nc_files:
         print("\n[ERROR] No files downloaded!")
