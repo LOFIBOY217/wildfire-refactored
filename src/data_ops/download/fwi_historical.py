@@ -68,12 +68,15 @@ DEFAULT_CDS_API_KEY = "d952a10c-f9c0-4ff3-92e1-aac8756dd123"
 # The NetCDF internal name sometimes differs from the CDS request name, so we try
 # a list of candidates in order.
 FWI_VARIABLES = {
-    'fire_weather_index':      (['fwi', 'fire_weather_index', 'mark_4'], 'fwi'),
-    'fine_fuel_moisture_code': (['ffmc', 'fine_fuel_moisture_code'],      'ffmc'),
-    'duff_moisture_code':      (['dmc',  'duff_moisture_code'],           'dmc'),
-    'drought_code':            (['dc',   'drought_code'],                 'dc'),
-    'initial_spread_index':    (['isi',  'initial_spread_index'],         'isi'),
-    'build_up_index':          (['bui',  'build_up_index'],               'bui'),
+    # Actual NC variable names from EWDS (fwinx, ffmcode, etc.) listed first,
+    # followed by fallback names for other dataset versions.
+    # Note: initial_spread_index (ISI) is not present in consolidated_dataset v4_1.
+    'fire_weather_index':      (['fwinx',   'fwi', 'fire_weather_index', 'mark_4'], 'fwi'),
+    'fine_fuel_moisture_code': (['ffmcode',  'ffmc', 'fine_fuel_moisture_code'],    'ffmc'),
+    'duff_moisture_code':      (['dufmcode', 'dmc',  'duff_moisture_code'],         'dmc'),
+    'drought_code':            (['drtcode',  'dc',   'drought_code'],               'dc'),
+    'initial_spread_index':    (['isi',      'initial_spread_index'],               'isi'),
+    'build_up_index':          (['fbupinx',  'bui',  'build_up_index'],             'bui'),
 }
 
 
