@@ -227,6 +227,87 @@ def _load_fire_clim(tif_path, expected_h, expected_w):
 
 
 # ------------------------------------------------------------------ #
+# Val Lift@K  (used for checkpoint selection)
+# ------------------------------------------------------------------ #
+
+def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
+                        n_patches, k, n_sample_wins, chunk, device):
+    """
+    Compute Lift@K on a random sample of validation windows.
+
+    Samples *n_sample_wins* windows from *val_wins*, runs patch-level
+    inference, aggregates across lead days
+      • prob  → mean  (overall fire risk across the 14–46 day window)
+      • label → max   (any lead day with fire = positive pixel)
+    then computes precision@K and Lift@K globally across all sampled pixels.
+
+    This is cheap: for n_sample_wins=20 and n_patches≈24 310 it runs
+    ~20 × 95 GPU batches ≈ 10–30 seconds.
+
+    Returns:
+        (lift_k: float, precision_at_k: float)
+        lift_k = precision@K / baseline_fire_rate
+        Returns (0.0, 0.0) if no fire pixels found in sample.
+    """
+    model.eval()
+    rng = np.random.default_rng(0)   # fixed seed → same sample every epoch
+
+    if len(val_wins) > n_sample_wins:
+        idx         = rng.choice(len(val_wins), size=n_sample_wins, replace=False)
+        sample_wins = [val_wins[i] for i in sorted(idx)]
+    else:
+        sample_wins = val_wins
+
+    all_probs  = []
+    all_labels = []
+
+    with torch.no_grad():
+        for hs, he, ts, te in sample_wins:
+            prob_chunks = []
+            for cs in range(0, n_patches, chunk):
+                ce = min(cs + chunk, n_patches)
+                xb_enc = torch.from_numpy(
+                    np.ascontiguousarray(
+                        meteo_patched[hs:he, cs:ce, :].transpose(1, 0, 2)
+                    )
+                ).float().to(device)          # (chunk, in_days,   enc_dim)
+                xb_dec = torch.from_numpy(
+                    np.ascontiguousarray(
+                        meteo_patched[ts:te, cs:ce, :].transpose(1, 0, 2)
+                    )
+                ).float().to(device)          # (chunk, dec_days,  enc_dim)
+                logits = model(xb_enc, xb_dec)  # (chunk, dec_days, P²)
+                prob_chunks.append(torch.sigmoid(logits).cpu().numpy())
+
+            probs  = np.concatenate(prob_chunks, axis=0)  # (n_patches, dec_days, P²)
+            labels = fire_patched[ts:te, :, :]            # (dec_days,  n_patches, P²)
+
+            # Aggregate across lead days
+            prob_agg  = probs.mean(axis=1)           # (n_patches, P²)
+            label_agg = labels.max(axis=0)           # (n_patches, P²)  uint8
+
+            all_probs.append(prob_agg.reshape(-1))
+            all_labels.append(label_agg.reshape(-1).astype(np.float32))
+
+    all_probs  = np.concatenate(all_probs)   # (N_total,)
+    all_labels = np.concatenate(all_labels)  # (N_total,)
+
+    n_total = len(all_probs)
+    n_fire  = int(all_labels.sum())
+
+    if n_fire == 0:
+        return 0.0, 0.0
+
+    k_eff        = min(k, n_total)
+    top_idx      = np.argpartition(all_probs, -k_eff)[-k_eff:]
+    precision_k  = float(all_labels[top_idx].sum()) / k_eff
+    baseline     = n_fire / n_total
+    lift_k       = precision_k / baseline if baseline > 0 else 0.0
+
+    return lift_k, precision_k
+
+
+# ------------------------------------------------------------------ #
 # Forecast-only helper
 # ------------------------------------------------------------------ #
 
@@ -493,6 +574,14 @@ def main():
                     help="Skip training — load best checkpoint and generate forecast tifs.")
     ap.add_argument("--forecast_years", type=str, default=None,
                     help="Comma-separated years for --forecast_only, e.g. '2023,2024'.")
+
+    # Val Lift@K checkpoint selection
+    ap.add_argument("--val_lift_k", type=int, default=5000,
+                    help="K for val Lift@K checkpoint selection (default=5000). "
+                         "Best checkpoint = epoch with highest val Lift@K.")
+    ap.add_argument("--val_lift_sample_wins", type=int, default=20,
+                    help="Number of val windows sampled per epoch for Lift@K "
+                         "computation (default=20). More = slower but more stable.")
 
     args = ap.parse_args()
     torch.manual_seed(args.seed)
@@ -1032,8 +1121,9 @@ def main():
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
-    best_val_loss = float("inf")
-    best_ckpt     = os.path.join(ckpt_dir, "best_model.pt")
+    best_val_loss  = float("inf")
+    best_val_lift_k = -1.0          # checkpoint selected by Lift@K, not val_loss
+    best_ckpt      = os.path.join(ckpt_dir, "best_model.pt")
 
     for epoch in range(1, args.epochs + 1):
         # -- Training --
@@ -1092,31 +1182,50 @@ def main():
             break
         val_loss /= val_samples
 
-        print(f"  Epoch {epoch:3d}/{args.epochs}  train={train_loss:.6f}  val={val_loss:.6f}")
+        # -- Val Lift@K  (checkpoint selection criterion) --
+        val_lift_k, val_prec_k = _compute_val_lift_k(
+            model, meteo_patched, fire_patched, val_wins,
+            n_patches,
+            k=args.val_lift_k,
+            n_sample_wins=args.val_lift_sample_wins,
+            chunk=args.pred_batch_size,
+            device=device,
+        )
+
+        print(f"  Epoch {epoch:3d}/{args.epochs}  "
+              f"train={train_loss:.6f}  val={val_loss:.6f}  "
+              f"Lift@{args.val_lift_k}={val_lift_k:.2f}x  prec={val_prec_k:.4f}")
         if _lfire_n > 0:
             print(f"           logit  fire={_lfire_sum/_lfire_n:+.3f}  "
                   f"bg={_lbg_sum/_lbg_n:+.3f}  "
                   f"({_lfire_n:,} fire px / {_lbg_n:,} bg px)")
 
-        if val_samples > 0 and np.isfinite(val_loss) and val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # Save best checkpoint by val Lift@K  (aligned with final evaluation metric)
+        if val_lift_k > best_val_lift_k:
+            best_val_lift_k = val_lift_k
+            best_val_loss   = val_loss   # track for reference only
             torch.save({
-                "epoch":         epoch,
-                "model_state":   model.state_dict(),
-                "meteo_means":   meteo_means,
-                "meteo_stds":    meteo_stds,
-                "patch_dim_enc": patch_dim_enc,
-                "patch_dim_dec": patch_dim_dec,
-                "patch_dim_out": patch_dim_out,
-                "hw":            hw,
-                "grid":          grid,
-                "args":          vars(args),
-                "channel_names": CHANNEL_NAMES,
-                "n_channels":    N_CHANNELS,
+                "epoch":          epoch,
+                "model_state":    model.state_dict(),
+                "meteo_means":    meteo_means,
+                "meteo_stds":     meteo_stds,
+                "patch_dim_enc":  patch_dim_enc,
+                "patch_dim_dec":  patch_dim_dec,
+                "patch_dim_out":  patch_dim_out,
+                "hw":             hw,
+                "grid":           grid,
+                "args":           vars(args),
+                "channel_names":  CHANNEL_NAMES,
+                "n_channels":     N_CHANNELS,
+                "best_val_lift_k": best_val_lift_k,
             }, best_ckpt)
+            print(f"           ★ New best  Lift@{args.val_lift_k}={best_val_lift_k:.2f}x  "
+                  f"→ checkpoint saved")
 
-    print(f"\n  Best val loss: {best_val_loss:.6f}  saved → {best_ckpt}")
-    run_meta["best_val_loss"] = best_val_loss
+    print(f"\n  Best val Lift@{args.val_lift_k}: {best_val_lift_k:.2f}x  "
+          f"(val_loss at that epoch: {best_val_loss:.6f})  saved → {best_ckpt}")
+    run_meta["best_val_lift_k"] = best_val_lift_k
+    run_meta["best_val_loss"]   = best_val_loss
 
     # ----------------------------------------------------------------
     # STEP 10  Generate forecast GeoTIFFs
