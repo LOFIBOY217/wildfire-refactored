@@ -111,9 +111,10 @@ class S2SHotspotDatasetMixed(Dataset):
     def __getitem__(self, idx):
         win_i, patch_i = self.all_pairs[idx]
         hs, he, ts, te = self.windows[win_i]
-        # .astype(np.float32): handles both float32 and float16 memmap transparently
-        x_enc = self.meteo[hs:he, patch_i, :].astype(np.float32)
-        x_dec = self.meteo[ts:te, patch_i, :].astype(np.float32)
+        # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
+        # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
+        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
+        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
         y     = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
             torch.from_numpy(x_enc),
@@ -131,7 +132,7 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         self.windows   = windows
         self.hw        = hw
         self.grid      = grid
-        self.n_patches = meteo_patched.shape[1]
+        self.n_patches = meteo_patched.shape[0]   # (n_patches, T, enc_dim)
 
     def __len__(self):
         return len(self.windows) * self.n_patches
@@ -140,9 +141,10 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         win_i   = idx // self.n_patches
         patch_i = idx %  self.n_patches
         hs, he, ts, te = self.windows[win_i]
-        # .astype(np.float32): handles both float32 and float16 memmap transparently
-        x_enc = self.meteo[hs:he, patch_i, :].astype(np.float32)
-        x_dec = self.meteo[ts:te, patch_i, :].astype(np.float32)
+        # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
+        # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
+        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
+        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
         y     = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
             torch.from_numpy(x_enc),
@@ -275,6 +277,37 @@ def _patchify_frame(frame_hwc, P):
     f = f.reshape(nph, P, npw, P, C)
     f = f.transpose(0, 2, 1, 3, 4)               # (nph, npw, P, P, C)
     return f.reshape(nph * npw, P * P * C)        # (n_patches, enc_dim)
+
+
+def _transpose_tf_to_pf(tf_path, pf_path, T, n_patches, enc_dim,
+                        chunk_patches=200):
+    """
+    Transpose a time-first memmap (T, n_patches, enc_dim) to patch-first
+    (n_patches, T, enc_dim) on disk using chunked RAM copies.
+
+    Peak RAM ≈ chunk_patches × T × enc_dim × 2 bytes
+    (default 200 × 2427 × 2048 × 2 ≈ 2 GB per chunk).
+    """
+    tf = np.memmap(tf_path, dtype='float16', mode='r',
+                   shape=(T, n_patches, enc_dim))
+    pf = np.memmap(pf_path, dtype='float16', mode='w+',
+                   shape=(n_patches, T, enc_dim))
+    t0 = time.time()
+    n_chunks = (n_patches + chunk_patches - 1) // chunk_patches
+    for ci, p_start in enumerate(range(0, n_patches, chunk_patches)):
+        p_end = min(p_start + chunk_patches, n_patches)
+        # Force load to RAM → (T, chunk, enc_dim)
+        chunk = np.array(tf[:, p_start:p_end, :])
+        # Transpose axes 0↔1 → (chunk, T, enc_dim) and write sequentially
+        pf[p_start:p_end] = chunk.transpose(1, 0, 2)
+        if ci % 10 == 0 or p_end == n_patches:
+            elapsed = time.time() - t0
+            frac    = p_end / n_patches
+            eta_min = elapsed / max(frac, 1e-9) * (1 - frac) / 60
+            print(f"  Transposing {p_end:>6}/{n_patches} patches  "
+                  f"({elapsed:.0f}s  ~{eta_min:.0f} min left)")
+    pf.flush()
+    del tf, pf
 
 
 def _load_fire_clim(tif_path, expected_h, expected_w):
@@ -972,37 +1005,40 @@ def main():
           f"(fire_patched in RAM: ~{fire_ram_gb:.1f} GB uint8)")
 
     # Build or load from disk cache
+    # Layout: patch-first (n_patches, T, enc_dim) — sequential reads in __getitem__
     if args.cache_dir:
         os.makedirs(args.cache_dir, exist_ok=True)
         mmap_key   = (f"meteo_p{P}_C{N_CHANNELS}_T{T}"
-                      f"_{aligned_dates[0]}_{aligned_dates[-1]}.dat")
+                      f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
         mmap_path  = os.path.join(args.cache_dir, mmap_key)
-        stats_path = mmap_path.replace(".dat", "_stats.npy")
+        stats_path = mmap_path.replace("_pf.dat", "_stats.npy")
     else:
         mmap_path  = None
         stats_path = None
 
     if (mmap_path and os.path.exists(mmap_path)
             and stats_path and os.path.exists(stats_path)):
-        # ── Load existing cache ──────────────────────────────────────
-        print(f"  Loading cached memmap: {mmap_path}")
+        # ── Load existing patch-first cache ─────────────────────────
+        print(f"  Loading cached memmap (patch-first): {mmap_path}")
         meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
-                                  shape=(T, n_patches, enc_dim))
+                                  shape=(n_patches, T, enc_dim))
         _saved_stats  = np.load(stats_path)
         meteo_means   = _saved_stats[0]
         meteo_stds    = _saved_stats[1]
         print(f"  shape={meteo_patched.shape}  "
               f"({os.path.getsize(mmap_path)/1e9:.1f} GB on disk)")
     else:
-        # ── Build streaming (one day at a time) ─────────────────────
+        # ── Build: stream day-by-day into time-first temp file,
+        #          then transpose to patch-first final file ──────────
         if mmap_path:
-            print(f"  Creating memmap file: {mmap_path}")
-            meteo_patched = np.memmap(mmap_path, dtype='float16', mode='w+',
-                                      shape=(T, n_patches, enc_dim))
+            tf_path = mmap_path.replace("_pf.dat", "_tf.dat")
+            print(f"  Creating time-first temp file: {tf_path}")
+            meteo_tf = np.memmap(tf_path, dtype='float16', mode='w+',
+                                 shape=(T, n_patches, enc_dim))
         else:
             print(f"  cache_dir disabled — using in-memory float16 array "
                   f"({meteo_mmap_gb:.1f} GB)")
-            meteo_patched = np.zeros((T, n_patches, enc_dim), dtype=np.float16)
+            meteo_tf = np.zeros((T, n_patches, enc_dim), dtype=np.float16)
 
         _dyn_paths_all = [fwi_paths, t2m_paths, d2m_paths,
                           ffmc_paths, dmc_paths, dc_paths, bui_paths]
@@ -1022,7 +1058,7 @@ def main():
             frame -= meteo_means
             frame /= meteo_stds
             np.clip(frame, -10.0, 10.0, out=frame)
-            meteo_patched[t_idx] = _patchify_frame(frame, P).astype(np.float16)
+            meteo_tf[t_idx] = _patchify_frame(frame, P).astype(np.float16)
 
             if t_idx % 100 == 0 or t_idx == T - 1:
                 elapsed = time.time() - t0_mmap
@@ -1031,10 +1067,23 @@ def main():
                       f"({elapsed:.0f}s elapsed  ~{eta_min:.0f} min left)")
 
         if mmap_path:
-            meteo_patched.flush()
+            meteo_tf.flush()
             np.save(stats_path, np.stack([meteo_means, meteo_stds]))
-            print(f"  Saved: {mmap_path}  "
+            print(f"  Saved time-first: {tf_path}  "
+                  f"({os.path.getsize(tf_path)/1e9:.1f} GB)")
+            # ── Transpose to patch-first ─────────────────────────────
+            print(f"\n  Transposing to patch-first layout → {mmap_path}")
+            _transpose_tf_to_pf(tf_path, mmap_path, T, n_patches, enc_dim)
+            print(f"  Transpose complete. Deleting temp file: {tf_path}")
+            os.remove(tf_path)
+            meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
+                                      shape=(n_patches, T, enc_dim))
+            print(f"  Saved patch-first: {mmap_path}  "
                   f"({os.path.getsize(mmap_path)/1e9:.1f} GB)")
+        else:
+            # In-memory: just transpose (no disk)
+            meteo_patched = np.ascontiguousarray(
+                meteo_tf.transpose(1, 0, 2))
 
     # ----------------------------------------------------------------
     # STEP 7  Patchify fire labels (in RAM — ~15 GB uint8)
