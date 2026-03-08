@@ -101,12 +101,13 @@ def process_single_grib(grib_path, output_dir, skip_existing=True):
         print(f"  Found {len(grib_datasets)} dataset(s)")
 
         # Collect all variables from all datasets
+        # Store (dataset, grib_var_name) so we extract the correct variable later
         datasets = {}
         for dataset_idx, ds in enumerate(grib_datasets):
             print(f"  Scanning dataset {dataset_idx}...")
             for grib_var, out_var in VARIABLE_MAP.items():
                 if grib_var in ds.data_vars:
-                    datasets[out_var] = ds
+                    datasets[out_var] = (ds, grib_var)
                     print(f"    Found {grib_var} -> {out_var}")
 
         if not datasets:
@@ -116,10 +117,9 @@ def process_single_grib(grib_path, output_dir, skip_existing=True):
         print(f"  Total variables loaded: {len(datasets)}")
 
         # Process each variable
-        for out_var, ds in datasets.items():
+        for out_var, (ds, grib_var) in datasets.items():
             try:
-                var_name = list(ds.data_vars)[0]
-                data = ds[var_name]
+                data = ds[grib_var]
 
                 # Daily average
                 if 'time' in data.dims:
