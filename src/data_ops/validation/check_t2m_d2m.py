@@ -1,21 +1,34 @@
 """
 Diagnostic script: check whether 2t and 2d TIF files are identical.
 Run from project root:
-    python check_t2m_d2m.py
+    python -m src.data_ops.validation.check_t2m_d2m --config configs/paths_windows.yaml
 """
+import argparse
 import glob
 import os
+import sys
 import numpy as np
 import rasterio
-import yaml
+
+try:
+    from src.config import load_config, get_path, add_config_argument
+except ModuleNotFoundError:
+    from pathlib import Path
+    for _p in Path(__file__).resolve().parents:
+        if (_p / "src" / "config.py").exists():
+            sys.path.insert(0, str(_p))
+            break
+    from src.config import load_config, get_path, add_config_argument
 
 # ── Load config ────────────────────────────────────────────────────────────────
-cfg_path = os.path.join(os.path.dirname(__file__), "configs", "paths_windows.yaml")
-with open(cfg_path) as f:
-    cfg = yaml.safe_load(f)
+ap = argparse.ArgumentParser(
+    description="Check whether 2t and 2d TIF files contain identical data."
+)
+add_config_argument(ap)
+args = ap.parse_args()
 
-paths = cfg.get("paths", {})
-obs_root = paths.get("observation_dir") or paths.get("ecmwf_dir", "")
+cfg      = load_config(args.config)
+obs_root = get_path(cfg, "observation_dir")
 print(f"obs_root : {obs_root}\n")
 
 # ── Find files ─────────────────────────────────────────────────────────────────
