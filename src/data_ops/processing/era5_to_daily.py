@@ -64,6 +64,10 @@ VARIABLE_MAP = {
     'stl1': 'st20',   # soil temperature layer 1 (approximate st20)
 }
 
+# ERA5 stores these variables in Kelvin; convert to Celsius on output
+# so all temperature channels are on the same scale as existing t2m TIFs.
+KELVIN_VARS = {'t2m', 'd2m', 'stl1'}
+
 
 def process_single_grib(grib_path, output_dir, skip_existing=True):
     """
@@ -128,6 +132,11 @@ def process_single_grib(grib_path, output_dir, skip_existing=True):
                 else:
                     daily_avg = data
                     print(f"  Single timestep for {out_var}, no averaging needed")
+
+                # Unit conversion: Kelvin → Celsius for temperature variables
+                if grib_var in KELVIN_VARS:
+                    daily_avg = daily_avg - 273.15
+                    print(f"  Converted {grib_var} K → °C")
 
                 # Spatial coordinates
                 lats = ds.latitude.values
