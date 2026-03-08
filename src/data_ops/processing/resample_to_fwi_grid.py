@@ -195,6 +195,10 @@ def main():
         '--output-dir', '-o', type=str, default=None,
         help='Output root directory (default: from config observation_dir or data/ecmwf_observation)',
     )
+    parser.add_argument(
+        '--overwrite', action='store_true',
+        help='Overwrite existing output files (default: skip existing)',
+    )
 
     args = parser.parse_args()
 
@@ -308,8 +312,8 @@ def main():
         var_dir.mkdir(parents=True, exist_ok=True)
         dst_file = var_dir / src_file.name
 
-        # Skip existing
-        if dst_file.exists():
+        # Skip existing (unless --overwrite)
+        if dst_file.exists() and not args.overwrite:
             print(f"  [SKIP] Already exists: {dst_file.name}")
             success_count += 1
             continue
