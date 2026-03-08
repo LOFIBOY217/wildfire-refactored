@@ -111,12 +111,13 @@ class S2SHotspotDatasetMixed(Dataset):
     def __getitem__(self, idx):
         win_i, patch_i = self.all_pairs[idx]
         hs, he, ts, te = self.windows[win_i]
-        x_enc = self.meteo[hs:he, patch_i, :]
-        x_dec = self.meteo[ts:te, patch_i, :]
+        # .astype(np.float32): handles both float32 and float16 memmap transparently
+        x_enc = self.meteo[hs:he, patch_i, :].astype(np.float32)
+        x_dec = self.meteo[ts:te, patch_i, :].astype(np.float32)
         y     = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
-            torch.from_numpy(x_enc.copy()),
-            torch.from_numpy(x_dec.copy()),
+            torch.from_numpy(x_enc),
+            torch.from_numpy(x_dec),
             torch.from_numpy(y),
         )
 
@@ -139,12 +140,13 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         win_i   = idx // self.n_patches
         patch_i = idx %  self.n_patches
         hs, he, ts, te = self.windows[win_i]
-        x_enc = self.meteo[hs:he, patch_i, :]
-        x_dec = self.meteo[ts:te, patch_i, :]
+        # .astype(np.float32): handles both float32 and float16 memmap transparently
+        x_enc = self.meteo[hs:he, patch_i, :].astype(np.float32)
+        x_dec = self.meteo[ts:te, patch_i, :].astype(np.float32)
         y     = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
-            torch.from_numpy(x_enc.copy()),
-            torch.from_numpy(x_dec.copy()),
+            torch.from_numpy(x_enc),
+            torch.from_numpy(x_dec),
             torch.from_numpy(y),
         )
 
@@ -197,6 +199,82 @@ def _build_s2s_windows(n_days, in_days, lead_start, lead_end):
     for i in range(in_days, n_days - lead_end):
         windows.append((i - in_days, i, i + lead_start, i + lead_end + 1))
     return windows
+
+
+# ------------------------------------------------------------------ #
+# Streaming helpers for OOM-safe data loading                        #
+# ------------------------------------------------------------------ #
+
+def _read_tif_safe(path, fallback, nodata_threshold=-1e30):
+    """
+    Read one TIF as float32.  On error, substitute *fallback* (previous
+    day's array).  Masks extreme nodata values and any nodata tag stored
+    in the file.
+    """
+    try:
+        with rasterio.open(path) as src:
+            arr  = src.read(1).astype(np.float32)
+            ndv  = src.nodata
+    except Exception:
+        if fallback is None:
+            raise
+        return fallback.copy()
+    arr[arr < nodata_threshold] = np.nan
+    arr[~np.isfinite(arr)]      = np.nan
+    if ndv is not None:
+        arr[arr == ndv] = np.nan
+    if fallback is not None:
+        # fill remaining NaN with previous day
+        mask = ~np.isfinite(arr)
+        if mask.any():
+            arr[mask] = fallback[mask]
+    return arr
+
+
+def _stream_channel_stats(paths, nodata_threshold=-1e30):
+    """
+    Compute (mean, std, fill_value) for one channel by loading ONE TIF
+    at a time — never more than ~25 MB in RAM.
+
+    Uses exact two-pass running sums rather than Welford to avoid
+    floating-point cancellation on large arrays.
+    """
+    total_sum, total_sum_sq, total_count = 0.0, 0.0, 0
+    fallback = None
+    for p in paths:
+        arr      = _read_tif_safe(p, fallback, nodata_threshold)
+        fallback = arr
+        valid    = arr[np.isfinite(arr)].astype(np.float64)
+        if valid.size:
+            total_sum    += float(valid.sum())
+            total_sum_sq += float((valid ** 2).sum())
+            total_count  += valid.size
+    if total_count == 0:
+        return 0.0, 1.0, 0.0
+    mean = total_sum / total_count
+    var  = max(total_sum_sq / total_count - mean ** 2, 0.0)
+    std  = float(np.sqrt(var)) if var > 0 else 1.0
+    return float(mean), std, float(mean)   # fill = mean
+
+
+def _patchify_frame(frame_hwc, P):
+    """
+    Patchify a single spatial frame.
+
+    Args:
+        frame_hwc: (H, W, C) float32 numpy array
+        P: patch size
+
+    Returns:
+        (n_patches, P*P*C) float32 — CROPS to P-aligned boundary.
+    """
+    H, W, C = frame_hwc.shape
+    Hc, Wc  = H - H % P, W - W % P
+    f = frame_hwc[:Hc, :Wc, :]                   # (Hc, Wc, C)
+    nph, npw = Hc // P, Wc // P
+    f = f.reshape(nph, P, npw, P, C)
+    f = f.transpose(0, 2, 1, 3, 4)               # (nph, npw, P, P, C)
+    return f.reshape(nph * npw, P * P * C)        # (n_patches, enc_dim)
 
 
 def _load_fire_clim(tif_path, expected_h, expected_w):
@@ -745,48 +823,53 @@ def main():
     run_meta["aligned_days"] = len(aligned_dates)
 
     # ----------------------------------------------------------------
-    # STEP 3  Load raster stacks
+    # STEP 3  Streaming per-channel stats (no full-stack load)
     # ----------------------------------------------------------------
-    print("\n[STEP 3] Loading raster stacks (7 dynamic channels)...")
-    fwi_stack  = read_singleband_stack(fwi_paths)
-    t2m_stack  = read_singleband_stack(t2m_paths)
-    d2m_stack  = read_singleband_stack(d2m_paths)
-    ffmc_stack = read_singleband_stack(ffmc_paths)
-    dmc_stack  = read_singleband_stack(dmc_paths)
-    dc_stack   = read_singleband_stack(dc_paths)
-    bui_stack  = read_singleband_stack(bui_paths)
-    T, H, W = fwi_stack.shape
-    print(f"  Shape: T={T}  H={H}  W={W}")
-
-    def _clean_stack(stack):
-        stack = clean_nodata(stack.astype(np.float32))
-        fill  = float(np.nanmean(stack))
-        if not np.isfinite(fill):
-            fill = 0.0
-        return np.nan_to_num(stack, nan=fill, posinf=fill, neginf=fill)
-
-    fwi_stack  = _clean_stack(fwi_stack)
-    t2m_stack  = _clean_stack(t2m_stack)
-    d2m_stack  = _clean_stack(d2m_stack)
-    ffmc_stack = _clean_stack(ffmc_stack)
-    dmc_stack  = _clean_stack(dmc_stack)
-    dc_stack   = _clean_stack(dc_stack)
-    bui_stack  = _clean_stack(bui_stack)
-
-    print(f"  FWI  range: [{fwi_stack.min():.2f}, {fwi_stack.max():.2f}]")
-    print(f"  2t   range: [{t2m_stack.min():.2f}, {t2m_stack.max():.2f}]")
-    print(f"  2d   range: [{d2m_stack.min():.2f}, {d2m_stack.max():.2f}]")
-    print(f"  FFMC range: [{ffmc_stack.min():.2f}, {ffmc_stack.max():.2f}]")
-    print(f"  DMC  range: [{dmc_stack.min():.2f}, {dmc_stack.max():.2f}]")
-    print(f"  DC   range: [{dc_stack.min():.2f}, {dc_stack.max():.2f}]")
-    print(f"  BUI  range: [{bui_stack.min():.2f}, {bui_stack.max():.2f}]")
-
-    # Load static fire-climatology (Channel 7)
-    print(f"\n  Loading static fire-climatology map (Channel 7)...")
-    fire_clim = _load_fire_clim(fire_clim_path, H, W)
-
+    # Get grid dimensions from first FWI TIF header — no full array load
     with rasterio.open(fwi_paths[0]) as src:
         profile = src.profile
+        H, W    = src.height, src.width
+    T = len(aligned_dates)
+    print(f"\n[STEP 3] Grid: T={T}  H={H}  W={W}")
+
+    # Load static fire-climatology (Channel 7) — small single file (~25 MB)
+    print(f"  Loading static fire-climatology map (Channel 7)...")
+    fire_clim = _load_fire_clim(fire_clim_path, H, W)
+
+    # Compute train/val split index from date list (no data loading)
+    train_end_idx = next(
+        (i for i, d in enumerate(aligned_dates) if d >= pred_start_date), None
+    )
+    if train_end_idx is None:
+        raise RuntimeError(
+            f"pred_start={pred_start_date} is beyond all aligned dates. "
+            "Check --pred_start and --data_start."
+        )
+    print(f"  Train/val split: {aligned_dates[0]} → {aligned_dates[train_end_idx-1]} "
+          f"({train_end_idx} train days) | "
+          f"{aligned_dates[train_end_idx]} → {aligned_dates[-1]} "
+          f"({T - train_end_idx} val days)")
+
+    # Stream stats from TRAINING dates only (one TIF at a time, ~25 MB/TIF)
+    print(f"\n  Computing per-channel stats (streaming, no full load)...")
+    _dyn_paths_all = [fwi_paths, t2m_paths, d2m_paths,
+                      ffmc_paths, dmc_paths, dc_paths, bui_paths]
+    ch_stats = []
+    for ch_name, ch_paths in zip(CHANNEL_NAMES[:7], _dyn_paths_all):
+        m, s, f = _stream_channel_stats(ch_paths[:train_end_idx])
+        ch_stats.append((m, s, f))
+        print(f"  {ch_name:8s}  mean={m:8.3f}  std={s:8.3f}")
+
+    # Channel 7: fire_clim (static map — use spatial mean/std)
+    fc_valid = fire_clim[(fire_clim > -1e30) & np.isfinite(fire_clim)]
+    fc_mean  = float(fc_valid.mean()) if fc_valid.size else 0.0
+    fc_std   = float(fc_valid.std())  if fc_valid.size else 1.0
+    ch_stats.append((fc_mean, max(fc_std, 1e-6), fc_mean))
+    print(f"  {'fire_clim':8s}  mean={fc_mean:8.3f}  std={fc_std:8.3f}")
+
+    meteo_means = np.array([s[0] for s in ch_stats], dtype=np.float32)
+    meteo_stds  = np.array([max(s[1], 1e-6) for s in ch_stats], dtype=np.float32)
+    fills       = np.array([s[2] for s in ch_stats], dtype=np.float32)
 
     # ----------------------------------------------------------------
     # STEP 4  Load and rasterize CWFIS hotspots
@@ -850,52 +933,9 @@ def main():
         run_meta["positive_rate_dilated"] = float(pos_rate)
 
     # ----------------------------------------------------------------
-    # STEP 5  Train / val split
+    # STEP 5  Log normalisation stats (computed in STEP 3 by streaming)
     # ----------------------------------------------------------------
-    print("\n[STEP 5] Splitting train / val by pred_start...")
-    train_end_idx = None
-    for i, d in enumerate(aligned_dates):
-        if d >= pred_start_date:
-            train_end_idx = i
-            break
-    if train_end_idx is None:
-        raise RuntimeError(f"pred_start={pred_start_date} is beyond all aligned dates")
-
-    print(f"  Training : 0 → {train_end_idx - 1}  "
-          f"({aligned_dates[0]} → {aligned_dates[train_end_idx-1]})")
-    print(f"  Val/pred : {train_end_idx} → {T-1}  "
-          f"({aligned_dates[train_end_idx]} → {aligned_dates[-1]})")
-
-    # ----------------------------------------------------------------
-    # STEP 6  Standardise (in-place, memory-efficient)
-    # ----------------------------------------------------------------
-    print(f"\n[STEP 6] Standardising per-channel "
-          f"({N_CHANNELS} channels: {', '.join(CHANNEL_NAMES)})...")
-
-    # Build (T, H, W, N_CHANNELS) meteo array
-    meteo_norm = np.empty((T, H, W, N_CHANNELS), dtype=np.float32)
-    meteo_norm[..., 0] = fwi_stack;  del fwi_stack
-    meteo_norm[..., 1] = t2m_stack;  del t2m_stack
-    meteo_norm[..., 2] = d2m_stack;  del d2m_stack
-    meteo_norm[..., 3] = ffmc_stack; del ffmc_stack
-    meteo_norm[..., 4] = dmc_stack;  del dmc_stack
-    meteo_norm[..., 5] = dc_stack;   del dc_stack
-    meteo_norm[..., 6] = bui_stack;  del bui_stack
-    # Channel 7: static map — broadcast to all T frames
-    meteo_norm[..., 7] = fire_clim[np.newaxis, ...]   # (1, H, W) → (T, H, W)
-
-    # Compute per-channel mean/std from TRAINING set only
-    # Note: for Channel 7 (static), std = spatial std of the map (non-zero,
-    # since different pixels have different fire frequencies).  Normalisation works.
-    train_meteo  = meteo_norm[:train_end_idx]
-    meteo_means  = train_meteo.reshape(-1, N_CHANNELS).mean(axis=0)
-    meteo_stds   = train_meteo.reshape(-1, N_CHANNELS).std(axis=0) + 1e-6
-    del train_meteo
-
-    meteo_norm  -= meteo_means
-    meteo_norm  /= meteo_stds
-    np.clip(meteo_norm, -10.0, 10.0, out=meteo_norm)
-
+    print(f"\n[STEP 5] Normalisation stats ({N_CHANNELS} channels — from training split):")
     for i, name in enumerate(CHANNEL_NAMES):
         print(f"  {name:12s}  mean={meteo_means[i]:8.3f}  std={meteo_stds[i]:8.3f}")
     run_meta["norm_stats"] = {
@@ -907,80 +947,115 @@ def main():
             np.stack([meteo_means, meteo_stds]))
 
     # ----------------------------------------------------------------
-    # STEP 7  Pre-compute all patch arrays
+    # STEP 6  Build meteo_patched as float16 disk memmap (streaming)
     # ----------------------------------------------------------------
+    # Geometry (crop to patch-aligned boundary, matching _patchify_frame)
     P = args.patch_size
-    _sample, hw, grid = patchify(meteo_norm[:1], P)
-    n_patches  = grid[0] * grid[1]
-    enc_dim    = P * P * N_CHANNELS   # patch_dim_enc = P² × N_CHANNELS
-    dec_dim    = enc_dim              # ERA5 oracle: same N_CHANNELS for decoder
-    out_dim    = P * P                # patch_dim_out = P²
+    Hc, Wc   = H - H % P, W - W % P
+    nph, npw = Hc // P, Wc // P
+    hw        = (Hc, Wc)
+    grid      = (nph, npw)
+    n_patches = nph * npw
+    enc_dim   = P * P * N_CHANNELS   # patch_dim_enc
+    dec_dim   = enc_dim              # ERA5 oracle: same channels for decoder
+    out_dim   = P * P                # patch_dim_out
 
-    meteo_gb   = T * n_patches * enc_dim * 4 / 1e9
-    fire_gb    = T * n_patches * out_dim * 1 / 1e9
-    needed_gb  = meteo_gb + fire_gb
+    meteo_mmap_gb = T * n_patches * enc_dim * 2 / 1e9   # float16
+    fire_ram_gb   = T * n_patches * out_dim     / 1e9   # uint8
+    print(f"\n[STEP 6] Streaming meteo_patched → float16 memmap")
+    print(f"  n_patches={n_patches}  enc_dim={enc_dim}  grid={nph}×{npw}  "
+          f"crop={Hc}×{Wc}")
+    print(f"  Disk needed: ~{meteo_mmap_gb:.1f} GB  "
+          f"(fire_patched in RAM: ~{fire_ram_gb:.1f} GB uint8)")
 
-    print(f"\n[STEP 7] Pre-computing patches for T={T} frames...")
-    print(f"  n_patches={n_patches}  enc_dim={enc_dim}  dec_dim={dec_dim}  out_dim={out_dim}")
-    print(f"  Estimated RAM: meteo={meteo_gb:.1f} GB (float32)  "
-          f"fire={fire_gb:.1f} GB (uint8)  total={needed_gb:.1f} GB")
+    # Build or load from disk cache
+    if args.cache_dir:
+        os.makedirs(args.cache_dir, exist_ok=True)
+        mmap_key   = (f"meteo_p{P}_C{N_CHANNELS}_T{T}"
+                      f"_{aligned_dates[0]}_{aligned_dates[-1]}.dat")
+        mmap_path  = os.path.join(args.cache_dir, mmap_key)
+        stats_path = mmap_path.replace(".dat", "_stats.npy")
+    else:
+        mmap_path  = None
+        stats_path = None
 
-    try:
-        import psutil
-        vm           = psutil.virtual_memory()
-        available_gb = vm.available / 1e9
-        total_gb     = vm.total    / 1e9
-        print(f"  System RAM: {available_gb:.1f} GB available / {total_gb:.1f} GB total")
-        if needed_gb > total_gb * 0.85:
-            bytes_per_frame = n_patches * (enc_dim * 4 + out_dim * 1)
-            safe_T    = int(total_gb * 0.80 * 1e9 / bytes_per_frame)
-            safe_date = aligned_dates[max(0, T - safe_T)]
-            print(f"\n  *** OOM WARNING ***")
-            print(f"  Need {needed_gb:.1f} GB but machine total is {total_gb:.1f} GB.")
-            print(f"  Suggested: --data_start {safe_date}  (reduces T to ~{safe_T} days)")
-            print(f"  Aborting.\n")
-            raise SystemExit(1)
-        elif needed_gb > available_gb:
-            print(f"  NOTE: Need {needed_gb:.1f} GB, currently {available_gb:.1f} GB free "
-                  f"(total {total_gb:.1f} GB). OS will reclaim cache — continuing.")
-    except ImportError:
-        print("  (pip install psutil to enable RAM pre-flight check)")
+    if (mmap_path and os.path.exists(mmap_path)
+            and stats_path and os.path.exists(stats_path)):
+        # ── Load existing cache ──────────────────────────────────────
+        print(f"  Loading cached memmap: {mmap_path}")
+        meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
+                                  shape=(T, n_patches, enc_dim))
+        _saved_stats  = np.load(stats_path)
+        meteo_means   = _saved_stats[0]
+        meteo_stds    = _saved_stats[1]
+        print(f"  shape={meteo_patched.shape}  "
+              f"({os.path.getsize(mmap_path)/1e9:.1f} GB on disk)")
+    else:
+        # ── Build streaming (one day at a time) ─────────────────────
+        if mmap_path:
+            print(f"  Creating memmap file: {mmap_path}")
+            meteo_patched = np.memmap(mmap_path, dtype='float16', mode='w+',
+                                      shape=(T, n_patches, enc_dim))
+        else:
+            print(f"  cache_dir disabled — using in-memory float16 array "
+                  f"({meteo_mmap_gb:.1f} GB)")
+            meteo_patched = np.zeros((T, n_patches, enc_dim), dtype=np.float16)
 
-    # meteo_patched: (T, n_patches, enc_dim) float32
-    t0_meteo = time.time()
-    try:
-        meteo_patched = np.empty((T, n_patches, enc_dim), dtype=np.float32)
-    except MemoryError:
-        raise RuntimeError(
-            f"MemoryError allocating meteo_patched ({meteo_gb:.1f} GB). "
-            "Try a later --data_start date."
-        )
-    for t in range(T):
-        patches, _, _ = patchify(meteo_norm[t:t + 1], P)
-        meteo_patched[t] = patches[:, 0, :]
-        if t % 100 == 0 or t == T - 1:
-            print(f"  meteo frame {t:4d}/{T}  ({time.time()-t0_meteo:.0f}s)")
-    print(f"  meteo_patched: {meteo_patched.shape}  "
-          f"{meteo_patched.nbytes/1e9:.1f} GB  ({time.time()-t0_meteo:.0f}s)")
+        _dyn_paths_all = [fwi_paths, t2m_paths, d2m_paths,
+                          ffmc_paths, dmc_paths, dc_paths, bui_paths]
+        _fallbacks = [None] * 7
+        t0_mmap    = time.time()
 
-    # fire_patched: (T, n_patches, P²) uint8
+        for t_idx in range(T):
+            frame = np.empty((H, W, N_CHANNELS), dtype=np.float32)
+            for ch_idx, ch_paths in enumerate(_dyn_paths_all):
+                arr = _read_tif_safe(ch_paths[t_idx], _fallbacks[ch_idx])
+                _fallbacks[ch_idx] = arr
+                arr = np.nan_to_num(arr, nan=float(fills[ch_idx]),
+                                    posinf=float(fills[ch_idx]),
+                                    neginf=float(fills[ch_idx]))
+                frame[..., ch_idx] = arr
+            frame[..., 7] = fire_clim   # static channel
+            frame -= meteo_means
+            frame /= meteo_stds
+            np.clip(frame, -10.0, 10.0, out=frame)
+            meteo_patched[t_idx] = _patchify_frame(frame, P).astype(np.float16)
+
+            if t_idx % 100 == 0 or t_idx == T - 1:
+                elapsed = time.time() - t0_mmap
+                eta_min = elapsed / max(t_idx, 1) * (T - t_idx) / 60
+                print(f"  day {t_idx+1:4d}/{T}  "
+                      f"({elapsed:.0f}s elapsed  ~{eta_min:.0f} min left)")
+
+        if mmap_path:
+            meteo_patched.flush()
+            np.save(stats_path, np.stack([meteo_means, meteo_stds]))
+            print(f"  Saved: {mmap_path}  "
+                  f"({os.path.getsize(mmap_path)/1e9:.1f} GB)")
+
+    # ----------------------------------------------------------------
+    # STEP 7  Patchify fire labels (in RAM — ~15 GB uint8)
+    # ----------------------------------------------------------------
+    print("\n[STEP 7] Pre-computing fire patches (uint8)...")
+    fire_gb = T * n_patches * out_dim / 1e9
+    print(f"  fire_patched: ({T}, {n_patches}, {out_dim})  ≈ {fire_gb:.1f} GB uint8")
     t0_fire = time.time()
     try:
         fire_patched = np.empty((T, n_patches, out_dim), dtype=np.uint8)
     except MemoryError:
         raise RuntimeError(
-            f"MemoryError allocating fire_patched ({fire_gb:.1f} GB as uint8). "
-            "Try a later --data_start date."
+            f"MemoryError allocating fire_patched ({fire_gb:.1f} GB uint8). "
+            "The server does not have enough RAM for the fire label array. "
+            "Consider using a shorter date range."
         )
-    for t in range(T):
-        fut1 = fire_stack[t:t + 1].astype(np.float32)
-        patches, _, _ = patchify(fut1, P)
-        fire_patched[t] = patches[:, 0, :].astype(np.uint8)
-        if t % 100 == 0 or t == T - 1:
-            print(f"  fire  frame {t:4d}/{T}  ({time.time()-t0_fire:.0f}s)")
-    print(f"  fire_patched:  {fire_patched.shape}  dtype=uint8  "
+    for t_idx in range(T):
+        frame_f = fire_stack[t_idx, :Hc, :Wc, np.newaxis].astype(np.float32)
+        fire_patched[t_idx] = _patchify_frame(frame_f, P).astype(np.uint8)
+        if t_idx % 500 == 0 or t_idx == T - 1:
+            print(f"  fire frame {t_idx:4d}/{T}  ({time.time()-t0_fire:.0f}s)")
+    print(f"  fire_patched: {fire_patched.shape}  dtype=uint8  "
           f"{fire_patched.nbytes/1e9:.1f} GB  ({time.time()-t0_fire:.0f}s)")
-    del meteo_norm
+    del fire_stack
 
     # Build S2S windows
     all_windows = _build_s2s_windows(T, in_days, lead_start, lead_end)
