@@ -85,11 +85,16 @@ def download_single_date(client, date_str, outdir, area=None, verbose=True):
         'product_type': 'reanalysis',
         'format': 'grib',
         'variable': [
-            '2m_temperature',                # 2t  (167)
-            '2m_dewpoint_temperature',        # 2d  (168)
-            'total_column_water',             # tcw (136)
+            '2m_temperature',                # 2t   (167)
+            '2m_dewpoint_temperature',        # 2d   (168)
+            'total_column_water',             # tcw  (136)
             'volumetric_soil_water_layer_1',  # swvl1 (closest to sm20)
             'soil_temperature_level_1',       # stl1  (closest to st20)
+            # --- V2 model channels (fire spread + lightning proxy) ---
+            '10m_u_component_of_wind',        # u10  (165) — ISI raw input, fire spread speed
+            '10m_v_component_of_wind',        # v10  (166) — ISI raw input, fire spread direction
+            'total_precipitation',            # tp   (228) — fuel moistening, suppresses fire risk
+            'convective_available_potential_energy',  # cape (59) — lightning / thunderstorm proxy
         ],
         'year': year,
         'month': month,

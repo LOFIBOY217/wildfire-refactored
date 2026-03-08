@@ -12,6 +12,13 @@ paths:
   ecmwf_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ecmwf_observation"
   era5_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_on_fwi_grid"
   observation_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ecmwf_observation"
+  # V2 model: ERA5-derived per-variable dirs (populated after GRIB→TIF processing)
+  wind_u_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_wind_u"
+  wind_v_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_wind_v"
+  precip_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_precip"
+  cape_dir:   "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_cape"
+  # V2 model: static fire-frequency climatology
+  fire_climatology_tif: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\fire_climatology.tif"
   ciffc_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ciffc\\ciffc_logistic_20230505_20250821.csv"
   hotspot_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\hotspot\\hotspot_2018_2025.csv"
   output_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\outputs"

@@ -15,6 +15,13 @@ paths:
   era5_dir: "data/era5_on_fwi_grid"
   observation_dir: "data/ecmwf_observation"
   hres_dir: "data/ecmwf_hres"
+  # V2 model: ERA5-derived per-variable dirs (populated after GRIB→TIF processing)
+  wind_u_dir: "data/era5_wind_u"   # 10m u-wind (165), fire spread speed
+  wind_v_dir: "data/era5_wind_v"   # 10m v-wind (166), fire spread direction
+  precip_dir: "data/era5_precip"   # total precipitation (228), suppresses fire
+  cape_dir:   "data/era5_cape"     # CAPE (59), lightning / thunderstorm proxy
+  # V2 model: static fire-frequency climatology (produced by make_fire_climatology.py)
+  fire_climatology_tif: "data/fire_climatology.tif"
   ciffc_csv: "data/ciffc/ciffc_logistic_20230505_20250821.csv"
   hotspot_csv: "data/hotspot/hotspot_2018_2025.csv"
   output_dir: "outputs"

@@ -11,6 +11,14 @@ paths:
   bui_dir:  "data/bui_data"
   ecmwf_dir: "data/ecmwf_reproject"
   era5_dir: "data/era5_on_fwi_grid"
+  observation_dir: "data/ecmwf_reproject"
+  # V2 model: ERA5-derived per-variable dirs (populated after GRIB→TIF processing)
+  wind_u_dir: "data/era5_wind_u"
+  wind_v_dir: "data/era5_wind_v"
+  precip_dir: "data/era5_precip"
+  cape_dir:   "data/era5_cape"
+  # V2 model: static fire-frequency climatology
+  fire_climatology_tif: "data/fire_climatology.tif"
   ciffc_csv: "data/ciffc.csv"
   output_dir: "outputs"
   checkpoint_dir: "checkpoints"
