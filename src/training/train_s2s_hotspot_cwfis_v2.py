@@ -645,6 +645,9 @@ def main():
     ap.add_argument("--cache_dir", type=str, default="outputs/cache",
                     help="Directory to cache the dilated fire_stack (.npy). "
                          "Set to '' to disable caching.")
+    ap.add_argument("--num_workers", type=int, default=4,
+                    help="DataLoader worker processes (default=4). "
+                         "Set to 0 to disable multiprocessing.")
 
     # Forecast
     ap.add_argument("--pred_batch_size", type=int, default=256)
@@ -1164,8 +1167,12 @@ def main():
     print(f"  Grid: {grid[0]}×{grid[1]} patches/frame  "
           f"(enc_dim={patch_dim_enc}  dec_dim={patch_dim_dec}  out_dim={patch_dim_out})")
 
-    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=0)
-    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=0)
+    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                          num_workers=args.num_workers, pin_memory=True,
+                          persistent_workers=(args.num_workers > 0))
+    val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
+                          num_workers=args.num_workers, pin_memory=True,
+                          persistent_workers=(args.num_workers > 0))
 
     # ----------------------------------------------------------------
     # STEP 9  Build model & train
