@@ -1090,27 +1090,42 @@ def main():
                 meteo_tf.transpose(1, 0, 2))
 
     # ----------------------------------------------------------------
-    # STEP 7  Patchify fire labels (in RAM — ~15 GB uint8)
+    # STEP 7  Patchify fire labels (uint8 disk memmap)
     # ----------------------------------------------------------------
+    # Using memmap instead of np.empty avoids duplicating 15 GB into every
+    # DataLoader worker process (Windows spawns separate processes; memmap
+    # workers share OS file pages → ~60 GB less RAM with num_workers=4).
     print("\n[STEP 7] Pre-computing fire patches (uint8)...")
     fire_gb = T * n_patches * out_dim / 1e9
     print(f"  fire_patched: ({T}, {n_patches}, {out_dim})  ≈ {fire_gb:.1f} GB uint8")
     t0_fire = time.time()
-    try:
-        fire_patched = np.empty((T, n_patches, out_dim), dtype=np.uint8)
-    except MemoryError:
-        raise RuntimeError(
-            f"MemoryError allocating fire_patched ({fire_gb:.1f} GB uint8). "
-            "The server does not have enough RAM for the fire label array. "
-            "Consider using a shorter date range."
-        )
-    for t_idx in range(T):
-        frame_f = fire_stack[t_idx, :Hc, :Wc, np.newaxis].astype(np.float32)
-        fire_patched[t_idx] = _patchify_frame(frame_f, P).astype(np.uint8)
-        if t_idx % 500 == 0 or t_idx == T - 1:
-            print(f"  fire frame {t_idx:4d}/{T}  ({time.time()-t0_fire:.0f}s)")
-    print(f"  fire_patched: {fire_patched.shape}  dtype=uint8  "
-          f"{fire_patched.nbytes/1e9:.1f} GB  ({time.time()-t0_fire:.0f}s)")
+
+    fire_cache_path = None
+    if args.cache_dir:
+        fire_cache_key  = (f"fire_patched_r{args.dilate_radius}"
+                           f"_{aligned_dates[0]}_{aligned_dates[-1]}"
+                           f"_{T}x{n_patches}x{out_dim}.dat")
+        fire_cache_path = os.path.join(args.cache_dir, fire_cache_key)
+
+    if fire_cache_path and os.path.exists(fire_cache_path) and not args.overwrite:
+        fire_patched = np.memmap(fire_cache_path, dtype='uint8', mode='r',
+                                 shape=(T, n_patches, out_dim))
+        print(f"  Loaded cached fire_patched: {fire_cache_path}  ({time.time()-t0_fire:.0f}s)")
+    else:
+        if fire_cache_path:
+            fire_patched = np.memmap(fire_cache_path, dtype='uint8', mode='w+',
+                                     shape=(T, n_patches, out_dim))
+        else:
+            fire_patched = np.empty((T, n_patches, out_dim), dtype=np.uint8)
+        for t_idx in range(T):
+            frame_f = fire_stack[t_idx, :Hc, :Wc, np.newaxis].astype(np.float32)
+            fire_patched[t_idx] = _patchify_frame(frame_f, P).astype(np.uint8)
+            if t_idx % 500 == 0 or t_idx == T - 1:
+                print(f"  fire frame {t_idx:4d}/{T}  ({time.time()-t0_fire:.0f}s)")
+        if fire_cache_path:
+            fire_patched.flush()
+        print(f"  fire_patched: {fire_patched.shape}  dtype=uint8  "
+              f"{fire_gb:.1f} GB  ({time.time()-t0_fire:.0f}s)")
     del fire_stack
 
     # Build S2S windows
