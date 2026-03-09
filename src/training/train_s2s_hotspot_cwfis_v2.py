@@ -46,6 +46,7 @@ Usage (quick test — 1 year training):
 
 import argparse
 import glob
+import gc
 import json
 import os
 import sys
@@ -308,6 +309,7 @@ def _transpose_tf_to_pf(tf_path, pf_path, T, n_patches, enc_dim,
                   f"({elapsed:.0f}s  ~{eta_min:.0f} min left)")
     pf.flush()
     del tf, pf
+    gc.collect()   # Windows: force release file handles before caller deletes the file
 
 
 def _load_fire_clim(tif_path, expected_h, expected_w):
@@ -1068,6 +1070,8 @@ def main():
 
         if mmap_path:
             meteo_tf.flush()
+            del meteo_tf   # Windows: release write handle before transpose/delete
+            gc.collect()
             np.save(stats_path, np.stack([meteo_means, meteo_stds]))
             print(f"  Saved time-first: {tf_path}  "
                   f"({os.path.getsize(tf_path)/1e9:.1f} GB)")
