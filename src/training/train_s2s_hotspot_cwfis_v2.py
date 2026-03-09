@@ -381,14 +381,14 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 ce = min(cs + chunk, n_patches)
                 xb_enc = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[hs:he, cs:ce, :].transpose(1, 0, 2)
+                        meteo_patched[cs:ce, hs:he, :]   # patch-first: (chunk, in_days, enc_dim)
                     )
-                ).float().to(device)          # (chunk, in_days,   enc_dim)
+                ).float().to(device)
                 xb_dec = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[ts:te, cs:ce, :].transpose(1, 0, 2)
+                        meteo_patched[cs:ce, ts:te, :]   # patch-first: (chunk, dec_days, enc_dim)
                     )
-                ).float().to(device)          # (chunk, dec_days,  enc_dim)
+                ).float().to(device)
                 logits = model(xb_enc, xb_dec)  # (chunk, dec_days, P²)
                 prob_chunks.append(torch.sigmoid(logits).cpu().numpy())
 
@@ -1402,12 +1402,12 @@ def main():
                 ce = min(cs + chunk, n_p)
                 xb_enc = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[enc_start:enc_end, cs:ce, :].transpose(1, 0, 2)
+                        meteo_patched[cs:ce, enc_start:enc_end, :]   # patch-first: (chunk, in_days, enc_dim)
                     )
                 ).float().to(device)
                 xb_dec = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[dec_start:dec_end, cs:ce, :].transpose(1, 0, 2)
+                        meteo_patched[cs:ce, dec_start:dec_end, :]   # patch-first: (chunk, dec_days, enc_dim)
                     )
                 ).float().to(device)
                 logits = model(xb_enc, xb_dec)
