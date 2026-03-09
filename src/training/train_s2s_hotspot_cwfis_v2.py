@@ -86,6 +86,7 @@ from src.models.s2s_hotspot import S2SHotspotTransformer
 # Channel names (for logging and diagnostics)
 CHANNEL_NAMES = ["FWI", "2t", "2d", "FFMC", "DMC", "DC", "BUI", "fire_clim"]
 N_CHANNELS    = len(CHANNEL_NAMES)   # 8
+METEO_SCALE   = 12.7   # int8 quantization: float16 [-10,10] → int8 [-127,127]
 
 
 # ------------------------------------------------------------------ #
@@ -114,8 +115,8 @@ class S2SHotspotDatasetMixed(Dataset):
         hs, he, ts, te = self.windows[win_i]
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
-        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
-        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
+        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32) * (1.0 / METEO_SCALE)
+        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32) * (1.0 / METEO_SCALE)
         y     = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
             torch.from_numpy(x_enc),
@@ -144,8 +145,8 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         hs, he, ts, te = self.windows[win_i]
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
-        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
-        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
+        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32) * (1.0 / METEO_SCALE)
+        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32) * (1.0 / METEO_SCALE)
         y     = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
             torch.from_numpy(x_enc),
@@ -312,6 +313,31 @@ def _transpose_tf_to_pf(tf_path, pf_path, T, n_patches, enc_dim,
     gc.collect()   # Windows: force release file handles before caller deletes the file
 
 
+def _convert_pf_to_int8(pf_path, p8_path, n_patches, T, enc_dim, chunk=500):
+    """
+    Convert an existing float16 patch-first memmap to int8 in-place on disk.
+    Reads _pf.dat in chunks, quantizes with METEO_SCALE, writes _p8.dat.
+    No TIF re-loading needed — ~30–60 min vs 5 hours from scratch.
+    """
+    print(f"  Converting float16 → int8  ({n_patches} patches × {T} × {enc_dim})")
+    src = np.memmap(pf_path, dtype='float16', mode='r',  shape=(n_patches, T, enc_dim))
+    dst = np.memmap(p8_path, dtype='int8',    mode='w+', shape=(n_patches, T, enc_dim))
+    t0  = time.time()
+    for i in range(0, n_patches, chunk):
+        j       = min(i + chunk, n_patches)
+        dst[i:j] = np.clip(
+            np.round(np.array(src[i:j]).astype(np.float32) * METEO_SCALE),
+            -128, 127
+        ).astype(np.int8)
+        if i % 5000 == 0 or j == n_patches:
+            pct = j / n_patches * 100
+            print(f"  int8 convert {j:6d}/{n_patches}  ({pct:.0f}%  {time.time()-t0:.0f}s)")
+    dst.flush()
+    del src, dst
+    gc.collect()
+    print(f"  int8 conversion done in {time.time()-t0:.0f}s  →  {p8_path}")
+
+
 def _load_fire_clim(tif_path, expected_h, expected_w):
     """
     Load the static fire-climatology GeoTIFF.
@@ -381,14 +407,14 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 ce = min(cs + chunk, n_patches)
                 xb_enc = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[cs:ce, hs:he, :]   # patch-first: (chunk, in_days, enc_dim)
+                        meteo_patched[cs:ce, hs:he, :].astype(np.float32) * (1.0 / METEO_SCALE)
                     )
-                ).float().to(device)
+                ).to(device)
                 xb_dec = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[cs:ce, ts:te, :]   # patch-first: (chunk, dec_days, enc_dim)
+                        meteo_patched[cs:ce, ts:te, :].astype(np.float32) * (1.0 / METEO_SCALE)
                     )
-                ).float().to(device)
+                ).to(device)
                 logits = model(xb_enc, xb_dec)  # (chunk, dec_days, P²)
                 prob_chunks.append(torch.sigmoid(logits).cpu().numpy())
 
@@ -1013,22 +1039,42 @@ def main():
         mmap_key   = (f"meteo_p{P}_C{N_CHANNELS}_T{T}"
                       f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
         mmap_path  = os.path.join(args.cache_dir, mmap_key)
+        p8_path    = mmap_path.replace("_pf.dat", "_p8.dat")   # int8 version
         stats_path = mmap_path.replace("_pf.dat", "_stats.npy")
     else:
         mmap_path  = None
+        p8_path    = None
         stats_path = None
 
-    if (mmap_path and os.path.exists(mmap_path)
-            and stats_path and os.path.exists(stats_path)):
-        # ── Load existing patch-first cache ─────────────────────────
-        print(f"  Loading cached memmap (patch-first): {mmap_path}")
-        meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
+    _stats_ok = stats_path and os.path.exists(stats_path)
+
+    if p8_path and os.path.exists(p8_path) and _stats_ok:
+        # ── Load existing int8 patch-first cache (preferred) ─────────
+        print(f"  Loading cached memmap (int8 patch-first): {p8_path}")
+        meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
                                   shape=(n_patches, T, enc_dim))
         _saved_stats  = np.load(stats_path)
         meteo_means   = _saved_stats[0]
         meteo_stds    = _saved_stats[1]
         print(f"  shape={meteo_patched.shape}  "
-              f"({os.path.getsize(mmap_path)/1e9:.1f} GB on disk)")
+              f"({os.path.getsize(p8_path)/1e9:.1f} GB on disk)")
+    elif (mmap_path and os.path.exists(mmap_path) and _stats_ok):
+        if p8_path and not os.path.exists(p8_path) and not args.overwrite:
+            # ── float16 exists but int8 does not → convert ───────────
+            _convert_pf_to_int8(mmap_path, p8_path, n_patches, T, enc_dim)
+            meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
+                                      shape=(n_patches, T, enc_dim))
+        else:
+            # ── Load float16 cache (overwrite mode or no p8_path) ────
+            print(f"  Loading cached memmap (patch-first): {mmap_path}")
+            meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
+                                      shape=(n_patches, T, enc_dim))
+        _saved_stats  = np.load(stats_path)
+        meteo_means   = _saved_stats[0]
+        meteo_stds    = _saved_stats[1]
+        _src = p8_path if (p8_path and os.path.exists(p8_path)) else mmap_path
+        print(f"  shape={meteo_patched.shape}  "
+              f"({os.path.getsize(_src)/1e9:.1f} GB on disk)")
     else:
         # ── Build: stream day-by-day into time-first temp file,
         #          then transpose to patch-first final file ──────────
@@ -1417,14 +1463,14 @@ def main():
                 ce = min(cs + chunk, n_p)
                 xb_enc = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[cs:ce, enc_start:enc_end, :]   # patch-first: (chunk, in_days, enc_dim)
+                        meteo_patched[cs:ce, enc_start:enc_end, :].astype(np.float32) * (1.0 / METEO_SCALE)
                     )
-                ).float().to(device)
+                ).to(device)
                 xb_dec = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[cs:ce, dec_start:dec_end, :]   # patch-first: (chunk, dec_days, enc_dim)
+                        meteo_patched[cs:ce, dec_start:dec_end, :].astype(np.float32) * (1.0 / METEO_SCALE)
                     )
-                ).float().to(device)
+                ).to(device)
                 logits = model(xb_enc, xb_dec)
                 prob_list.append(torch.sigmoid(logits).cpu().numpy())
         probs = np.concatenate(prob_list, axis=0)
