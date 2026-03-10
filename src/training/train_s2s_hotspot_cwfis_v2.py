@@ -709,6 +709,8 @@ def main():
     ap.add_argument("--num_workers", type=int, default=4,
                     help="DataLoader worker processes (default=4). "
                          "Set to 0 to disable multiprocessing.")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="Force rebuild all caches (fire_stack, meteo memmap, fire_patched).")
 
     # Forecast
     ap.add_argument("--pred_batch_size", type=int, default=256)
@@ -1126,14 +1128,24 @@ def main():
             _transpose_tf_to_pf(tf_path, mmap_path, T, n_patches, enc_dim)
             print(f"  Transpose complete. Deleting temp file: {tf_path}")
             os.remove(tf_path)
-            meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
-                                      shape=(n_patches, T, enc_dim))
             print(f"  Saved patch-first: {mmap_path}  "
                   f"({os.path.getsize(mmap_path)/1e9:.1f} GB)")
+            # ── Immediately convert to int8 so Dataset dequantization is correct ──
+            if p8_path:
+                _convert_pf_to_int8(mmap_path, p8_path, n_patches, T, enc_dim)
+                meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
+                                          shape=(n_patches, T, enc_dim))
+            else:
+                meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
+                                          shape=(n_patches, T, enc_dim))
         else:
-            # In-memory: just transpose (no disk)
-            meteo_patched = np.ascontiguousarray(
-                meteo_tf.transpose(1, 0, 2))
+            # In-memory: transpose then quantize to int8 (consistent with Dataset dequantization)
+            _tmp = np.ascontiguousarray(meteo_tf.transpose(1, 0, 2))
+            del meteo_tf; gc.collect()
+            meteo_patched = np.clip(
+                np.round(_tmp.astype(np.float32) * METEO_SCALE), -128, 127
+            ).astype(np.int8)
+            del _tmp; gc.collect()
 
     # ----------------------------------------------------------------
     # STEP 7  Patchify fire labels (uint8 disk memmap)
