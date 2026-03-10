@@ -766,6 +766,11 @@ def main():
                     help="Number of val windows sampled per epoch for Lift@K "
                          "computation (default=20). More = slower but more stable.")
 
+    # Training verbosity
+    ap.add_argument("--log_interval", type=int, default=500,
+                    help="Print intra-epoch progress every N batches (default=500). "
+                         "Set to 0 to disable mid-epoch output.")
+
     args = ap.parse_args()
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -1371,6 +1376,12 @@ def main():
     best_val_lift_k = -1.0          # checkpoint selected by Lift@K, not val_loss
     best_ckpt      = os.path.join(ckpt_dir, "best_model.pt")
 
+    n_batches_train = len(train_dl)
+    train_started_at = time.time()
+    print(f"\n  Starting training: {args.epochs} epochs  "
+          f"{n_batches_train:,} batches/epoch  "
+          f"log_interval={args.log_interval}  lr={args.lr}")
+
     for epoch in range(1, args.epochs + 1):
         # -- Memory guard check (background thread sets .triggered) --
         if mem_guard.triggered:
@@ -1379,9 +1390,14 @@ def main():
 
         # -- Training --
         model.train()
+        t0_epoch      = time.time()
         train_loss    = 0.0
         train_samples = 0
-        for xb_enc, xb_dec, yb in train_dl:
+        _gnorm_sum    = 0.0
+        _gnorm_max    = 0.0
+        _gnorm_count  = 0
+
+        for batch_idx, (xb_enc, xb_dec, yb) in enumerate(train_dl):
             xb_enc, xb_dec, yb = xb_enc.to(device), xb_dec.to(device), yb.to(device)
             logits = model(xb_enc, xb_dec)
             loss   = criterion(logits, yb)
@@ -1397,11 +1413,31 @@ def main():
             optimizer.step()
             train_loss    += loss.item() * xb_enc.size(0)
             train_samples += xb_enc.size(0)
+            _gv = _gnorm.item()
+            _gnorm_sum   += _gv
+            _gnorm_count += 1
+            _gnorm_max    = max(_gnorm_max, _gv)
+
+            # ── Intra-epoch progress print ─────────────────────────────
+            if args.log_interval > 0 and (batch_idx + 1) % args.log_interval == 0:
+                elapsed_b   = time.time() - t0_epoch
+                pct         = (batch_idx + 1) / n_batches_train
+                eta_min     = elapsed_b / pct * (1 - pct) / 60
+                running_loss = train_loss / max(train_samples, 1)
+                spd          = (batch_idx + 1) / max(elapsed_b, 1e-9)
+                print(f"    ep{epoch}  [{batch_idx+1:5d}/{n_batches_train}  "
+                      f"{pct*100:4.1f}%]  "
+                      f"loss={running_loss:.4f}  "
+                      f"grad={_gv:.3f}  "
+                      f"{spd:.1f}b/s  "
+                      f"ETA~{eta_min:.0f}m")
 
         if train_samples == 0:
             print(f"  Epoch {epoch:3d}/{args.epochs}  *** ALL TRAIN BATCHES NaN — stopping.")
             break
         train_loss /= train_samples
+        epoch_train_time = time.time() - t0_epoch
+        avg_gnorm = _gnorm_sum / max(_gnorm_count, 1)
 
         # -- Validation --
         model.eval()
@@ -1443,13 +1479,43 @@ def main():
             device=device,
         )
 
-        print(f"  Epoch {epoch:3d}/{args.epochs}  "
-              f"train={train_loss:.6f}  val={val_loss:.6f}  "
-              f"Lift@{args.val_lift_k}={val_lift_k:.2f}x  prec={val_prec_k:.4f}")
+        # ── Epoch summary ──────────────────────────────────────────────
+        elapsed_total = time.time() - train_started_at
+        eta_total_min = elapsed_total / epoch * (args.epochs - epoch) / 60
+        epoch_min     = epoch_train_time / 60
+
+        # GPU memory
+        if torch.cuda.is_available():
+            _gpu_alloc = torch.cuda.memory_allocated() / 1e9
+            _gpu_res   = torch.cuda.memory_reserved()  / 1e9
+            gpu_str    = f"  GPU {_gpu_alloc:.1f}/{_gpu_res:.1f} GB"
+        else:
+            gpu_str = "  GPU n/a (CPU mode)"
+
+        # System RAM
+        if _PSUTIL_OK:
+            _vm     = _psutil.virtual_memory()
+            ram_str = (f"  RAM {_vm.used/1e9:.0f}/{_vm.total/1e9:.0f} GB "
+                       f"({_vm.percent:.0f}%)")
+        else:
+            ram_str = ""
+
+        print(f"\n  ── Epoch {epoch:3d}/{args.epochs} ───────────────────────────")
+        print(f"  loss   train={train_loss:.6f}  val={val_loss:.6f}")
+        print(f"  metric Lift@{args.val_lift_k}={val_lift_k:.2f}x  "
+              f"prec@{args.val_lift_k}={val_prec_k:.4f}")
         if _lfire_n > 0:
-            print(f"           logit  fire={_lfire_sum/_lfire_n:+.3f}  "
+            print(f"  logits fire={_lfire_sum/_lfire_n:+.3f}  "
                   f"bg={_lbg_sum/_lbg_n:+.3f}  "
+                  f"gap={(_lfire_sum/_lfire_n - _lbg_sum/_lbg_n):.3f}  "
                   f"({_lfire_n:,} fire px / {_lbg_n:,} bg px)")
+        print(f"  grad   avg={avg_gnorm:.4f}  max={_gnorm_max:.4f}  "
+              f"({'CLIPPED' if _gnorm_max >= 0.99 else 'ok'})")
+        print(f"  time   epoch={epoch_min:.1f}m  "
+              f"elapsed={elapsed_total/60:.0f}m  "
+              f"ETA~{eta_total_min:.0f}m")
+        print(f"  sys   {gpu_str}{ram_str}")
+        print()
 
         # Save best checkpoint by val Lift@K  (aligned with final evaluation metric)
         if val_lift_k > best_val_lift_k:
