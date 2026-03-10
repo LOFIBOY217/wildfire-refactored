@@ -93,7 +93,6 @@ from src.models.s2s_hotspot import S2SHotspotTransformer
 # Channel names (for logging and diagnostics)
 CHANNEL_NAMES = ["FWI", "2t", "2d", "FFMC", "DMC", "DC", "BUI", "fire_clim"]
 N_CHANNELS    = len(CHANNEL_NAMES)   # 8
-METEO_SCALE   = 12.7   # int8 quantization: float16 [-10,10] → int8 [-127,127]
 
 
 # ------------------------------------------------------------------ #
@@ -122,8 +121,8 @@ class S2SHotspotDatasetMixed(Dataset):
         hs, he, ts, te = self.windows[win_i]
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
-        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32) * (1.0 / METEO_SCALE)
-        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32) * (1.0 / METEO_SCALE)
+        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
+        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
         y     = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
             torch.from_numpy(x_enc),
@@ -152,8 +151,8 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         hs, he, ts, te = self.windows[win_i]
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
-        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32) * (1.0 / METEO_SCALE)
-        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32) * (1.0 / METEO_SCALE)
+        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
+        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
         y     = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
             torch.from_numpy(x_enc),
@@ -320,31 +319,6 @@ def _transpose_tf_to_pf(tf_path, pf_path, T, n_patches, enc_dim,
     gc.collect()   # Windows: force release file handles before caller deletes the file
 
 
-def _convert_pf_to_int8(pf_path, p8_path, n_patches, T, enc_dim, chunk=500):
-    """
-    Convert an existing float16 patch-first memmap to int8 in-place on disk.
-    Reads _pf.dat in chunks, quantizes with METEO_SCALE, writes _p8.dat.
-    No TIF re-loading needed — ~30–60 min vs 5 hours from scratch.
-    """
-    print(f"  Converting float16 → int8  ({n_patches} patches × {T} × {enc_dim})")
-    src = np.memmap(pf_path, dtype='float16', mode='r',  shape=(n_patches, T, enc_dim))
-    dst = np.memmap(p8_path, dtype='int8',    mode='w+', shape=(n_patches, T, enc_dim))
-    t0  = time.time()
-    for i in range(0, n_patches, chunk):
-        j       = min(i + chunk, n_patches)
-        dst[i:j] = np.clip(
-            np.round(np.array(src[i:j]).astype(np.float32) * METEO_SCALE),
-            -128, 127
-        ).astype(np.int8)
-        if i % 5000 == 0 or j == n_patches:
-            pct = j / n_patches * 100
-            print(f"  int8 convert {j:6d}/{n_patches}  ({pct:.0f}%  {time.time()-t0:.0f}s)")
-    dst.flush()
-    del src, dst
-    gc.collect()
-    print(f"  int8 conversion done in {time.time()-t0:.0f}s  →  {p8_path}")
-
-
 class MemoryGuard(threading.Thread):
     """
     Background thread: polls system RAM every `interval` seconds.
@@ -357,13 +331,12 @@ class MemoryGuard(threading.Thread):
     """
 
     def __init__(self, limit_pct=90.0, interval=15,
-                 meteo_gb=0.0, fire_gb=0.0, num_workers=0, batch_size=128):
+                 meteo_gb=0.0, fire_gb=0.0, batch_size=128):
         super().__init__(daemon=True)
         self.limit_pct   = limit_pct
         self.interval    = interval
         self.meteo_gb    = meteo_gb
         self.fire_gb     = fire_gb
-        self.num_workers = num_workers
         self.batch_size  = batch_size
         self.triggered   = False        # set to True when threshold exceeded
         self._kill       = threading.Event()
@@ -383,7 +356,6 @@ class MemoryGuard(threading.Thread):
         if used_pct >= self.limit_pct and not self.triggered:
             self.triggered = True
             sep = "=" * 70
-            w   = self.num_workers
             print(f"\n{sep}")
             print(f"  ⚠  MEMORY GUARD TRIGGERED — training will stop after this epoch.")
             print(f"  RAM: {used_gb:.1f} GB used / {total_gb:.1f} GB total "
@@ -391,19 +363,14 @@ class MemoryGuard(threading.Thread):
             print(f"  Available: {avail_gb:.1f} GB")
             print()
             print(f"  Likely contributors:")
-            print(f"    meteo_patched  (int8 OS page-cache):  up to {self.meteo_gb:.0f} GB")
-            print(f"    fire_patched   (OS page-cache):       up to {self.fire_gb:.0f} GB")
-            if w > 0:
-                print(f"    DataLoader workers × {w}:             "
-                      f"~{w * (self.meteo_gb + self.fire_gb) * 0.03:.0f} GB  "
-                      f"(shared OS pages — should be small)")
-            print(f"    Model + optimizer + GPU activations:  ~2–4 GB")
+            print(f"    meteo_patched  (float16 OS page-cache): up to {self.meteo_gb:.0f} GB")
+            print(f"    fire_patched   (OS page-cache):         up to {self.fire_gb:.0f} GB")
+            print(f"    Model + optimizer + GPU activations:    ~2–4 GB")
+            print(f"    Other users on this machine:            check Task Manager")
             print()
             print(f"  Suggestions to reduce RAM:")
             print(f"    1) Lower --mem_limit_pct if you want an earlier warning")
-            print(f"    2) Drop --num_workers (currently {w}) to 0 or 2")
-            print(f"    3) Reboot between runs to flush OS page-cache")
-            print(f"       (_pf.dat is now auto-deleted after int8 conversion)")
+            print(f"    2) Reboot between runs to flush OS page-cache")
             print(f"{sep}\n")
 
     def shutdown(self):
@@ -479,12 +446,12 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 ce = min(cs + chunk, n_patches)
                 xb_enc = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[cs:ce, hs:he, :].astype(np.float32) * (1.0 / METEO_SCALE)
+                        meteo_patched[cs:ce, hs:he, :].astype(np.float32)
                     )
                 ).to(device)
                 xb_dec = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[cs:ce, ts:te, :].astype(np.float32) * (1.0 / METEO_SCALE)
+                        meteo_patched[cs:ce, ts:te, :].astype(np.float32)
                     )
                 ).to(device)
                 logits = model(xb_enc, xb_dec)  # (chunk, dec_days, P²)
@@ -778,10 +745,6 @@ def main():
     ap.add_argument("--cache_dir", type=str, default="outputs/cache",
                     help="Directory to cache the dilated fire_stack (.npy). "
                          "Set to '' to disable caching.")
-    ap.add_argument("--num_workers", type=int, default=0,
-                    help="DataLoader worker processes (default=0, single-process). "
-                         "Keep at 0 on Windows — spawn-based multiprocessing "
-                         "causes worker crashes with large memmap datasets.")
     ap.add_argument("--overwrite", action="store_true",
                     help="Force rebuild all caches (fire_stack, meteo memmap, fire_patched).")
     ap.add_argument("--mem_limit_pct", type=float, default=90.0,
@@ -1117,65 +1080,23 @@ def main():
         mmap_key   = (f"meteo_p{P}_C{N_CHANNELS}_T{T}"
                       f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
         mmap_path  = os.path.join(args.cache_dir, mmap_key)
-        p8_path    = mmap_path.replace("_pf.dat", "_p8.dat")   # int8 version
         stats_path = mmap_path.replace("_pf.dat", "_stats.npy")
     else:
         mmap_path  = None
-        p8_path    = None
         stats_path = None
 
     _stats_ok = stats_path and os.path.exists(stats_path)
 
-    if p8_path and os.path.exists(p8_path) and _stats_ok:
-        # ── Load existing int8 patch-first cache (preferred) ─────────
-        print(f"  Loading cached memmap (int8 patch-first): {p8_path}")
-        meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
+    if mmap_path and os.path.exists(mmap_path) and _stats_ok:
+        # ── Fast path: load existing float16 patch-first cache ───────
+        print(f"  Loading cached memmap (float16 patch-first): {mmap_path}")
+        meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
                                   shape=(n_patches, T, enc_dim))
-        # ── Clean up leftover float16 cache to free OS page-cache RAM ─
-        # _pf.dat (~238 GB) may linger on disk from a previous build run.
-        # Even though it is not opened, Windows keeps its pages in RAM,
-        # which can push total usage past the MemoryGuard threshold.
-        if mmap_path and os.path.exists(mmap_path):
-            try:
-                os.remove(mmap_path)
-                gc.collect()
-                _freed = n_patches * T * enc_dim * 2 / 1e9
-                print(f"  Cleaned up leftover float16 cache "
-                      f"({_freed:.0f} GB freed): "
-                      f"{os.path.basename(mmap_path)}")
-            except OSError as _e:
-                print(f"  [WARN] Could not delete leftover float16 cache: {_e}")
         _saved_stats  = np.load(stats_path)
         meteo_means   = _saved_stats[0]
         meteo_stds    = _saved_stats[1]
         print(f"  shape={meteo_patched.shape}  "
-              f"({os.path.getsize(p8_path)/1e9:.1f} GB on disk)")
-    elif (mmap_path and os.path.exists(mmap_path) and _stats_ok):
-        if p8_path and not os.path.exists(p8_path) and not args.overwrite:
-            # ── float16 exists but int8 does not → convert ───────────
-            _convert_pf_to_int8(mmap_path, p8_path, n_patches, T, enc_dim)
-            meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
-                                      shape=(n_patches, T, enc_dim))
-            # ── Delete _pf.dat: no longer needed; frees 238 GB RAM ───
-            try:
-                os.remove(mmap_path)
-                gc.collect()
-                _freed = n_patches * T * enc_dim * 2 / 1e9
-                print(f"  Deleted float16 cache ({_freed:.0f} GB freed): "
-                      f"{os.path.basename(mmap_path)}")
-            except OSError as _e:
-                print(f"  [WARN] Could not delete float16 cache: {_e}")
-        else:
-            # ── Load float16 cache (overwrite mode or no p8_path) ────
-            print(f"  Loading cached memmap (patch-first): {mmap_path}")
-            meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
-                                      shape=(n_patches, T, enc_dim))
-        _saved_stats  = np.load(stats_path)
-        meteo_means   = _saved_stats[0]
-        meteo_stds    = _saved_stats[1]
-        _src = p8_path if (p8_path and os.path.exists(p8_path)) else mmap_path
-        print(f"  shape={meteo_patched.shape}  "
-              f"({os.path.getsize(_src)/1e9:.1f} GB on disk)")
+              f"({os.path.getsize(mmap_path)/1e9:.1f} GB on disk)")
     else:
         # ── Build: stream day-by-day into time-first temp file,
         #          then transpose to patch-first final file ──────────
@@ -1217,7 +1138,7 @@ def main():
 
         if mmap_path:
             meteo_tf.flush()
-            del meteo_tf   # Windows: release write handle before transpose/delete
+            del meteo_tf   # Windows: release write handle before transpose
             gc.collect()
             np.save(stats_path, np.stack([meteo_means, meteo_stds]))
             print(f"  Saved time-first: {tf_path}  "
@@ -1229,41 +1150,17 @@ def main():
             os.remove(tf_path)
             print(f"  Saved patch-first: {mmap_path}  "
                   f"({os.path.getsize(mmap_path)/1e9:.1f} GB)")
-            # ── Immediately convert to int8 so Dataset dequantization is correct ──
-            if p8_path:
-                _convert_pf_to_int8(mmap_path, p8_path, n_patches, T, enc_dim)
-                meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
-                                          shape=(n_patches, T, enc_dim))
-                # ── Delete _pf.dat: no longer needed; frees ~238 GB RAM ──
-                # Deleting the file causes Windows to immediately reclaim
-                # the 238 GB of standby page-cache pages, preventing OOM
-                # when DataLoader workers start reading _p8.dat.
-                try:
-                    os.remove(mmap_path)
-                    gc.collect()
-                    _freed = n_patches * T * enc_dim * 2 / 1e9
-                    print(f"  Deleted float16 cache ({_freed:.0f} GB freed): "
-                          f"{os.path.basename(mmap_path)}")
-                except OSError as _e:
-                    print(f"  [WARN] Could not delete float16 cache: {_e}")
-            else:
-                meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
-                                          shape=(n_patches, T, enc_dim))
+            meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
+                                      shape=(n_patches, T, enc_dim))
         else:
-            # In-memory: transpose then quantize to int8 (consistent with Dataset dequantization)
+            # In-memory: transpose to patch-first float16
             _tmp = np.ascontiguousarray(meteo_tf.transpose(1, 0, 2))
             del meteo_tf; gc.collect()
-            meteo_patched = np.clip(
-                np.round(_tmp.astype(np.float32) * METEO_SCALE), -128, 127
-            ).astype(np.int8)
-            del _tmp; gc.collect()
+            meteo_patched = _tmp
 
     # ----------------------------------------------------------------
     # STEP 7  Patchify fire labels (uint8 disk memmap)
     # ----------------------------------------------------------------
-    # Using memmap instead of np.empty avoids duplicating 15 GB into every
-    # DataLoader worker process (Windows spawns separate processes; memmap
-    # workers share OS file pages → ~60 GB less RAM with num_workers=4).
     print("\n[STEP 7] Pre-computing fire patches (uint8)...")
     fire_gb = T * n_patches * out_dim / 1e9
     print(f"  fire_patched: ({T}, {n_patches}, {out_dim})  ≈ {fire_gb:.1f} GB uint8")
@@ -1371,14 +1268,13 @@ def main():
     # ----------------------------------------------------------------
     # Memory Guard  (background thread — starts now, checked each epoch)
     # ----------------------------------------------------------------
-    _meteo_guard_gb = (n_patches * T * enc_dim) / 1e9   # int8
-    _fire_guard_gb  = (T * n_patches * out_dim) / 1e9   # uint8
+    _meteo_guard_gb = (n_patches * T * enc_dim * 2) / 1e9   # float16
+    _fire_guard_gb  = (T * n_patches * out_dim) / 1e9        # uint8
     mem_guard = MemoryGuard(
         limit_pct   = args.mem_limit_pct,
         interval    = 15,
         meteo_gb    = _meteo_guard_gb,
         fire_gb     = _fire_guard_gb,
-        num_workers = args.num_workers,
         batch_size  = args.batch_size,
     )
     if _PSUTIL_OK and args.mem_limit_pct > 0:
@@ -1438,11 +1334,9 @@ def main():
           f"(enc_dim={patch_dim_enc}  dec_dim={patch_dim_dec}  out_dim={patch_dim_out})")
 
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                          num_workers=args.num_workers, pin_memory=True,
-                          persistent_workers=(args.num_workers > 0))
+                          num_workers=0, pin_memory=True)
     val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
-                          num_workers=args.num_workers, pin_memory=True,
-                          persistent_workers=(args.num_workers > 0))
+                          num_workers=0, pin_memory=True)
 
     # ----------------------------------------------------------------
     # STEP 9  Build model & train
@@ -1625,12 +1519,12 @@ def main():
                 ce = min(cs + chunk, n_p)
                 xb_enc = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[cs:ce, enc_start:enc_end, :].astype(np.float32) * (1.0 / METEO_SCALE)
+                        meteo_patched[cs:ce, enc_start:enc_end, :].astype(np.float32)
                     )
                 ).to(device)
                 xb_dec = torch.from_numpy(
                     np.ascontiguousarray(
-                        meteo_patched[cs:ce, dec_start:dec_end, :].astype(np.float32) * (1.0 / METEO_SCALE)
+                        meteo_patched[cs:ce, dec_start:dec_end, :].astype(np.float32)
                     )
                 ).to(device)
                 logits = model(xb_enc, xb_dec)
