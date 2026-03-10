@@ -778,9 +778,10 @@ def main():
     ap.add_argument("--cache_dir", type=str, default="outputs/cache",
                     help="Directory to cache the dilated fire_stack (.npy). "
                          "Set to '' to disable caching.")
-    ap.add_argument("--num_workers", type=int, default=4,
-                    help="DataLoader worker processes (default=4). "
-                         "Set to 0 to disable multiprocessing.")
+    ap.add_argument("--num_workers", type=int, default=0,
+                    help="DataLoader worker processes (default=0, single-process). "
+                         "Keep at 0 on Windows — spawn-based multiprocessing "
+                         "causes worker crashes with large memmap datasets.")
     ap.add_argument("--overwrite", action="store_true",
                     help="Force rebuild all caches (fire_stack, meteo memmap, fire_patched).")
     ap.add_argument("--mem_limit_pct", type=float, default=90.0,
