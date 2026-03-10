@@ -118,7 +118,7 @@ class S2SHotspotDatasetMixed(Dataset):
         return len(self.all_pairs)
 
     def __getitem__(self, idx):
-        win_i, patch_i = self.all_pairs[idx]
+        win_i, patch_i = int(self.all_pairs[idx, 0]), int(self.all_pairs[idx, 1])
         hs, he, ts, te = self.windows[win_i]
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
@@ -1334,15 +1334,23 @@ def main():
     chosen      = rng.choice(neg_flat, size=n_neg_target, replace=False)
     neg_wins    = (chosen // n_patches).astype(np.int32)
     neg_patches = (chosen %  n_patches).astype(np.int32)
-    neg_pairs   = list(zip(neg_wins.tolist(), neg_patches.tolist()))
-
-    all_pairs = list(pos_pairs) + neg_pairs
-    rng.shuffle(all_pairs)
-    print(f"  Neg pairs sampled: {len(neg_pairs):,}  (neg_ratio={args.neg_ratio})")
-    print(f"  Total train pairs: {len(all_pairs):,}")
+    # Build all_pairs as a compact numpy (N, 2) int32 array instead of a
+    # Python list of tuples.  12.7M Python tuples ≈ 1.4 GB of Python objects
+    # and are very slow to pickle when spawning DataLoader workers on Windows.
+    # A numpy (N, 2) int32 array is ≈ 100 MB and pickles as a single binary blob.
+    pos_arr  = np.array(pos_pairs,   dtype=np.int32)             # (pos_count, 2)
+    neg_arr  = np.column_stack([neg_wins, neg_patches]).astype(np.int32)  # (neg_count, 2)
+    all_pairs = np.vstack([pos_arr, neg_arr])                    # (N, 2)  ~100 MB
+    rng.shuffle(all_pairs)                                       # shuffle rows in-place
+    del pos_arr, neg_arr
+    gc.collect()
+    n_neg = int(neg_wins.shape[0])
+    print(f"  Neg pairs sampled: {n_neg:,}  (neg_ratio={args.neg_ratio})")
+    print(f"  Total train pairs: {len(all_pairs):,}  "
+          f"(numpy int32, {all_pairs.nbytes/1e6:.0f} MB — fast pickle)")
     print(f"  Sampling time: {time.time()-t0_filter:.0f}s")
     run_meta["pos_pairs"]   = len(pos_pairs)
-    run_meta["neg_pairs"]   = len(neg_pairs)
+    run_meta["neg_pairs"]   = n_neg
     run_meta["total_pairs"] = len(all_pairs)
 
     # ----------------------------------------------------------------
@@ -1382,7 +1390,7 @@ def main():
         p  = int(pf.sum())
         pos_pixels        += p
         neg_pixels_in_pos += pf.size - p
-    neg_pixels_total = neg_pixels_in_pos + len(neg_pairs) * out_dim * decoder_days
+    neg_pixels_total = neg_pixels_in_pos + n_neg * out_dim * decoder_days
     raw_ratio        = neg_pixels_total / max(pos_pixels, 1)
     pos_weight_val   = min(raw_ratio, args.pos_weight_cap)
     print(f"  pos_pixels : {pos_pixels:,}")
