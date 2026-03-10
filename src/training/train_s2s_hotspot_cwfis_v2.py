@@ -1130,6 +1130,20 @@ def main():
         print(f"  Loading cached memmap (int8 patch-first): {p8_path}")
         meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
                                   shape=(n_patches, T, enc_dim))
+        # ── Clean up leftover float16 cache to free OS page-cache RAM ─
+        # _pf.dat (~238 GB) may linger on disk from a previous build run.
+        # Even though it is not opened, Windows keeps its pages in RAM,
+        # which can push total usage past the MemoryGuard threshold.
+        if mmap_path and os.path.exists(mmap_path):
+            try:
+                os.remove(mmap_path)
+                gc.collect()
+                _freed = n_patches * T * enc_dim * 2 / 1e9
+                print(f"  Cleaned up leftover float16 cache "
+                      f"({_freed:.0f} GB freed): "
+                      f"{os.path.basename(mmap_path)}")
+            except OSError as _e:
+                print(f"  [WARN] Could not delete leftover float16 cache: {_e}")
         _saved_stats  = np.load(stats_path)
         meteo_means   = _saved_stats[0]
         meteo_stds    = _saved_stats[1]
