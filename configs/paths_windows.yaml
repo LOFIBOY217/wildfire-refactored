@@ -19,6 +19,13 @@ paths:
   cape_dir:   "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\era5_cape"
   # V2 model: static fire-frequency climatology
   fire_climatology_tif: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\fire_climatology.tif"
+  # New data sources (FWI gaps)
+  lightning_dir:       "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\lightning"
+  ndvi_dir:            "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ndvi_data"
+  evi_dir:             "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\evi_data"
+  terrain_dir:         "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\terrain"
+  burn_scars_dir:      "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\burn_scars"
+  climate_indices_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\climate_indices\\climate_indices.csv"
   ciffc_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\ciffc\\ciffc_logistic_20230505_20250821.csv"
   hotspot_csv: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\data\\hotspot\\hotspot_2018_2025.csv"
   output_dir: "G:\\users_ra\\Jiaqi_Huang\\Project\\wildfire-refactored\\outputs"

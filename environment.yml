@@ -30,6 +30,11 @@ dependencies:
   - geopandas
   - libpysal
   - spreg
+  # New data download dependencies
+  - boto3        # AWS S3 access (used by s3fs for GOES GLM)
+  - s3fs         # S3 filesystem interface (GOES-16/17/18 GLM lightning)
+  - earthaccess  # NASA Earthdata unified download (MODIS NDVI + SRTM slope)
+  - pyhdf        # HDF4 reader (MODIS MOD13A2 format)
   - pip:
     # GPU PyTorch must be installed via pip with the CUDA index URL.
     # Run manually after conda env create:
