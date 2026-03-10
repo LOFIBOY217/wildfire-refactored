@@ -402,8 +402,8 @@ class MemoryGuard(threading.Thread):
             print(f"  Suggestions to reduce RAM:")
             print(f"    1) Lower --mem_limit_pct if you want an earlier warning")
             print(f"    2) Drop --num_workers (currently {w}) to 0 or 2")
-            print(f"    3) Delete _pf.dat once _p8.dat is confirmed  (free 238 GB disk)")
-            print(f"    4) Reboot between runs to flush OS page-cache")
+            print(f"    3) Reboot between runs to flush OS page-cache")
+            print(f"       (_pf.dat is now auto-deleted after int8 conversion)")
             print(f"{sep}\n")
 
     def shutdown(self):
@@ -1141,6 +1141,15 @@ def main():
             _convert_pf_to_int8(mmap_path, p8_path, n_patches, T, enc_dim)
             meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
                                       shape=(n_patches, T, enc_dim))
+            # ── Delete _pf.dat: no longer needed; frees 238 GB RAM ───
+            try:
+                os.remove(mmap_path)
+                gc.collect()
+                _freed = n_patches * T * enc_dim * 2 / 1e9
+                print(f"  Deleted float16 cache ({_freed:.0f} GB freed): "
+                      f"{os.path.basename(mmap_path)}")
+            except OSError as _e:
+                print(f"  [WARN] Could not delete float16 cache: {_e}")
         else:
             # ── Load float16 cache (overwrite mode or no p8_path) ────
             print(f"  Loading cached memmap (patch-first): {mmap_path}")
@@ -1210,6 +1219,18 @@ def main():
                 _convert_pf_to_int8(mmap_path, p8_path, n_patches, T, enc_dim)
                 meteo_patched = np.memmap(p8_path, dtype='int8', mode='r',
                                           shape=(n_patches, T, enc_dim))
+                # ── Delete _pf.dat: no longer needed; frees ~238 GB RAM ──
+                # Deleting the file causes Windows to immediately reclaim
+                # the 238 GB of standby page-cache pages, preventing OOM
+                # when DataLoader workers start reading _p8.dat.
+                try:
+                    os.remove(mmap_path)
+                    gc.collect()
+                    _freed = n_patches * T * enc_dim * 2 / 1e9
+                    print(f"  Deleted float16 cache ({_freed:.0f} GB freed): "
+                          f"{os.path.basename(mmap_path)}")
+                except OSError as _e:
+                    print(f"  [WARN] Could not delete float16 cache: {_e}")
             else:
                 meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
                                           shape=(n_patches, T, enc_dim))
