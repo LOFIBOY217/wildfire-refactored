@@ -52,8 +52,15 @@ import os
 import sys
 import time
 import atexit
+import threading
 from datetime import date, timedelta
 from datetime import datetime as dt
+
+try:
+    import psutil as _psutil
+    _PSUTIL_OK = True
+except ImportError:
+    _PSUTIL_OK = False
 
 import numpy as np
 import rasterio
@@ -336,6 +343,71 @@ def _convert_pf_to_int8(pf_path, p8_path, n_patches, T, enc_dim, chunk=500):
     del src, dst
     gc.collect()
     print(f"  int8 conversion done in {time.time()-t0:.0f}s  →  {p8_path}")
+
+
+class MemoryGuard(threading.Thread):
+    """
+    Background thread: polls system RAM every `interval` seconds.
+    If usage exceeds `limit_pct`, sets self.triggered and prints a
+    diagnosis report.  The training loop checks self.triggered each
+    epoch and stops gracefully.
+
+    Requires psutil (pip install psutil).  If psutil is unavailable the
+    guard is created but does nothing (no AttributeError in caller code).
+    """
+
+    def __init__(self, limit_pct=90.0, interval=15,
+                 meteo_gb=0.0, fire_gb=0.0, num_workers=0, batch_size=128):
+        super().__init__(daemon=True)
+        self.limit_pct   = limit_pct
+        self.interval    = interval
+        self.meteo_gb    = meteo_gb
+        self.fire_gb     = fire_gb
+        self.num_workers = num_workers
+        self.batch_size  = batch_size
+        self.triggered   = False        # set to True when threshold exceeded
+        self._kill       = threading.Event()
+
+    def run(self):
+        if not _PSUTIL_OK:
+            return
+        while not self._kill.wait(self.interval):
+            self._check()
+
+    def _check(self):
+        vm        = _psutil.virtual_memory()
+        used_pct  = vm.percent
+        used_gb   = vm.used  / 1e9
+        total_gb  = vm.total / 1e9
+        avail_gb  = vm.available / 1e9
+        if used_pct >= self.limit_pct and not self.triggered:
+            self.triggered = True
+            sep = "=" * 70
+            w   = self.num_workers
+            print(f"\n{sep}")
+            print(f"  ⚠  MEMORY GUARD TRIGGERED — training will stop after this epoch.")
+            print(f"  RAM: {used_gb:.1f} GB used / {total_gb:.1f} GB total "
+                  f"({used_pct:.1f}%  ≥  limit {self.limit_pct:.0f}%)")
+            print(f"  Available: {avail_gb:.1f} GB")
+            print()
+            print(f"  Likely contributors:")
+            print(f"    meteo_patched  (int8 OS page-cache):  up to {self.meteo_gb:.0f} GB")
+            print(f"    fire_patched   (OS page-cache):       up to {self.fire_gb:.0f} GB")
+            if w > 0:
+                print(f"    DataLoader workers × {w}:             "
+                      f"~{w * (self.meteo_gb + self.fire_gb) * 0.03:.0f} GB  "
+                      f"(shared OS pages — should be small)")
+            print(f"    Model + optimizer + GPU activations:  ~2–4 GB")
+            print()
+            print(f"  Suggestions to reduce RAM:")
+            print(f"    1) Lower --mem_limit_pct if you want an earlier warning")
+            print(f"    2) Drop --num_workers (currently {w}) to 0 or 2")
+            print(f"    3) Delete _pf.dat once _p8.dat is confirmed  (free 238 GB disk)")
+            print(f"    4) Reboot between runs to flush OS page-cache")
+            print(f"{sep}\n")
+
+    def shutdown(self):
+        self._kill.set()
 
 
 def _load_fire_clim(tif_path, expected_h, expected_w):
@@ -711,6 +783,9 @@ def main():
                          "Set to 0 to disable multiprocessing.")
     ap.add_argument("--overwrite", action="store_true",
                     help="Force rebuild all caches (fire_stack, meteo memmap, fire_patched).")
+    ap.add_argument("--mem_limit_pct", type=float, default=90.0,
+                    help="Stop training when system RAM exceeds this %% (default=90). "
+                         "Requires psutil (pip install psutil). Set to 0 to disable.")
 
     # Forecast
     ap.add_argument("--pred_batch_size", type=int, default=256)
@@ -1250,6 +1325,31 @@ def main():
     run_meta["total_pairs"] = len(all_pairs)
 
     # ----------------------------------------------------------------
+    # Memory Guard  (background thread — starts now, checked each epoch)
+    # ----------------------------------------------------------------
+    _meteo_guard_gb = (n_patches * T * enc_dim) / 1e9   # int8
+    _fire_guard_gb  = (T * n_patches * out_dim) / 1e9   # uint8
+    mem_guard = MemoryGuard(
+        limit_pct   = args.mem_limit_pct,
+        interval    = 15,
+        meteo_gb    = _meteo_guard_gb,
+        fire_gb     = _fire_guard_gb,
+        num_workers = args.num_workers,
+        batch_size  = args.batch_size,
+    )
+    if _PSUTIL_OK and args.mem_limit_pct > 0:
+        mem_guard.start()
+        vm0 = _psutil.virtual_memory()
+        print(f"\n  MemoryGuard active: limit={args.mem_limit_pct:.0f}%  "
+              f"current={vm0.percent:.1f}%  "
+              f"({vm0.used/1e9:.1f}/{vm0.total/1e9:.1f} GB)")
+    else:
+        if not _PSUTIL_OK:
+            print("\n  MemoryGuard disabled (psutil not installed — run: pip install psutil)")
+        else:
+            print("\n  MemoryGuard disabled (--mem_limit_pct=0)")
+
+    # ----------------------------------------------------------------
     # STEP 8  Compute pos_weight; build BCE criterion
     # ----------------------------------------------------------------
     print("\n[STEP 8] Computing BCE pos_weight from pixel counts...")
@@ -1334,6 +1434,11 @@ def main():
     best_ckpt      = os.path.join(ckpt_dir, "best_model.pt")
 
     for epoch in range(1, args.epochs + 1):
+        # -- Memory guard check (background thread sets .triggered) --
+        if mem_guard.triggered:
+            print(f"  Epoch {epoch}: MemoryGuard triggered — stopping training early.")
+            break
+
         # -- Training --
         model.train()
         train_loss    = 0.0
@@ -1434,6 +1539,7 @@ def main():
           f"(val_loss at that epoch: {best_val_loss:.6f})  saved → {best_ckpt}")
     run_meta["best_val_lift_k"] = best_val_lift_k
     run_meta["best_val_loss"]   = best_val_loss
+    mem_guard.shutdown()   # stop background memory monitor
 
     # ----------------------------------------------------------------
     # STEP 10  Generate forecast GeoTIFFs
