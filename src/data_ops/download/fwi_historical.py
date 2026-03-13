@@ -396,6 +396,10 @@ Examples:
     parser.add_argument('--workers', type=int, default=1,
                         help='Parallel download threads (default=1 sequential). '
                              'Recommended: 3-4. Each thread opens its own CDS client.')
+    parser.add_argument('--convert-only', action='store_true',
+                        help='Skip CDS download entirely; convert existing NC files to TIF only. '
+                             'Use this on HPC compute nodes that have no internet access '
+                             'when NC files are already downloaded on a login node.')
 
     args = parser.parse_args()
 
@@ -456,56 +460,68 @@ Examples:
     print(f"Reproject: {'no' if args.no_reproject else 'yes'}")
     print("=" * 60)
 
-    try:
-        import cdsapi
-    except ImportError:
-        print("\n[ERROR] cdsapi not installed. Run: pip install cdsapi")
-        sys.exit(1)
+    if not args.convert_only:
+        try:
+            import cdsapi
+        except ImportError:
+            print("\n[ERROR] cdsapi not installed. Run: pip install cdsapi")
+            sys.exit(1)
 
-    # Build CDS client kwargs.
-    # cdsapi >= 1.0 (post-2024 ECMWF migration) requires BOTH url AND key;
-    # without url it falls back to ~/.cdsapirc which may not exist on the server.
-    # CEMS datasets (cems-fire-historical-v1) moved to EWDS in Sep 2024.
-    # Must use EWDS endpoint, NOT the regular CDS endpoint.
-    DEFAULT_CDS_URL = "https://ewds.climate.copernicus.eu/api"
-    client_kwargs = {}
-    client_kwargs['url'] = args.cds_url if args.cds_url else DEFAULT_CDS_URL
-    if args.cds_key:
-        client_kwargs['key'] = args.cds_key
-    elif os.environ.get('CDS_API_KEY'):
-        client_kwargs['key'] = os.environ['CDS_API_KEY']
+        # Build CDS client kwargs.
+        # cdsapi >= 1.0 (post-2024 ECMWF migration) requires BOTH url AND key;
+        # without url it falls back to ~/.cdsapirc which may not exist on the server.
+        # CEMS datasets (cems-fire-historical-v1) moved to EWDS in Sep 2024.
+        # Must use EWDS endpoint, NOT the regular CDS endpoint.
+        DEFAULT_CDS_URL = "https://ewds.climate.copernicus.eu/api"
+        client_kwargs = {}
+        client_kwargs['url'] = args.cds_url if args.cds_url else DEFAULT_CDS_URL
+        if args.cds_key:
+            client_kwargs['key'] = args.cds_key
+        elif os.environ.get('CDS_API_KEY'):
+            client_kwargs['key'] = os.environ['CDS_API_KEY']
+        else:
+            client_kwargs['key'] = DEFAULT_CDS_API_KEY
+
+        try:
+            client = cdsapi.Client(**client_kwargs)
+        except Exception as e:
+            print(f"\n[ERROR] Cannot create CDS client: {e}")
+            print("Possible fixes:")
+            print("  1. Pass key explicitly:  --cds-key YOUR_KEY")
+            print("  2. Set env var:          export CDS_API_KEY=YOUR_KEY")
+            print("  3. Create ~/.cdsapirc with:")
+            print("       url: https://cds.climate.copernicus.eu/api")
+            print("       key: YOUR_KEY")
+            print("  4. Accept the dataset licence at:")
+            print("     https://cds.climate.copernicus.eu/datasets/cems-fire-historical-v1")
+            sys.exit(1)
+
+        # Step 1: Download NetCDFs
+        print("\n--- STEP 1: Downloading from CDS ---\n")
+        if args.workers > 1:
+            nc_files = download_fwi_range_parallel(
+                client_kwargs, start_year, end_year, args.months, nc_dir,
+                workers=args.workers,
+            )
+        else:
+            nc_files = download_fwi_range(client, start_year, end_year, args.months, nc_dir)
+
+        if not nc_files:
+            print("\n[ERROR] No files downloaded!")
+            sys.exit(1)
+
+        print(f"\nDownloaded {len(nc_files)} NetCDF files")
+
     else:
-        client_kwargs['key'] = DEFAULT_CDS_API_KEY
-
-    try:
-        client = cdsapi.Client(**client_kwargs)
-    except Exception as e:
-        print(f"\n[ERROR] Cannot create CDS client: {e}")
-        print("Possible fixes:")
-        print("  1. Pass key explicitly:  --cds-key YOUR_KEY")
-        print("  2. Set env var:          export CDS_API_KEY=YOUR_KEY")
-        print("  3. Create ~/.cdsapirc with:")
-        print("       url: https://cds.climate.copernicus.eu/api")
-        print("       key: YOUR_KEY")
-        print("  4. Accept the dataset licence at:")
-        print("     https://cds.climate.copernicus.eu/datasets/cems-fire-historical-v1")
-        sys.exit(1)
-
-    # Step 1: Download NetCDFs
-    print("\n--- STEP 1: Downloading from CDS ---\n")
-    if args.workers > 1:
-        nc_files = download_fwi_range_parallel(
-            client_kwargs, start_year, end_year, args.months, nc_dir,
-            workers=args.workers,
-        )
-    else:
-        nc_files = download_fwi_range(client, start_year, end_year, args.months, nc_dir)
-
-    if not nc_files:
-        print("\n[ERROR] No files downloaded!")
-        sys.exit(1)
-
-    print(f"\nDownloaded {len(nc_files)} NetCDF files")
+        # --convert-only: skip CDS entirely, use existing NC files
+        # (compute nodes have no internet access)
+        nc_files = sorted(nc_dir.glob("fwi_components_*.nc"))
+        print(f"\n--- CONVERT-ONLY MODE (no internet needed) ---")
+        print(f"Found {len(nc_files)} NC files in {nc_dir}")
+        if not nc_files:
+            print(f"\n[ERROR] No NC files found in {nc_dir}")
+            print("       Run without --convert-only on a login node first to download NC files.")
+            sys.exit(1)
 
     # Step 2: Convert to daily GeoTIFFs
     print("\n--- STEP 2: Converting to daily GeoTIFFs ---\n")
