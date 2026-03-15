@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
 
-module load StdEnv/2023 cuda/12.6
+module load StdEnv/2023 gcc/12.3 cuda/12.2
 
 mkdir -p /scratch/jiaqi217/logs
 
