@@ -1339,9 +1339,11 @@ def main():
           f"(enc_dim={patch_dim_enc}  dec_dim={patch_dim_dec}  out_dim={patch_dim_out})")
 
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                          pin_memory=True)
+                          pin_memory=True, num_workers=args.num_workers,
+                          persistent_workers=(args.num_workers > 0))
     val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
-                          pin_memory=True)
+                          pin_memory=True, num_workers=args.num_workers,
+                          persistent_workers=(args.num_workers > 0))
 
     # ----------------------------------------------------------------
     # STEP 9  Build model & train
