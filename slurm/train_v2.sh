@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
 
-module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5
+module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1
 source $SCRATCH/venv-wildfire/bin/activate
 
 mkdir -p /scratch/jiaqi217/logs
@@ -18,7 +18,7 @@ PYTHON=$SCRATCH/venv-wildfire/bin/python
 
 cd $SCRATCH/wildfire-refactored
 export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
-export PROJ_DATA=$SCRATCH/venv-wildfire/lib/python3.11/site-packages/pyproj/proj_dir/share/proj
+export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v4/Compiler/gcccore/proj/9.4.1/share/proj
 
 # Preflight checks
 echo "=== PREFLIGHT ==="
