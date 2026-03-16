@@ -12,9 +12,9 @@
 module load StdEnv/2023 gcc/12.3 cuda/12.2
 
 # Fix missing libcpupower.so.0 symlink on compute nodes
-mkdir -p $HOME/lib
-ln -sf /usr/lib64/libcpupower.so.0.0.1 $HOME/lib/libcpupower.so.0
-export LD_LIBRARY_PATH=$HOME/lib:$LD_LIBRARY_PATH
+mkdir -p $SCRATCH/lib
+ln -sf /usr/lib64/libcpupower.so.0.0.1 $SCRATCH/lib/libcpupower.so.0
+export LD_LIBRARY_PATH=$SCRATCH/lib:$LD_LIBRARY_PATH
 
 mkdir -p /scratch/jiaqi217/logs
 
@@ -27,7 +27,7 @@ echo "=== PREFLIGHT ==="
 echo "Node     : $(hostname)"
 echo "SCRATCH  : $SCRATCH"
 echo "LD_PATH  : $LD_LIBRARY_PATH"
-echo "libcpu   : $(ls -la $HOME/lib/libcpupower.so.0 2>/dev/null || echo MISSING)"
+echo "libcpu   : $(ls -la $SCRATCH/lib/libcpupower.so.0 2>/dev/null || echo MISSING)"
 $PYTHON -c "import torch;    print('torch    :', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
 $PYTHON -c "import rasterio; print('rasterio :', rasterio.__version__)" || exit 1
 $PYTHON -c "import scipy;    print('scipy    :', scipy.__version__)"    || exit 1
