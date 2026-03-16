@@ -22,6 +22,18 @@ PYTHON=$SCRATCH/miniforge3/envs/wildfore-r/bin/python
 
 cd $SCRATCH/wildfire-refactored
 
+# Preflight checks
+echo "=== PREFLIGHT ==="
+echo "Node     : $(hostname)"
+echo "SCRATCH  : $SCRATCH"
+echo "LD_PATH  : $LD_LIBRARY_PATH"
+echo "libcpu   : $(ls -la $HOME/lib/libcpupower.so.0 2>/dev/null || echo MISSING)"
+$PYTHON -c "import torch;    print('torch    :', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
+$PYTHON -c "import rasterio; print('rasterio :', rasterio.__version__)" || exit 1
+$PYTHON -c "import scipy;    print('scipy    :', scipy.__version__)"    || exit 1
+$PYTHON -c "import numpy;    print('numpy    :', numpy.__version__)"    || exit 1
+echo "=== PREFLIGHT OK ==="
+
 CUDA_VISIBLE_DEVICES=0 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_trillium.yaml \
   --num_workers 12 \
