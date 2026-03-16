@@ -11,6 +11,11 @@
 
 module load StdEnv/2023 gcc/12.3 cuda/12.2
 
+# Fix missing libcpupower.so.0 symlink on compute nodes
+mkdir -p $HOME/lib
+ln -sf /usr/lib64/libcpupower.so.0.0.1 $HOME/lib/libcpupower.so.0
+export LD_LIBRARY_PATH=$HOME/lib:$LD_LIBRARY_PATH
+
 mkdir -p /scratch/jiaqi217/logs
 
 PYTHON=$SCRATCH/miniforge3/envs/wildfore-r/bin/python
