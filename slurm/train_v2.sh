@@ -9,25 +9,19 @@
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
 
-module load StdEnv/2023 gcc/12.3 cuda/12.2
-
-# Fix missing libcpupower.so.0 symlink on compute nodes
-mkdir -p $SCRATCH/lib
-ln -sf /usr/lib64/libcpupower.so.0.0.1 $SCRATCH/lib/libcpupower.so.0
-export LD_LIBRARY_PATH=$SCRATCH/lib:$LD_LIBRARY_PATH
+module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5
+source $SCRATCH/venv-wildfire/bin/activate
 
 mkdir -p /scratch/jiaqi217/logs
 
-PYTHON=$SCRATCH/miniforge3/envs/wildfore-r/bin/python
+PYTHON=$SCRATCH/venv-wildfire/bin/python
 
 cd $SCRATCH/wildfire-refactored
 
 # Preflight checks
 echo "=== PREFLIGHT ==="
 echo "Node     : $(hostname)"
-echo "SCRATCH  : $SCRATCH"
-echo "LD_PATH  : $LD_LIBRARY_PATH"
-echo "libcpu   : $(ls -la $SCRATCH/lib/libcpupower.so.0 2>/dev/null || echo MISSING)"
+echo "Python   : $(which python)"
 $PYTHON -c "import torch;    print('torch    :', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
 $PYTHON -c "import rasterio; print('rasterio :', rasterio.__version__)" || exit 1
 $PYTHON -c "import scipy;    print('scipy    :', scipy.__version__)"    || exit 1
