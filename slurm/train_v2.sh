@@ -17,6 +17,7 @@ mkdir -p /scratch/jiaqi217/logs
 PYTHON=$SCRATCH/venv-wildfire/bin/python
 
 cd $SCRATCH/wildfire-refactored
+export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
 
 # Preflight checks
 echo "=== PREFLIGHT ==="
