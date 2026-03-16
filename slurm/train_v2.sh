@@ -18,6 +18,7 @@ PYTHON=$SCRATCH/venv-wildfire/bin/python
 
 cd $SCRATCH/wildfire-refactored
 export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
+export PROJ_DATA=$SCRATCH/venv-wildfire/lib/python3.11/site-packages/pyproj/proj_dir/share/proj
 
 # Preflight checks
 echo "=== PREFLIGHT ==="

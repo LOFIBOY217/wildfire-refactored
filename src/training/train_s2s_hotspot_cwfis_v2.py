@@ -737,6 +737,7 @@ def main():
     # Training
     ap.add_argument("--epochs",       type=int,   default=30)
     ap.add_argument("--batch_size",   type=int,   default=128)
+    ap.add_argument("--num_workers",  type=int,   default=4)
     ap.add_argument("--lr",           type=float, default=1e-4)
     ap.add_argument("--seed",         type=int,   default=42)
     ap.add_argument("--neg_ratio",    type=float, default=20.0)
