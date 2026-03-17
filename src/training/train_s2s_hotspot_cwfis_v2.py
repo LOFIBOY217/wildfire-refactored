@@ -738,6 +738,8 @@ def main():
     ap.add_argument("--epochs",       type=int,   default=30)
     ap.add_argument("--batch_size",   type=int,   default=128)
     ap.add_argument("--num_workers",  type=int,   default=4)
+    ap.add_argument("--val_max_batches", type=int, default=500,
+                    help="Max val batches per epoch (0=full). Default 500 (~30s).")
     ap.add_argument("--lr",           type=float, default=1e-4)
     ap.add_argument("--seed",         type=int,   default=42)
     ap.add_argument("--neg_ratio",    type=float, default=20.0)
@@ -1449,7 +1451,9 @@ def main():
         _lfire_sum, _lfire_n = 0.0, 0
         _lbg_sum,   _lbg_n   = 0.0, 0
         with torch.no_grad():
-            for xb_enc, xb_dec, yb in val_dl:
+            for _val_bi, (xb_enc, xb_dec, yb) in enumerate(val_dl):
+                if args.val_max_batches > 0 and _val_bi >= args.val_max_batches:
+                    break
                 xb_enc, xb_dec, yb = xb_enc.to(device), xb_dec.to(device), yb.to(device)
                 logits_v = model(xb_enc, xb_dec)
                 vl = criterion(logits_v, yb)
