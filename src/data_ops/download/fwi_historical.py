@@ -236,24 +236,20 @@ def nc_to_daily_tifs(nc_path, var_dirs, reproject_to_fwi=True, fwi_reference=Non
     Returns:
         int: Total number of TIF files written across all variables
     """
-    import netCDF4
+    import xarray as xr
     import rasterio
     from rasterio.transform import from_bounds
     from rasterio.warp import reproject, Resampling
 
-    ds = netCDF4.Dataset(str(nc_path))
+    ds = xr.open_dataset(str(nc_path), engine='scipy')
 
     # Get time, lat, lon
-    time_var = ds.variables['time']
-    times = netCDF4.num2date(
-        time_var[:], time_var.units,
-        time_var.calendar if hasattr(time_var, 'calendar') else 'standard'
-    )
+    times = ds['time'].values  # numpy datetime64 array
 
-    lat_name = 'latitude' if 'latitude' in ds.variables else 'lat'
-    lon_name = 'longitude' if 'longitude' in ds.variables else 'lon'
-    lats = ds.variables[lat_name][:]
-    lons = ds.variables[lon_name][:]
+    lat_name = 'latitude' if 'latitude' in ds else 'lat'
+    lon_name = 'longitude' if 'longitude' in ds else 'lon'
+    lats = ds[lat_name].values
+    lons = ds[lon_name].values
 
     lat_min, lat_max = float(lats.min()), float(lats.max())
     lon_min, lon_max = float(lons.min()), float(lons.max())
@@ -277,12 +273,8 @@ def nc_to_daily_tifs(nc_path, var_dirs, reproject_to_fwi=True, fwi_reference=Non
         reproject_to_fwi = False
 
     # Build date strings once
-    date_strs = []
-    for dt in times:
-        if hasattr(dt, 'strftime'):
-            date_strs.append(dt.strftime("%Y%m%d"))
-        else:
-            date_strs.append(str(dt)[:10].replace('-', ''))
+    import pandas as pd
+    date_strs = [pd.Timestamp(t).strftime("%Y%m%d") for t in times]
 
     total_count = 0
 
@@ -295,7 +287,7 @@ def nc_to_daily_tifs(nc_path, var_dirs, reproject_to_fwi=True, fwi_reference=Non
         # Find the variable name actually used inside this NetCDF
         nc_var_name = None
         for candidate in nc_candidates:
-            if candidate in ds.variables:
+            if candidate in ds:
                 nc_var_name = candidate
                 break
         if nc_var_name is None:
@@ -303,8 +295,7 @@ def nc_to_daily_tifs(nc_path, var_dirs, reproject_to_fwi=True, fwi_reference=Non
                   f"(tried: {nc_candidates}), skipping")
             continue
 
-        var_data = ds.variables[nc_var_name]  # [time, lat, lon]
-        fill_val = getattr(var_data, '_FillValue', None)
+        var_data = ds[nc_var_name]  # xarray DataArray [time, lat, lon]
         count = 0
 
         for t_idx, date_str in enumerate(date_strs):
@@ -313,11 +304,9 @@ def nc_to_daily_tifs(nc_path, var_dirs, reproject_to_fwi=True, fwi_reference=Non
                 count += 1
                 continue
 
-            arr = np.array(var_data[t_idx, :, :], dtype=np.float32)
+            arr = var_data.isel(time=t_idx).values.astype(np.float32)
             if not lat_descending:
                 arr = np.flipud(arr)
-            if fill_val is not None:
-                arr[arr == fill_val] = np.nan
             arr[~np.isfinite(arr)] = np.nan
 
             if reproject_to_fwi:
