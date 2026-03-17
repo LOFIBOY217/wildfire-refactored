@@ -1472,15 +1472,8 @@ def main():
             break
         val_loss /= val_samples
 
-        # -- Val Lift@K  (checkpoint selection criterion) --
-        val_lift_k, val_prec_k = _compute_val_lift_k(
-            model, meteo_patched, fire_patched, val_wins,
-            n_patches,
-            k=args.val_lift_k,
-            n_sample_wins=args.val_lift_sample_wins,
-            chunk=args.pred_batch_size,
-            device=device,
-        )
+        # -- Val Lift@K disabled (too slow on NFS memmap; checkpoint by val_loss) --
+        val_lift_k, val_prec_k = 0.0, 0.0
 
         # ── Epoch summary ──────────────────────────────────────────────
         elapsed_total = time.time() - train_started_at
@@ -1520,10 +1513,10 @@ def main():
         print(f"  sys   {gpu_str}{ram_str}")
         print()
 
-        # Save best checkpoint by val Lift@K  (aligned with final evaluation metric)
-        if val_lift_k > best_val_lift_k:
-            best_val_lift_k = val_lift_k
-            best_val_loss   = val_loss   # track for reference only
+        # Save best checkpoint by val_loss (Lift@K disabled for speed)
+        if val_loss < best_val_loss:
+            best_val_loss   = val_loss
+            best_val_lift_k = val_lift_k  # always 0.0
             torch.save({
                 "epoch":          epoch,
                 "model_state":    model.state_dict(),
