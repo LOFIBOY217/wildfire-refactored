@@ -83,6 +83,15 @@ def _fetch_chunk(map_key: str, start_date: date, n_days: int,
                 return []
             r.raise_for_status()
 
+            # Detect API error messages (returned as plain text, not CSV)
+            first_line = r.text.strip().split("\n")[0].lower()
+            if "limit" in first_line or "error" in first_line or "invalid" in first_line:
+                print(f"\n      [API ERROR] {r.text.strip()[:120]}")
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_WAIT * attempt * 5)   # longer wait on rate limit
+                    continue
+                return None
+
             # Parse CSV response
             rows = []
             reader = csv.DictReader(io.StringIO(r.text))
