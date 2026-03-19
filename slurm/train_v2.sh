@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --partition=compute_full_node
+#SBATCH --partition=compute
 #SBATCH --gpus-per-node=1
 #SBATCH --time=8:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
