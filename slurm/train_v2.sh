@@ -8,6 +8,9 @@
 #SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
+#SBATCH --account=def-inghaw
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1
 source $SCRATCH/venv-wildfire/bin/activate
