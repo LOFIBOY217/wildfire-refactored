@@ -762,6 +762,10 @@ def main():
                          "within fire-season months. Reduces RAM to ~90GB (fits in 1-GPU 188GB).")
     ap.add_argument("--fire_season_months", type=str, default="4,5,6,7,8,9,10",
                     help="Comma-separated months for --fire_season_only (default: 4,5,6,7,8,9,10).")
+    ap.add_argument("--load_val_to_ram", action="store_true",
+                    help="Copy only validation-period time steps into RAM (~40-50GB). "
+                         "Eliminates disk IO during validation. Safe to combine with "
+                         "--load_train_to_ram --fire_season_only.")
     ap.add_argument("--mem_limit_pct", type=float, default=90.0,
                     help="Stop training when system RAM exceeds this %% (default=90). "
                          "Requires psutil (pip install psutil). Set to 0 to disable.")
@@ -1418,6 +1422,43 @@ def main():
               f"{ram_after.available/1e9:.1f}GB RAM remaining)")
 
     # ----------------------------------------------------------------
+    # Optionally copy only validation time steps into RAM
+    # ----------------------------------------------------------------
+    meteo_val    = meteo_patched   # default: val reads from disk
+    val_wins_eff = val_wins
+
+    if args.load_val_to_ram and not args.load_to_ram and val_wins:
+        import psutil
+        t_needed_val = set()
+        for hs, he, ts, te in val_wins:
+            t_needed_val.update(range(hs, he))
+            t_needed_val.update(range(ts, te))
+        t_indices_val = np.array(sorted(t_needed_val), dtype=np.int32)
+
+        val_T_max = max(t_indices_val)
+        t_remap_val = np.full(val_T_max + 2, -1, dtype=np.int32)
+        for new_t, orig_t in enumerate(t_indices_val):
+            t_remap_val[orig_t] = new_t
+
+        val_wins_eff = [(int(t_remap_val[hs]),    int(t_remap_val[he - 1] + 1),
+                         int(t_remap_val[ts]),    int(t_remap_val[te - 1] + 1))
+                        for hs, he, ts, te in val_wins]
+
+        needed_gb_val = len(t_indices_val) * n_patches * enc_dim * 2 / 1e9
+        ram = psutil.virtual_memory()
+        print(f"\n[--load_val_to_ram] Val T indices: {len(t_indices_val)}  (~{needed_gb_val:.1f}GB)")
+        print(f"  RAM available: {ram.available/1e9:.1f}GB / {ram.total/1e9:.1f}GB total")
+        if ram.available / 1e9 < needed_gb_val + 10:
+            print(f"  WARNING: available RAM may be insufficient (need ~{needed_gb_val+10:.0f}GB)")
+        t0 = time.time()
+        print(f"  Copying val data into RAM...")
+        meteo_val = np.array(meteo_patched[:, t_indices_val, :])
+        ram_after = psutil.virtual_memory()
+        print(f"  [OK] Copy complete in {time.time()-t0:.0f}s  "
+              f"({meteo_val.nbytes/1e9:.1f}GB in RAM, "
+              f"{ram_after.available/1e9:.1f}GB RAM remaining)")
+
+    # ----------------------------------------------------------------
     # Build datasets and dataloaders
     # ----------------------------------------------------------------
     train_ds = S2SHotspotDatasetMixed(
@@ -1425,7 +1466,7 @@ def main():
     )
     if val_wins:
         val_ds = S2SHotspotDatasetUnfiltered(
-            meteo_patched, fire_patched, val_wins, hw, grid
+            meteo_val, fire_patched, val_wins_eff, hw, grid
         )
     else:
         val_ds = train_ds
