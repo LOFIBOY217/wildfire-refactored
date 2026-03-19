@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=compute
 #SBATCH --gpus-per-node=1
-#SBATCH --time=24:00:00
+#SBATCH --time=16:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
 #SBATCH --account=def-inghaw
@@ -32,6 +32,18 @@ $PYTHON -c "import rasterio; print('rasterio :', rasterio.__version__)" || exit 
 $PYTHON -c "import scipy;    print('scipy    :', scipy.__version__)"    || exit 1
 $PYTHON -c "import numpy;    print('numpy    :', numpy.__version__)"    || exit 1
 echo "=== PREFLIGHT OK ==="
+
+# RAM check before loading
+echo "=== RAM CHECK ==="
+free -h
+TOTAL_RAM_GB=$(free -g | awk '/^Mem:/{print $2}')
+NEEDED_GB=260
+if [ "$TOTAL_RAM_GB" -lt "$NEEDED_GB" ]; then
+  echo "ERROR: Not enough RAM. Available=${TOTAL_RAM_GB}GB, needed=${NEEDED_GB}GB"
+  exit 1
+fi
+echo "RAM OK: ${TOTAL_RAM_GB}GB available (need ~${NEEDED_GB}GB for --load_to_ram)"
+echo "==========================="
 
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_trillium.yaml \
