@@ -1109,10 +1109,21 @@ def main():
         print(f"  shape={meteo_patched.shape}  "
               f"({os.path.getsize(mmap_path)/1e9:.1f} GB on disk)")
         if args.load_to_ram:
-            print(f"  [--load_to_ram] Copying meteo_patched into RAM (~{os.path.getsize(mmap_path)/1e9:.1f} GB)...")
+            import psutil
+            ram = psutil.virtual_memory()
+            needed_gb = os.path.getsize(mmap_path) / 1e9
+            avail_gb  = ram.available / 1e9
+            total_gb  = ram.total / 1e9
+            print(f"  [--load_to_ram] RAM before copy: {avail_gb:.1f}GB available / {total_gb:.1f}GB total")
+            if avail_gb < needed_gb + 20:
+                print(f"  WARNING: available RAM ({avail_gb:.1f}GB) may be insufficient for {needed_gb:.1f}GB copy (+20GB buffer)")
+            print(f"  [--load_to_ram] Copying meteo_patched into RAM (~{needed_gb:.1f} GB)...")
             t0 = time.time()
             meteo_patched = np.array(meteo_patched)
-            print(f"  Loaded into RAM in {time.time()-t0:.0f}s")
+            ram_after = psutil.virtual_memory()
+            print(f"  [--load_to_ram] Copy complete in {time.time()-t0:.0f}s")
+            print(f"  [--load_to_ram] RAM after copy: {ram_after.available/1e9:.1f}GB available / {ram_after.total/1e9:.1f}GB total")
+            print(f"  [--load_to_ram] meteo_patched is now type={type(meteo_patched).__name__} (in RAM: {meteo_patched.nbytes/1e9:.1f}GB)")
     else:
         # ── Build: stream day-by-day into time-first temp file,
         #          then transpose to patch-first final file ──────────
