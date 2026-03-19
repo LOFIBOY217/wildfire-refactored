@@ -37,7 +37,7 @@ echo "=== PREFLIGHT OK ==="
 echo "=== RAM CHECK ==="
 free -h
 TOTAL_RAM_GB=$(free -g | awk '/^Mem:/{print $2}')
-NEEDED_GB=110
+NEEDED_GB=150
 if [ "$TOTAL_RAM_GB" -lt "$NEEDED_GB" ]; then
   echo "ERROR: Not enough RAM. Available=${TOTAL_RAM_GB}GB, needed=${NEEDED_GB}GB"
   exit 1
