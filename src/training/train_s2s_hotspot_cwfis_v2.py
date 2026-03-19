@@ -753,6 +753,15 @@ def main():
     ap.add_argument("--load_to_ram", action="store_true",
                     help="Copy meteo_patched memmap into RAM after loading (needs ~240GB RAM). "
                          "Eliminates disk IO bottleneck during training.")
+    ap.add_argument("--load_train_to_ram", action="store_true",
+                    help="Copy only training-period time steps into RAM (~150GB). "
+                         "Val still reads from disk. Use with --fire_season_only to reduce to ~90GB.")
+    ap.add_argument("--fire_season_only", action="store_true",
+                    help="With --load_train_to_ram: restrict RAM copy to fire-season months only. "
+                         "Also filters training windows to those whose encoder+decoder fall entirely "
+                         "within fire-season months. Reduces RAM to ~90GB (fits in 1-GPU 188GB).")
+    ap.add_argument("--fire_season_months", type=str, default="4,5,6,7,8,9,10",
+                    help="Comma-separated months for --fire_season_only (default: 4,5,6,7,8,9,10).")
     ap.add_argument("--mem_limit_pct", type=float, default=90.0,
                     help="Stop training when system RAM exceeds this %% (default=90). "
                          "Requires psutil (pip install psutil). Set to 0 to disable.")
@@ -1338,10 +1347,79 @@ def main():
     run_meta["pos_weight"] = pos_weight_val
 
     # ----------------------------------------------------------------
+    # Optionally copy only training time steps into RAM
+    # ----------------------------------------------------------------
+    meteo_train    = meteo_patched   # default: training reads from disk
+    train_wins_eff = train_wins      # effective windows passed to train_ds
+    all_pairs_eff  = all_pairs       # effective pairs passed to train_ds
+
+    if args.load_train_to_ram and not args.load_to_ram:
+        import psutil
+        train_T_max = max(te for hs, he, ts, te in train_wins)
+
+        if args.fire_season_only:
+            fire_months = set(int(m) for m in args.fire_season_months.split(","))
+
+            # Filter windows: keep only those where every T in encoder+decoder is fire-season
+            valid_mask = []
+            for hs, he, ts, te in train_wins:
+                ok = all(aligned_dates[t].month in fire_months for t in range(hs, he)) and \
+                     all(aligned_dates[t].month in fire_months for t in range(ts, te))
+                valid_mask.append(ok)
+            valid_idxs   = [i for i, v in enumerate(valid_mask) if v]
+            filtered_wins = [train_wins[i] for i in valid_idxs]
+            print(f"\n[--load_train_to_ram --fire_season_only] "
+                  f"{len(filtered_wins)}/{len(train_wins)} windows kept (months {sorted(fire_months)})")
+
+            # Collect union of all T indices needed by filtered windows
+            t_needed = set()
+            for hs, he, ts, te in filtered_wins:
+                t_needed.update(range(hs, he))
+                t_needed.update(range(ts, te))
+            t_indices = np.array(sorted(t_needed), dtype=np.int32)
+
+            # Build T remapping: original T → compact index
+            t_remap = np.full(train_T_max + 2, -1, dtype=np.int32)
+            for new_t, orig_t in enumerate(t_indices):
+                t_remap[orig_t] = new_t
+
+            # Remap windows
+            train_wins_eff = [(int(t_remap[hs]), int(t_remap[he]),
+                               int(t_remap[ts]), int(t_remap[te]))
+                              for hs, he, ts, te in filtered_wins]
+
+            # Remap all_pairs: filter to valid windows, remap win_i
+            win_remap = np.full(len(train_wins), -1, dtype=np.int32)
+            for new_i, old_i in enumerate(valid_idxs):
+                win_remap[old_i] = new_i
+            keep = np.isin(all_pairs[:, 0], valid_idxs)
+            all_pairs_eff = all_pairs[keep].copy()
+            all_pairs_eff[:, 0] = win_remap[all_pairs_eff[:, 0]]
+
+            needed_gb = len(t_indices) * n_patches * enc_dim * 2 / 1e9
+            print(f"  T indices to load: {len(t_indices)}  (~{needed_gb:.1f}GB)")
+        else:
+            needed_gb = (train_T_max + 1) * n_patches * enc_dim * 2 / 1e9
+            t_indices = np.arange(train_T_max + 1, dtype=np.int32)
+            print(f"\n[--load_train_to_ram] Training T slice 0:{train_T_max+1}  (~{needed_gb:.1f}GB)")
+
+        ram = psutil.virtual_memory()
+        print(f"  RAM available: {ram.available/1e9:.1f}GB / {ram.total/1e9:.1f}GB total")
+        if ram.available / 1e9 < needed_gb + 20:
+            print(f"  WARNING: available RAM may be insufficient (need ~{needed_gb+20:.0f}GB)")
+        t0 = time.time()
+        print(f"  Copying into RAM...")
+        meteo_train = np.array(meteo_patched[:, t_indices, :])
+        ram_after = psutil.virtual_memory()
+        print(f"  [OK] Copy complete in {time.time()-t0:.0f}s  "
+              f"({meteo_train.nbytes/1e9:.1f}GB in RAM, "
+              f"{ram_after.available/1e9:.1f}GB RAM remaining)")
+
+    # ----------------------------------------------------------------
     # Build datasets and dataloaders
     # ----------------------------------------------------------------
     train_ds = S2SHotspotDatasetMixed(
-        meteo_patched, fire_patched, train_wins, hw, grid, all_pairs
+        meteo_train, fire_patched, train_wins_eff, hw, grid, all_pairs_eff
     )
     if val_wins:
         val_ds = S2SHotspotDatasetUnfiltered(

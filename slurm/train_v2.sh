@@ -6,7 +6,6 @@
 #SBATCH --partition=compute
 #SBATCH --gpus-per-node=1
 #SBATCH --time=16:00:00
-#SBATCH --mem=300G
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
 #SBATCH --account=def-inghaw
@@ -38,12 +37,12 @@ echo "=== PREFLIGHT OK ==="
 echo "=== RAM CHECK ==="
 free -h
 TOTAL_RAM_GB=$(free -g | awk '/^Mem:/{print $2}')
-NEEDED_GB=260
+NEEDED_GB=110
 if [ "$TOTAL_RAM_GB" -lt "$NEEDED_GB" ]; then
   echo "ERROR: Not enough RAM. Available=${TOTAL_RAM_GB}GB, needed=${NEEDED_GB}GB"
   exit 1
 fi
-echo "RAM OK: ${TOTAL_RAM_GB}GB available (need ~${NEEDED_GB}GB for --load_to_ram)"
+echo "RAM OK: ${TOTAL_RAM_GB}GB available (need ~${NEEDED_GB}GB for --load_train_to_ram --fire_season_only)"
 echo "==========================="
 
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
@@ -51,4 +50,5 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --num_workers 12 \
   --batch_size 512 \
   --epochs 10 \
-  --load_to_ram
+  --load_train_to_ram \
+  --fire_season_only
