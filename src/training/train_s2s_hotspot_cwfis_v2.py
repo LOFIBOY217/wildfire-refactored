@@ -1383,9 +1383,11 @@ def main():
             for new_t, orig_t in enumerate(t_indices):
                 t_remap[orig_t] = new_t
 
-            # Remap windows
-            train_wins_eff = [(int(t_remap[hs]), int(t_remap[he]),
-                               int(t_remap[ts]), int(t_remap[te]))
+            # Remap windows.
+            # he/te are exclusive ends; they are NOT in t_indices, so t_remap[he]==-1.
+            # Correct: new_exclusive_end = t_remap[last_included] + 1
+            train_wins_eff = [(int(t_remap[hs]),    int(t_remap[he - 1] + 1),
+                               int(t_remap[ts]),    int(t_remap[te - 1] + 1))
                               for hs, he, ts, te in filtered_wins]
 
             # Remap all_pairs: filter to valid windows, remap win_i
