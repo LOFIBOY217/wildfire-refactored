@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=compute
 #SBATCH --gpus-per-node=1
-#SBATCH --time=8:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
 #SBATCH --account=def-inghaw
@@ -37,4 +37,5 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_trillium.yaml \
   --num_workers 12 \
   --batch_size 512 \
-  --epochs 10
+  --epochs 10 \
+  --load_to_ram

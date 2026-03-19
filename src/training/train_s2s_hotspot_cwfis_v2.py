@@ -750,6 +750,9 @@ def main():
                          "Set to '' to disable caching.")
     ap.add_argument("--overwrite", action="store_true",
                     help="Force rebuild all caches (fire_stack, meteo memmap, fire_patched).")
+    ap.add_argument("--load_to_ram", action="store_true",
+                    help="Copy meteo_patched memmap into RAM after loading (needs ~240GB RAM). "
+                         "Eliminates disk IO bottleneck during training.")
     ap.add_argument("--mem_limit_pct", type=float, default=90.0,
                     help="Stop training when system RAM exceeds this %% (default=90). "
                          "Requires psutil (pip install psutil). Set to 0 to disable.")
@@ -1105,6 +1108,11 @@ def main():
         meteo_stds    = _saved_stats[1]
         print(f"  shape={meteo_patched.shape}  "
               f"({os.path.getsize(mmap_path)/1e9:.1f} GB on disk)")
+        if args.load_to_ram:
+            print(f"  [--load_to_ram] Copying meteo_patched into RAM (~{os.path.getsize(mmap_path)/1e9:.1f} GB)...")
+            t0 = time.time()
+            meteo_patched = np.array(meteo_patched)
+            print(f"  Loaded into RAM in {time.time()-t0:.0f}s")
     else:
         # ── Build: stream day-by-day into time-first temp file,
         #          then transpose to patch-first final file ──────────
