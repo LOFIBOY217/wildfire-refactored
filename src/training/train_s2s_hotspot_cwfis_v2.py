@@ -1433,6 +1433,13 @@ def main():
         for hs, he, ts, te in val_wins:
             t_needed_val.update(range(hs, he))
             t_needed_val.update(range(ts, te))
+        # When --fire_season_only is set, also restrict val T indices to fire-season
+        # months to save RAM (~90GB → ~55GB). Val wins are fire-season only anyway
+        # (FWI data only exists for fire-season months), so no windows are lost.
+        if args.fire_season_only:
+            fire_months = set(int(m) for m in args.fire_season_months.split(","))
+            t_needed_val = {t for t in t_needed_val
+                            if aligned_dates[t].month in fire_months}
         t_indices_val = np.array(sorted(t_needed_val), dtype=np.int32)
 
         val_T_max = max(t_indices_val)
