@@ -411,22 +411,26 @@ def _load_fire_clim(tif_path, expected_h, expected_w):
 def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         n_patches, k, n_sample_wins, chunk, device):
     """
-    Compute Lift@K on a random sample of validation windows.
+    Compute ranking metrics on a random sample of validation windows.
 
     Samples *n_sample_wins* windows from *val_wins*, runs patch-level
     inference, aggregates across lead days
       • prob  → mean  (overall fire risk across the 14–46 day window)
       • label → max   (any lead day with fire = positive pixel)
-    then computes precision@K and Lift@K globally across all sampled pixels.
+    then computes all metrics globally across all sampled pixels.
 
-    This is cheap: for n_sample_wins=20 and n_patches≈24 310 it runs
-    ~20 × 95 GPU batches ≈ 10–30 seconds.
-
-    Returns:
-        (lift_k: float, precision_at_k: float)
-        lift_k = precision@K / baseline_fire_rate
-        Returns (0.0, 0.0) if no fire pixels found in sample.
+    Metrics returned (dict):
+        lift_k      : Precision@K / baseline_fire_rate
+        precision_k : tp / K
+        recall_k    : tp / n_fires
+        csi_k       : tp / (tp + fp + fn)  Critical Success Index
+        ets_k       : (tp - tp_random) / (tp + fp + fn - tp_random)  Equitable Threat Score
+        pr_auc      : Area under precision-recall curve (sklearn)
+        n_fire      : number of fire pixels in sample
+        baseline    : n_fire / n_total
     """
+    from sklearn.metrics import average_precision_score
+
     model.eval()
     rng = np.random.default_rng(0)   # fixed seed → same sample every epoch
 
@@ -474,15 +478,36 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
     n_fire  = int(all_labels.sum())
 
     if n_fire == 0:
-        return 0.0, 0.0
+        return {"lift_k": 0.0, "precision_k": 0.0, "recall_k": 0.0,
+                "csi_k": 0.0, "ets_k": 0.0, "pr_auc": 0.0,
+                "n_fire": 0, "baseline": 0.0}
 
-    k_eff        = min(k, n_total)
-    top_idx      = np.argpartition(all_probs, -k_eff)[-k_eff:]
-    precision_k  = float(all_labels[top_idx].sum()) / k_eff
-    baseline     = n_fire / n_total
-    lift_k       = precision_k / baseline if baseline > 0 else 0.0
+    k_eff       = min(k, n_total)
+    top_idx     = np.argpartition(all_probs, -k_eff)[-k_eff:]
+    tp          = float(all_labels[top_idx].sum())
+    fp          = k_eff - tp
+    fn          = n_fire - tp
+    baseline    = n_fire / n_total
 
-    return lift_k, precision_k
+    precision_k = tp / k_eff
+    recall_k    = tp / n_fire
+    lift_k      = precision_k / baseline if baseline > 0 else 0.0
+    csi_k       = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else 0.0
+    tp_random   = k_eff * baseline          # expected tp by random selection
+    denom_ets   = tp + fp + fn - tp_random
+    ets_k       = (tp - tp_random) / denom_ets if denom_ets > 0 else 0.0
+    pr_auc      = float(average_precision_score(all_labels, all_probs))
+
+    return {
+        "lift_k":      lift_k,
+        "precision_k": precision_k,
+        "recall_k":    recall_k,
+        "csi_k":       csi_k,
+        "ets_k":       ets_k,
+        "pr_auc":      pr_auc,
+        "n_fire":      n_fire,
+        "baseline":    baseline,
+    }
 
 
 # ------------------------------------------------------------------ #
@@ -1537,26 +1562,35 @@ def main():
                 decoder_days=decoder_days,
             ).to(device)
             model_eval.load_state_dict(ckpt["model_state"])
-            lift_k, prec_k = _compute_val_lift_k(
+            m = _compute_val_lift_k(
                 model_eval, meteo_patched, fire_patched, val_wins,
                 n_patches, k=args.val_lift_k,
                 n_sample_wins=args.eval_n_windows,
                 chunk=256, device=device,
             )
-            print(f"    Lift@{args.val_lift_k} = {lift_k:.2f}x   prec@{args.val_lift_k} = {prec_k:.4f}")
-            results.append((epoch_name, lift_k, prec_k))
+            print(f"    Lift@{args.val_lift_k}={m['lift_k']:.2f}x  "
+                  f"Prec={m['precision_k']:.4f}  Recall={m['recall_k']:.4f}  "
+                  f"CSI={m['csi_k']:.4f}  ETS={m['ets_k']:.4f}  PR-AUC={m['pr_auc']:.4f}  "
+                  f"(n_fire={m['n_fire']:,}  baseline={m['baseline']:.6f})")
+            results.append((epoch_name, m))
             del model_eval
             torch.cuda.empty_cache()
 
-        print(f"\n{'─'*55}")
-        print(f"  {'Epoch':<12}  {'Lift@K':>10}  {'Prec@K':>10}")
-        print(f"{'─'*55}")
-        best_name, best_lift, best_prec = max(results, key=lambda x: x[1])
-        for name, lift, prec in results:
+        K = args.val_lift_k
+        print(f"\n{'─'*90}")
+        print(f"  {'Epoch':<12}  {'Lift@K':>8}  {'Prec@K':>8}  {'Recall@K':>9}  "
+              f"{'CSI@K':>7}  {'ETS@K':>7}  {'PR-AUC':>8}")
+        print(f"{'─'*90}")
+        best_name = max(results, key=lambda x: x[1]["lift_k"])[0]
+        for name, m in results:
             marker = " ★" if name == best_name else ""
-            print(f"  {name:<12}  {lift:>10.2f}x  {prec:>10.4f}{marker}")
-        print(f"{'─'*55}")
-        print(f"  Best: {best_name}  Lift@{args.val_lift_k}={best_lift:.2f}x  prec={best_prec:.4f}")
+            print(f"  {name:<12}  {m['lift_k']:>8.2f}x  {m['precision_k']:>8.4f}  "
+                  f"{m['recall_k']:>9.4f}  {m['csi_k']:>7.4f}  {m['ets_k']:>7.4f}  "
+                  f"{m['pr_auc']:>8.4f}{marker}")
+        print(f"{'─'*90}")
+        best_m = next(m for n, m in results if n == best_name)
+        print(f"  Best: {best_name}  Lift@{K}={best_m['lift_k']:.2f}x  "
+              f"ETS={best_m['ets_k']:.4f}  PR-AUC={best_m['pr_auc']:.4f}")
         return
 
     # ----------------------------------------------------------------
