@@ -766,6 +766,9 @@ def main():
     ap.add_argument("--val_max_batches", type=int, default=500,
                     help="Max val batches per epoch (0=full). Default 500 (~30s).")
     ap.add_argument("--lr",           type=float, default=1e-4)
+    ap.add_argument("--lr_min",       type=float, default=1e-6,
+                    help="Minimum LR for CosineAnnealingLR (default: 1e-6). "
+                         "Set equal to --lr to disable the scheduler.")
     ap.add_argument("--seed",         type=int,   default=42)
     ap.add_argument("--neg_ratio",    type=float, default=20.0)
     ap.add_argument("--pos_weight_cap", type=float, default=10.0)
@@ -1458,6 +1461,17 @@ def main():
               f"({meteo_train.nbytes/1e9:.1f}GB in RAM, "
               f"{ram_after.available/1e9:.1f}GB RAM remaining)")
 
+        # Drop memmap page cache NOW (before val copy) to avoid OOM peak.
+        # The train numpy array is safely in RAM; evicting the disk-cache
+        # pages frees ~90GB so the subsequent val copy doesn't spike over budget.
+        if hasattr(meteo_patched, '_mmap') and meteo_patched._mmap is not None:
+            try:
+                import mmap as _mmap
+                meteo_patched._mmap.madvise(_mmap.MADV_DONTNEED)
+                print("  [RAM] Dropped memmap page cache before val copy (MADV_DONTNEED)")
+            except Exception as _e:
+                print(f"  [RAM] madvise not available: {_e}")
+
     # ----------------------------------------------------------------
     # Optionally copy only validation time steps into RAM
     # ----------------------------------------------------------------
@@ -1502,14 +1516,13 @@ def main():
               f"({meteo_val.nbytes/1e9:.1f}GB in RAM, "
               f"{ram_after.available/1e9:.1f}GB RAM remaining)")
 
-    # After all RAM copies are done, drop the memmap page cache so the OS
-    # does not double-count the on-disk data against our RAM budget.
+    # Final page cache drop (covers val-copy pages and the --load_to_ram path).
     if (args.load_train_to_ram or args.load_to_ram) and \
             hasattr(meteo_patched, '_mmap') and meteo_patched._mmap is not None:
         try:
             import mmap as _mmap
             meteo_patched._mmap.madvise(_mmap.MADV_DONTNEED)
-            print("  [RAM] Dropped memmap page cache (MADV_DONTNEED)")
+            print("  [RAM] Final memmap page cache drop (MADV_DONTNEED)")
         except Exception as _e:
             print(f"  [RAM] madvise not available: {_e}")
 
@@ -1635,6 +1648,8 @@ def main():
         pos_weight=torch.tensor([pos_weight_val], dtype=torch.float32).to(device)
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.epochs, eta_min=args.lr_min)
 
     best_val_loss  = float("inf")
     best_val_lift_k = -1.0          # checkpoint selected by Lift@K, not val_loss
@@ -1773,11 +1788,15 @@ def main():
                   f"({_lfire_n:,} fire px / {_lbg_n:,} bg px)")
         print(f"  grad   avg={avg_gnorm:.4f}  max={_gnorm_max:.4f}  "
               f"({'CLIPPED' if _gnorm_max >= 0.99 else 'ok'})")
+        print(f"  lr     current={scheduler.get_last_lr()[0]:.2e}  "
+              f"→ next={args.lr_min + 0.5*(args.lr - args.lr_min)*(1 + __import__('math').cos(__import__('math').pi*(epoch)/args.epochs)):.2e}")
         print(f"  time   epoch={epoch_min:.1f}m  "
               f"elapsed={elapsed_total/60:.0f}m  "
               f"ETA~{eta_total_min:.0f}m")
         print(f"  sys   {gpu_str}{ram_str}")
         print()
+
+        scheduler.step()
 
         # Save checkpoint: every epoch when --skip_val, otherwise best val_loss
         ckpt_payload = {

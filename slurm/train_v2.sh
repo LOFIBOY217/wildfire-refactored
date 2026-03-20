@@ -49,7 +49,9 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_trillium.yaml \
   --num_workers 12 \
   --batch_size 1024 \
-  --epochs 5 \
+  --epochs 30 \
+  --lr 1e-4 \
+  --lr_min 1e-6 \
   --load_train_to_ram \
   --fire_season_only \
   --load_val_to_ram \
