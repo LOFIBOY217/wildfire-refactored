@@ -766,6 +766,9 @@ def main():
                     help="Copy only validation-period time steps into RAM (~40-50GB). "
                          "Eliminates disk IO during validation. Safe to combine with "
                          "--load_train_to_ram --fire_season_only.")
+    ap.add_argument("--skip_val", action="store_true",
+                    help="Skip validation entirely during training. A checkpoint is saved "
+                         "after every epoch. Use --evaluate separately after training.")
     ap.add_argument("--mem_limit_pct", type=float, default=90.0,
                     help="Stop training when system RAM exceeds this %% (default=90). "
                          "Requires psutil (pip install psutil). Set to 0 to disable.")
@@ -1592,39 +1595,39 @@ def main():
         avg_gnorm = _gnorm_sum / max(_gnorm_count, 1)
 
         # -- Validation --
-        model.eval()
-        val_loss    = 0.0
-        val_samples = 0
+        val_loss, val_lift_k, val_prec_k = float("nan"), 0.0, 0.0
         _lfire_sum, _lfire_n = 0.0, 0
         _lbg_sum,   _lbg_n   = 0.0, 0
-        with torch.no_grad():
-            for _val_bi, (xb_enc, xb_dec, yb) in enumerate(val_dl):
-                if args.val_max_batches > 0 and _val_bi >= args.val_max_batches:
-                    break
-                xb_enc, xb_dec, yb = xb_enc.to(device), xb_dec.to(device), yb.to(device)
-                logits_v = model(xb_enc, xb_dec)
-                vl = criterion(logits_v, yb)
-                if torch.isfinite(vl):
-                    val_loss    += vl.item() * xb_enc.size(0)
-                    val_samples += xb_enc.size(0)
-                _lv = logits_v.detach().float()
-                _yb = yb.detach().bool()
-                _f  = _lv[_yb]
-                _bg = _lv[~_yb]
-                if _f.numel() > 0:
-                    _lfire_sum += _f.sum().item()
-                    _lfire_n   += _f.numel()
-                _lbg_sum += _bg.sum().item()
-                _lbg_n   += _bg.numel()
 
-        if val_samples == 0:
-            print(f"  Epoch {epoch:3d}/{args.epochs}  train={train_loss:.6f}  "
-                  f"val=NaN — stopping early.")
-            break
-        val_loss /= val_samples
+        if not args.skip_val:
+            model.eval()
+            val_loss    = 0.0
+            val_samples = 0
+            with torch.no_grad():
+                for _val_bi, (xb_enc, xb_dec, yb) in enumerate(val_dl):
+                    if args.val_max_batches > 0 and _val_bi >= args.val_max_batches:
+                        break
+                    xb_enc, xb_dec, yb = xb_enc.to(device), xb_dec.to(device), yb.to(device)
+                    logits_v = model(xb_enc, xb_dec)
+                    vl = criterion(logits_v, yb)
+                    if torch.isfinite(vl):
+                        val_loss    += vl.item() * xb_enc.size(0)
+                        val_samples += xb_enc.size(0)
+                    _lv = logits_v.detach().float()
+                    _yb = yb.detach().bool()
+                    _f  = _lv[_yb]
+                    _bg = _lv[~_yb]
+                    if _f.numel() > 0:
+                        _lfire_sum += _f.sum().item()
+                        _lfire_n   += _f.numel()
+                    _lbg_sum += _bg.sum().item()
+                    _lbg_n   += _bg.numel()
 
-        # -- Val Lift@K disabled (too slow on NFS memmap; checkpoint by val_loss) --
-        val_lift_k, val_prec_k = 0.0, 0.0
+            if val_samples == 0:
+                print(f"  Epoch {epoch:3d}/{args.epochs}  train={train_loss:.6f}  "
+                      f"val=NaN — stopping early.")
+                break
+            val_loss /= val_samples
 
         # ── Epoch summary ──────────────────────────────────────────────
         elapsed_total = time.time() - train_started_at
@@ -1648,9 +1651,12 @@ def main():
             ram_str = ""
 
         print(f"\n  ── Epoch {epoch:3d}/{args.epochs} ───────────────────────────")
-        print(f"  loss   train={train_loss:.6f}  val={val_loss:.6f}")
-        print(f"  metric Lift@{args.val_lift_k}={val_lift_k:.2f}x  "
-              f"prec@{args.val_lift_k}={val_prec_k:.4f}")
+        if args.skip_val:
+            print(f"  loss   train={train_loss:.6f}  val=skipped")
+        else:
+            print(f"  loss   train={train_loss:.6f}  val={val_loss:.6f}")
+            print(f"  metric Lift@{args.val_lift_k}={val_lift_k:.2f}x  "
+                  f"prec@{args.val_lift_k}={val_prec_k:.4f}")
         if _lfire_n > 0:
             print(f"  logits fire={_lfire_sum/_lfire_n:+.3f}  "
                   f"bg={_lbg_sum/_lbg_n:+.3f}  "
@@ -1664,27 +1670,34 @@ def main():
         print(f"  sys   {gpu_str}{ram_str}")
         print()
 
-        # Save best checkpoint by val_loss (Lift@K disabled for speed)
-        if val_loss < best_val_loss:
-            best_val_loss   = val_loss
-            best_val_lift_k = val_lift_k  # always 0.0
-            torch.save({
-                "epoch":          epoch,
-                "model_state":    model.state_dict(),
-                "meteo_means":    meteo_means,
-                "meteo_stds":     meteo_stds,
-                "patch_dim_enc":  patch_dim_enc,
-                "patch_dim_dec":  patch_dim_dec,
-                "patch_dim_out":  patch_dim_out,
-                "hw":             hw,
-                "grid":           grid,
-                "args":           vars(args),
-                "channel_names":  CHANNEL_NAMES,
-                "n_channels":     N_CHANNELS,
-                "best_val_lift_k": best_val_lift_k,
-            }, best_ckpt)
-            print(f"           ★ New best  Lift@{args.val_lift_k}={best_val_lift_k:.2f}x  "
-                  f"→ checkpoint saved")
+        # Save checkpoint: every epoch when --skip_val, otherwise best val_loss
+        ckpt_payload = {
+            "epoch":           epoch,
+            "model_state":     model.state_dict(),
+            "meteo_means":     meteo_means,
+            "meteo_stds":      meteo_stds,
+            "patch_dim_enc":   patch_dim_enc,
+            "patch_dim_dec":   patch_dim_dec,
+            "patch_dim_out":   patch_dim_out,
+            "hw":              hw,
+            "grid":            grid,
+            "args":            vars(args),
+            "channel_names":   CHANNEL_NAMES,
+            "n_channels":      N_CHANNELS,
+            "best_val_lift_k": val_lift_k,
+        }
+        if args.skip_val:
+            # Save every epoch as epoch_N.pt; also overwrite best_model.pt (= last epoch)
+            epoch_ckpt = os.path.join(ckpt_dir, f"epoch_{epoch:02d}.pt")
+            torch.save(ckpt_payload, epoch_ckpt)
+            torch.save(ckpt_payload, best_ckpt)
+            print(f"           ★ Checkpoint saved → {epoch_ckpt}")
+        else:
+            if val_loss < best_val_loss:
+                best_val_loss   = val_loss
+                best_val_lift_k = val_lift_k
+                torch.save(ckpt_payload, best_ckpt)
+                print(f"           ★ New best  val_loss={val_loss:.6f}  → checkpoint saved")
 
     print(f"\n  Best val Lift@{args.val_lift_k}: {best_val_lift_k:.2f}x  "
           f"(val_loss at that epoch: {best_val_loss:.6f})  saved → {best_ckpt}")

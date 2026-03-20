@@ -42,14 +42,14 @@ if [ "$TOTAL_RAM_GB" -lt "$NEEDED_GB" ]; then
   echo "ERROR: Not enough RAM. Available=${TOTAL_RAM_GB}GB, needed=${NEEDED_GB}GB"
   exit 1
 fi
-echo "RAM OK: ${TOTAL_RAM_GB}GB available (need ~${NEEDED_GB}GB for --load_train_to_ram --fire_season_only + --load_val_to_ram)"
+echo "RAM OK: ${TOTAL_RAM_GB}GB available (need ~90GB for --load_train_to_ram --fire_season_only)"
 echo "==========================="
 
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_trillium.yaml \
   --num_workers 12 \
   --batch_size 512 \
-  --epochs 10 \
+  --epochs 5 \
   --load_train_to_ram \
   --fire_season_only \
-  --load_val_to_ram
+  --skip_val
