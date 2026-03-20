@@ -1502,6 +1502,17 @@ def main():
               f"({meteo_val.nbytes/1e9:.1f}GB in RAM, "
               f"{ram_after.available/1e9:.1f}GB RAM remaining)")
 
+    # After all RAM copies are done, drop the memmap page cache so the OS
+    # does not double-count the on-disk data against our RAM budget.
+    if (args.load_train_to_ram or args.load_to_ram) and \
+            hasattr(meteo_patched, '_mmap') and meteo_patched._mmap is not None:
+        try:
+            import mmap as _mmap
+            meteo_patched._mmap.madvise(_mmap.MADV_DONTNEED)
+            print("  [RAM] Dropped memmap page cache (MADV_DONTNEED)")
+        except Exception as _e:
+            print(f"  [RAM] madvise not available: {_e}")
+
     # ----------------------------------------------------------------
     # Build datasets and dataloaders
     # ----------------------------------------------------------------
