@@ -5,6 +5,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=compute
 #SBATCH --gpus-per-node=1
+#SBATCH --mem=0
 #SBATCH --time=10:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
@@ -54,4 +55,5 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --lr_min 1e-6 \
   --load_train_to_ram \
   --fire_season_only \
+  --load_val_to_ram \
   --skip_forecast
