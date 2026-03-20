@@ -1481,16 +1481,26 @@ def main():
     if args.load_val_to_ram and not args.load_to_ram and val_wins:
         import psutil
         t_needed_val = set()
-        for hs, he, ts, te in val_wins:
-            t_needed_val.update(range(hs, he))
-            t_needed_val.update(range(ts, te))
-        # When --fire_season_only is set, also restrict val T indices to fire-season
-        # months to save RAM (~90GB → ~55GB). Val wins are fire-season only anyway
-        # (FWI data only exists for fire-season months), so no windows are lost.
+
+        # When --fire_season_only is set, filter val windows to those where every T
+        # in encoder+decoder range is a fire-season month (same logic as train).
+        # NOTE: val windows CAN span non-fire-season months because lead_end=46 days
+        # means a window starting in late September may target into November.
+        val_wins_for_ram = val_wins
         if args.fire_season_only:
             fire_months = set(int(m) for m in args.fire_season_months.split(","))
-            t_needed_val = {t for t in t_needed_val
-                            if aligned_dates[t].month in fire_months}
+            val_wins_for_ram = [
+                (hs, he, ts, te) for hs, he, ts, te in val_wins
+                if all(aligned_dates[t].month in fire_months for t in range(hs, he))
+                and all(aligned_dates[t].month in fire_months for t in range(ts, te))
+            ]
+            print(f"\n[--load_val_to_ram --fire_season_only] "
+                  f"{len(val_wins_for_ram)}/{len(val_wins)} val windows kept "
+                  f"(months {sorted(fire_months)})")
+
+        for hs, he, ts, te in val_wins_for_ram:
+            t_needed_val.update(range(hs, he))
+            t_needed_val.update(range(ts, te))
         t_indices_val = np.array(sorted(t_needed_val), dtype=np.int32)
 
         val_T_max = max(t_indices_val)
@@ -1500,7 +1510,7 @@ def main():
 
         val_wins_eff = [(int(t_remap_val[hs]),    int(t_remap_val[he - 1] + 1),
                          int(t_remap_val[ts]),    int(t_remap_val[te - 1] + 1))
-                        for hs, he, ts, te in val_wins]
+                        for hs, he, ts, te in val_wins_for_ram]
 
         needed_gb_val = len(t_indices_val) * n_patches * enc_dim * 2 / 1e9
         ram = psutil.virtual_memory()
