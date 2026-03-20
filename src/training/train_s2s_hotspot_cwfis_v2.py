@@ -1498,6 +1498,17 @@ def main():
                   f"{len(val_wins_for_ram)}/{len(val_wins)} val windows kept "
                   f"(months {sorted(fire_months)})")
 
+        # Pre-sample val windows (same seed=0 as _compute_val_lift_k) so we only
+        # load T-indices for the windows actually used in val_loss computation.
+        # This reduces val RAM from ~90GB (all T-indices) to ~5GB (20 windows).
+        n_ram_wins = args.val_lift_sample_wins
+        if len(val_wins_for_ram) > n_ram_wins:
+            rng_ram = np.random.default_rng(0)
+            idx_ram = rng_ram.choice(len(val_wins_for_ram), size=n_ram_wins, replace=False)
+            val_wins_for_ram = [val_wins_for_ram[i] for i in sorted(idx_ram)]
+            print(f"  [load_val_to_ram] Pre-sampled {n_ram_wins}/{len(val_wins)} val windows "
+                  f"(seed=0) → only load their T-indices into RAM")
+
         for hs, he, ts, te in val_wins_for_ram:
             t_needed_val.update(range(hs, he))
             t_needed_val.update(range(ts, te))
