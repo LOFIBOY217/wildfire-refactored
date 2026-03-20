@@ -769,6 +769,12 @@ def main():
     ap.add_argument("--skip_val", action="store_true",
                     help="Skip validation entirely during training. A checkpoint is saved "
                          "after every epoch. Use --evaluate separately after training.")
+    ap.add_argument("--eval_epochs", action="store_true",
+                    help="Evaluate all epoch_0N.pt checkpoints in ckpt_dir on the val set "
+                         "using Lift@K. Skips training. Runs after data loading (cache hit "
+                         "is fast). Reports a comparison table and identifies the best epoch.")
+    ap.add_argument("--eval_n_windows", type=int, default=20,
+                    help="Number of val windows to sample for --eval_epochs (default: 20).")
     ap.add_argument("--mem_limit_pct", type=float, default=90.0,
                     help="Stop training when system RAM exceeds this %% (default=90). "
                          "Requires psutil (pip install psutil). Set to 0 to disable.")
@@ -1497,6 +1503,61 @@ def main():
     val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
                           pin_memory=True, num_workers=args.num_workers,
                           persistent_workers=(args.num_workers > 0))
+
+    # ----------------------------------------------------------------
+    # EVAL EPOCHS MODE  (--eval_epochs)
+    # ----------------------------------------------------------------
+    if args.eval_epochs:
+        print("\n[EVAL EPOCHS] Evaluating all epoch checkpoints on val set...")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"  Device  : {device}")
+        print(f"  Val wins: {len(val_wins)}  (sampling {args.eval_n_windows})")
+        print(f"  K       : {args.val_lift_k}")
+
+        ckpt_files = sorted(glob.glob(os.path.join(ckpt_dir, "epoch_*.pt")))
+        if not ckpt_files:
+            print("  No epoch_*.pt checkpoints found. Run training with --skip_val first.")
+            return
+
+        results = []
+        for ckpt_path in ckpt_files:
+            epoch_name = os.path.basename(ckpt_path).replace(".pt", "")
+            print(f"\n  Loading {epoch_name}...")
+            ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+            model_eval = S2SHotspotTransformer(
+                patch_dim_enc=patch_dim_enc,
+                patch_dim_dec=patch_dim_dec,
+                patch_dim_out=patch_dim_out,
+                d_model=args.d_model,
+                nhead=args.nhead,
+                num_encoder_layers=args.enc_layers,
+                num_decoder_layers=args.dec_layers,
+                dim_feedforward=args.d_model * 4,
+                encoder_days=in_days,
+                decoder_days=decoder_days,
+            ).to(device)
+            model_eval.load_state_dict(ckpt["model_state"])
+            lift_k, prec_k = _compute_val_lift_k(
+                model_eval, meteo_patched, fire_patched, val_wins,
+                n_patches, k=args.val_lift_k,
+                n_sample_wins=args.eval_n_windows,
+                chunk=256, device=device,
+            )
+            print(f"    Lift@{args.val_lift_k} = {lift_k:.2f}x   prec@{args.val_lift_k} = {prec_k:.4f}")
+            results.append((epoch_name, lift_k, prec_k))
+            del model_eval
+            torch.cuda.empty_cache()
+
+        print(f"\n{'─'*55}")
+        print(f"  {'Epoch':<12}  {'Lift@K':>10}  {'Prec@K':>10}")
+        print(f"{'─'*55}")
+        best_name, best_lift, best_prec = max(results, key=lambda x: x[1])
+        for name, lift, prec in results:
+            marker = " ★" if name == best_name else ""
+            print(f"  {name:<12}  {lift:>10.2f}x  {prec:>10.4f}{marker}")
+        print(f"{'─'*55}")
+        print(f"  Best: {best_name}  Lift@{args.val_lift_k}={best_lift:.2f}x  prec={best_prec:.4f}")
+        return
 
     # ----------------------------------------------------------------
     # STEP 9  Build model & train
