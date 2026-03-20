@@ -52,4 +52,5 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --epochs 5 \
   --load_train_to_ram \
   --fire_season_only \
-  --skip_val
+  --skip_val \
+  --skip_forecast

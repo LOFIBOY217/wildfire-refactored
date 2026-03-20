@@ -794,6 +794,9 @@ def main():
     ap.add_argument("--skip_val", action="store_true",
                     help="Skip validation entirely during training. A checkpoint is saved "
                          "after every epoch. Use --evaluate separately after training.")
+    ap.add_argument("--skip_forecast", action="store_true",
+                    help="Skip Step 10 (forecast GeoTIFF generation) after training. "
+                         "Saves ~4 hours of disk IO. Run --forecast_only separately when needed.")
     ap.add_argument("--eval_epochs", action="store_true",
                     help="Evaluate all epoch_0N.pt checkpoints in ckpt_dir on the val set "
                          "using Lift@K. Skips training. Runs after data loading (cache hit "
@@ -1803,6 +1806,11 @@ def main():
     # ----------------------------------------------------------------
     # STEP 10  Generate forecast GeoTIFFs
     # ----------------------------------------------------------------
+    if args.skip_forecast:
+        print("\n[STEP 10] Skipped (--skip_forecast). "
+              "Run with --forecast_only to generate tifs later.")
+        return
+
     print("\n[STEP 10] Generating forecast tifs...")
     ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state"])
