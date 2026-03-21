@@ -3,10 +3,10 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --partition=gpubase_bynode_b1
+#SBATCH --partition=gpubase_bygpu_b3
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=320G
-#SBATCH --time=12:00:00
+#SBATCH --time=20:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_v2_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_v2_%j.err
 #SBATCH --account=def-inghaw
