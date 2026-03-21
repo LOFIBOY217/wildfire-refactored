@@ -23,6 +23,7 @@ PYTHON=$SCRATCH/venv-wildfire/bin/python
 cd $SCRATCH/wildfire-refactored
 export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
 export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Compiler/gcccore/proj/9.4.1/share/proj
+export PYTHONUNBUFFERED=1
 
 # Preflight checks
 echo "=== PREFLIGHT ==="
@@ -53,5 +54,6 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --epochs 20 \
   --lr 1e-4 \
   --lr_min 1e-6 \
+  --cache_dir /scratch/jiaqi217/meteo_cache \
   --load_to_ram \
   --skip_forecast

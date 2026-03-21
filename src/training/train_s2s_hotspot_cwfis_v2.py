@@ -800,6 +800,11 @@ def main():
     ap.add_argument("--skip_forecast", action="store_true",
                     help="Skip Step 10 (forecast GeoTIFF generation) after training. "
                          "Saves ~4 hours of disk IO. Run --forecast_only separately when needed.")
+    ap.add_argument("--prep_only", action="store_true",
+                    help="Build all data caches (meteo memmap, fire patches) then exit "
+                         "without training. Use with --cache_dir to persist the memmap to "
+                         "disk. Ideal for running on a CPU-only node before submitting a "
+                         "GPU training job.")
     ap.add_argument("--eval_epochs", action="store_true",
                     help="Evaluate all epoch_0N.pt checkpoints in ckpt_dir on the val set "
                          "using Lift@K. Skips training. Runs after data loading (cache hit "
@@ -1370,6 +1375,16 @@ def main():
             print("\n  MemoryGuard disabled (--mem_limit_pct=0)")
 
     # ----------------------------------------------------------------
+    # --prep_only: exit here after all caches are built
+    # ----------------------------------------------------------------
+    if args.prep_only:
+        print("\n[--prep_only] All caches built. Exiting before training.")
+        print(f"  meteo memmap : {mmap_path}")
+        print(f"  fire_patched : {fire_patched.shape}  (in RAM, not persisted separately)")
+        print("  Re-run without --prep_only to train using the cached memmap.")
+        return
+
+    # ----------------------------------------------------------------
     # STEP 8  Compute pos_weight; build BCE criterion
     # ----------------------------------------------------------------
     print("\n[STEP 8] Computing BCE pos_weight from pixel counts...")
@@ -1497,17 +1512,6 @@ def main():
             print(f"\n[--load_val_to_ram --fire_season_only] "
                   f"{len(val_wins_for_ram)}/{len(val_wins)} val windows kept "
                   f"(months {sorted(fire_months)})")
-
-        # Pre-sample val windows (same seed=0 as _compute_val_lift_k) so we only
-        # load T-indices for the windows actually used in val_loss computation.
-        # This reduces val RAM from ~90GB (all T-indices) to ~5GB (20 windows).
-        n_ram_wins = args.val_lift_sample_wins
-        if len(val_wins_for_ram) > n_ram_wins:
-            rng_ram = np.random.default_rng(0)
-            idx_ram = rng_ram.choice(len(val_wins_for_ram), size=n_ram_wins, replace=False)
-            val_wins_for_ram = [val_wins_for_ram[i] for i in sorted(idx_ram)]
-            print(f"  [load_val_to_ram] Pre-sampled {n_ram_wins}/{len(val_wins)} val windows "
-                  f"(seed=0) → only load their T-indices into RAM")
 
         for hs, he, ts, te in val_wins_for_ram:
             t_needed_val.update(range(hs, he))
