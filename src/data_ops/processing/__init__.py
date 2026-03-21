@@ -19,5 +19,5 @@ GRIB Backend:
 try:
     import cfgrib
     HAS_CFGRIB = True
-except ImportError:
+except (ImportError, RuntimeError, Exception):
     HAS_CFGRIB = False
