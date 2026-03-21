@@ -13,7 +13,7 @@
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
-module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1
+module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1 eccodes/2.31.0
 source $SCRATCH/venv-wildfire/bin/activate
 
 mkdir -p /scratch/jiaqi217/logs
