@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
-#SBATCH --partition=cpularge_bynode_b4
+#SBATCH --partition=cpularge_bycore_b4
 #SBATCH --mem=480G
 #SBATCH --time=3-00:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/prep_cache_%j.out
