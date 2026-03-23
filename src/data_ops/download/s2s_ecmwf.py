@@ -227,6 +227,10 @@ def _build_parser():
         "--wait", type=int, default=5,
         help="Seconds to wait between requests (default: 5)",
     )
+    parser.add_argument(
+        "--mon-thu-only", action="store_true",
+        help="Only request Mondays and Thursdays (pre-2023 ECMWF S2S schedule)",
+    )
     return parser
 
 
@@ -264,13 +268,15 @@ def main(argv=None):
     outdir.mkdir(parents=True, exist_ok=True)
 
     # ---- Determine date list ----
+    mon_thu_only = getattr(args, "mon_thu_only", False)
     if args.batch:
-        dates = generate_date_list(args.batch_start, args.batch_end)
+        dates = generate_date_list(args.batch_start, args.batch_end, mon_thu_only=mon_thu_only)
         print(f"[BATCH MODE] {len(dates)} dates: "
-              f"{args.batch_start} to {args.batch_end}\n")
+              f"{args.batch_start} to {args.batch_end}"
+              f"{' (Mon/Thu only)' if mon_thu_only else ''}\n")
     elif len(args.dates) == 2:
         start_date, end_date = args.dates
-        dates = generate_date_list(start_date, end_date)
+        dates = generate_date_list(start_date, end_date, mon_thu_only=mon_thu_only)
         print(f"[RANGE MODE] {len(dates)} dates: "
               f"{start_date} to {end_date}\n")
     elif len(args.dates) == 1:
