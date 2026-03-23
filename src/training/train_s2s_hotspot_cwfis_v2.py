@@ -1029,26 +1029,47 @@ def main():
           f"{aligned_dates[train_end_idx]} → {aligned_dates[-1]} "
           f"({T - train_end_idx} val days)")
 
-    # Stream stats from TRAINING dates only (one TIF at a time, ~25 MB/TIF)
-    print(f"\n  Computing per-channel stats (streaming, no full load)...")
-    _dyn_paths_all = [fwi_paths, t2m_paths, d2m_paths,
-                      ffmc_paths, dmc_paths, dc_paths, bui_paths]
-    ch_stats = []
-    for ch_name, ch_paths in zip(CHANNEL_NAMES[:7], _dyn_paths_all):
-        m, s, f = _stream_channel_stats(ch_paths[:train_end_idx])
-        ch_stats.append((m, s, f))
-        print(f"  {ch_name:8s}  mean={m:8.3f}  std={s:8.3f}")
+    # Check if stats are already cached on disk — skip expensive streaming if so.
+    # stats_path lives in cache_dir, named after the full date range + T.
+    _early_stats_path = None
+    if args.cache_dir:
+        _early_mmap_key  = (f"meteo_p{args.patch_size}_C{N_CHANNELS}_T{T}"
+                            f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
+        _early_stats_path = os.path.join(args.cache_dir,
+                                         _early_mmap_key.replace("_pf.dat", "_stats.npy"))
 
-    # Channel 7: fire_clim (static map — use spatial mean/std)
-    fc_valid = fire_clim[(fire_clim > -1e30) & np.isfinite(fire_clim)]
-    fc_mean  = float(fc_valid.mean()) if fc_valid.size else 0.0
-    fc_std   = float(fc_valid.std())  if fc_valid.size else 1.0
-    ch_stats.append((fc_mean, max(fc_std, 1e-6), fc_mean))
-    print(f"  {'fire_clim':8s}  mean={fc_mean:8.3f}  std={fc_std:8.3f}")
+    if (not args.overwrite and
+            _early_stats_path and os.path.exists(_early_stats_path)):
+        print(f"\n  Loading cached stats from {_early_stats_path} (skipping STEP 3 streaming)")
+        _s = np.load(_early_stats_path)
+        meteo_means = _s[0].astype(np.float32)
+        meteo_stds  = _s[1].astype(np.float32)
+        fills       = meteo_means.copy()
+        _dyn_paths_all = [fwi_paths, t2m_paths, d2m_paths,
+                          ffmc_paths, dmc_paths, dc_paths, bui_paths]
+        for i, name in enumerate(CHANNEL_NAMES):
+            print(f"  {name:12s}  mean={meteo_means[i]:8.3f}  std={meteo_stds[i]:8.3f}")
+    else:
+        # Stream stats from TRAINING dates only (one TIF at a time, ~25 MB/TIF)
+        print(f"\n  Computing per-channel stats (streaming, no full load)...")
+        _dyn_paths_all = [fwi_paths, t2m_paths, d2m_paths,
+                          ffmc_paths, dmc_paths, dc_paths, bui_paths]
+        ch_stats = []
+        for ch_name, ch_paths in zip(CHANNEL_NAMES[:7], _dyn_paths_all):
+            m, s, f = _stream_channel_stats(ch_paths[:train_end_idx])
+            ch_stats.append((m, s, f))
+            print(f"  {ch_name:8s}  mean={m:8.3f}  std={s:8.3f}")
 
-    meteo_means = np.array([s[0] for s in ch_stats], dtype=np.float32)
-    meteo_stds  = np.array([max(s[1], 1e-6) for s in ch_stats], dtype=np.float32)
-    fills       = np.array([s[2] for s in ch_stats], dtype=np.float32)
+        # Channel 7: fire_clim (static map — use spatial mean/std)
+        fc_valid = fire_clim[(fire_clim > -1e30) & np.isfinite(fire_clim)]
+        fc_mean  = float(fc_valid.mean()) if fc_valid.size else 0.0
+        fc_std   = float(fc_valid.std())  if fc_valid.size else 1.0
+        ch_stats.append((fc_mean, max(fc_std, 1e-6), fc_mean))
+        print(f"  {'fire_clim':8s}  mean={fc_mean:8.3f}  std={fc_std:8.3f}")
+
+        meteo_means = np.array([s[0] for s in ch_stats], dtype=np.float32)
+        meteo_stds  = np.array([max(s[1], 1e-6) for s in ch_stats], dtype=np.float32)
+        fills       = np.array([s[2] for s in ch_stats], dtype=np.float32)
 
     # ----------------------------------------------------------------
     # STEP 4  Load and rasterize CWFIS hotspots
