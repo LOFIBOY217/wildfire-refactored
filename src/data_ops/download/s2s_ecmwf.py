@@ -259,7 +259,8 @@ def main(argv=None):
     if args.outdir:
         outdir = Path(args.outdir)
     else:
-        outdir = Path(get_path(cfg, "s2s_dir", fallback=get_path(cfg, "ecmwf_dir")))
+        s2s_dir = cfg.get("paths", {}).get("s2s_dir") or get_path(cfg, "ecmwf_dir")
+        outdir = Path(s2s_dir)
     outdir.mkdir(parents=True, exist_ok=True)
 
     # ---- Determine date list ----
