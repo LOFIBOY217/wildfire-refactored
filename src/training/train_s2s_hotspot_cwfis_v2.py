@@ -1339,6 +1339,17 @@ def main():
               f"{fire_gb:.1f} GB  ({time.time()-t0_fire:.0f}s)")
     del fire_stack
 
+    # ----------------------------------------------------------------
+    # --prep_only: exit here — all caches built, no need for STEP 7b+
+    # ----------------------------------------------------------------
+    if args.prep_only:
+        print("\n[--prep_only] All caches built. Exiting before training.")
+        print(f"  meteo memmap : {mmap_path}  ({os.path.getsize(mmap_path)/1e9:.1f} GB)")
+        if fire_cache_path:
+            print(f"  fire_patched : {fire_cache_path}  ({os.path.getsize(fire_cache_path)/1e9:.1f} GB)")
+        print("  Re-run without --prep_only to train using the cached files.")
+        return
+
     # Build S2S windows
     all_windows = _build_s2s_windows(T, in_days, lead_start, lead_end)
     train_wins  = [w for w in all_windows
@@ -1433,16 +1444,6 @@ def main():
             print("\n  MemoryGuard disabled (psutil not installed — run: pip install psutil)")
         else:
             print("\n  MemoryGuard disabled (--mem_limit_pct=0)")
-
-    # ----------------------------------------------------------------
-    # --prep_only: exit here after all caches are built
-    # ----------------------------------------------------------------
-    if args.prep_only:
-        print("\n[--prep_only] All caches built. Exiting before training.")
-        print(f"  meteo memmap : {mmap_path}")
-        print(f"  fire_patched : {fire_patched.shape}  (in RAM, not persisted separately)")
-        print("  Re-run without --prep_only to train using the cached memmap.")
-        return
 
     # ----------------------------------------------------------------
     # STEP 8  Compute pos_weight; build BCE criterion
