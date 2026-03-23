@@ -778,6 +778,11 @@ def main():
                          "Set to '' to disable caching.")
     ap.add_argument("--overwrite", action="store_true",
                     help="Force rebuild all caches (fire_stack, meteo memmap, fire_patched).")
+    ap.add_argument("--chunk_patches", type=int, default=200,
+                    help="Patches per chunk during tf→pf transpose (default: 200). "
+                         "Larger values (e.g. 8000) are much faster on network filesystems "
+                         "but use more RAM: peak = chunk_patches × T × enc_dim × 2 bytes. "
+                         "8000 chunks use ~63 GB RAM for T=2427.")
     ap.add_argument("--load_to_ram", action="store_true",
                     help="Copy meteo_patched memmap into RAM after loading (needs ~240GB RAM). "
                          "Eliminates disk IO bottleneck during training.")
@@ -1187,50 +1192,80 @@ def main():
         #          then transpose to patch-first final file ──────────
         if mmap_path:
             tf_path = mmap_path.replace("_pf.dat", "_tf.dat")
-            print(f"  Creating time-first temp file: {tf_path}")
-            meteo_tf = np.memmap(tf_path, dtype='float16', mode='w+',
-                                 shape=(T, n_patches, enc_dim))
         else:
-            print(f"  cache_dir disabled — using in-memory float16 array "
-                  f"({meteo_mmap_gb:.1f} GB)")
-            meteo_tf = np.zeros((T, n_patches, enc_dim), dtype=np.float16)
+            tf_path = None
 
-        _dyn_paths_all = [fwi_paths, t2m_paths, d2m_paths,
-                          ffmc_paths, dmc_paths, dc_paths, bui_paths]
-        _fallbacks = [None] * 7
-        t0_mmap    = time.time()
+        # ── Resume path: tf.dat exists on disk but pf.dat does not ──
+        # This happens when a previous job was cancelled mid-transpose.
+        # We skip the expensive day-by-day streaming and go straight to
+        # the transpose step using the already-complete tf.dat file.
+        _tf_exists = (tf_path and os.path.exists(tf_path) and
+                      _stats_ok and
+                      os.path.getsize(tf_path) > 0)
 
-        for t_idx in range(T):
-            frame = np.empty((H, W, N_CHANNELS), dtype=np.float32)
-            for ch_idx, ch_paths in enumerate(_dyn_paths_all):
-                arr = _read_tif_safe(ch_paths[t_idx], _fallbacks[ch_idx])
-                _fallbacks[ch_idx] = arr
-                arr = np.nan_to_num(arr, nan=float(fills[ch_idx]),
-                                    posinf=float(fills[ch_idx]),
-                                    neginf=float(fills[ch_idx]))
-                frame[..., ch_idx] = arr
-            frame[..., 7] = fire_clim   # static channel
-            frame -= meteo_means
-            frame /= meteo_stds
-            np.clip(frame, -10.0, 10.0, out=frame)
-            meteo_tf[t_idx] = _patchify_frame(frame, P).astype(np.float16)
+        if _tf_exists:
+            expected_bytes = T * n_patches * enc_dim * 2  # float16
+            actual_bytes   = os.path.getsize(tf_path)
+            if actual_bytes < expected_bytes * 0.99:
+                print(f"  WARNING: tf.dat size {actual_bytes/1e9:.1f} GB < "
+                      f"expected {expected_bytes/1e9:.1f} GB — rebuilding from scratch.")
+                _tf_exists = False
 
-            if t_idx % 100 == 0 or t_idx == T - 1:
-                elapsed = time.time() - t0_mmap
-                eta_min = elapsed / max(t_idx, 1) * (T - t_idx) / 60
-                print(f"  day {t_idx+1:4d}/{T}  "
-                      f"({elapsed:.0f}s elapsed  ~{eta_min:.0f} min left)")
+        if _tf_exists:
+            print(f"  Found complete time-first file ({os.path.getsize(tf_path)/1e9:.1f} GB). "
+                  f"Skipping day-by-day streaming, resuming transpose.")
+            _saved_stats  = np.load(stats_path)
+            meteo_means   = _saved_stats[0]
+            meteo_stds    = _saved_stats[1]
+        else:
+            if tf_path:
+                print(f"  Creating time-first temp file: {tf_path}")
+                meteo_tf = np.memmap(tf_path, dtype='float16', mode='w+',
+                                     shape=(T, n_patches, enc_dim))
+            else:
+                print(f"  cache_dir disabled — using in-memory float16 array "
+                      f"({meteo_mmap_gb:.1f} GB)")
+                meteo_tf = np.zeros((T, n_patches, enc_dim), dtype=np.float16)
+
+            _dyn_paths_all = [fwi_paths, t2m_paths, d2m_paths,
+                              ffmc_paths, dmc_paths, dc_paths, bui_paths]
+            _fallbacks = [None] * 7
+            t0_mmap    = time.time()
+
+            for t_idx in range(T):
+                frame = np.empty((H, W, N_CHANNELS), dtype=np.float32)
+                for ch_idx, ch_paths in enumerate(_dyn_paths_all):
+                    arr = _read_tif_safe(ch_paths[t_idx], _fallbacks[ch_idx])
+                    _fallbacks[ch_idx] = arr
+                    arr = np.nan_to_num(arr, nan=float(fills[ch_idx]),
+                                        posinf=float(fills[ch_idx]),
+                                        neginf=float(fills[ch_idx]))
+                    frame[..., ch_idx] = arr
+                frame[..., 7] = fire_clim   # static channel
+                frame -= meteo_means
+                frame /= meteo_stds
+                np.clip(frame, -10.0, 10.0, out=frame)
+                meteo_tf[t_idx] = _patchify_frame(frame, P).astype(np.float16)
+
+                if t_idx % 100 == 0 or t_idx == T - 1:
+                    elapsed = time.time() - t0_mmap
+                    eta_min = elapsed / max(t_idx, 1) * (T - t_idx) / 60
+                    print(f"  day {t_idx+1:4d}/{T}  "
+                          f"({elapsed:.0f}s elapsed  ~{eta_min:.0f} min left)")
+
+            if tf_path:
+                meteo_tf.flush()
+                del meteo_tf   # Windows: release write handle before transpose
+                gc.collect()
+                np.save(stats_path, np.stack([meteo_means, meteo_stds]))
+                print(f"  Saved time-first: {tf_path}  "
+                      f"({os.path.getsize(tf_path)/1e9:.1f} GB)")
 
         if mmap_path:
-            meteo_tf.flush()
-            del meteo_tf   # Windows: release write handle before transpose
-            gc.collect()
-            np.save(stats_path, np.stack([meteo_means, meteo_stds]))
-            print(f"  Saved time-first: {tf_path}  "
-                  f"({os.path.getsize(tf_path)/1e9:.1f} GB)")
             # ── Transpose to patch-first ─────────────────────────────
             print(f"\n  Transposing to patch-first layout → {mmap_path}")
-            _transpose_tf_to_pf(tf_path, mmap_path, T, n_patches, enc_dim)
+            _transpose_tf_to_pf(tf_path, mmap_path, T, n_patches, enc_dim,
+                                 chunk_patches=args.chunk_patches)
             print(f"  Transpose complete. Deleting temp file: {tf_path}")
             os.remove(tf_path)
             print(f"  Saved patch-first: {mmap_path}  "

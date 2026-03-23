@@ -37,6 +37,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
   --num_workers 32 \
   --cache_dir /scratch/jiaqi217/meteo_cache \
+  --chunk_patches 8000 \
   --prep_only \
   --skip_forecast
 
