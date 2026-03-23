@@ -1080,29 +1080,34 @@ def main():
     print(f"  Date range    : {hotspot_df['date'].min()} to {hotspot_df['date'].max()}")
     run_meta["hotspot_records"] = int(len(hotspot_df))
 
-    fire_stack = rasterize_hotspots_batch(hotspot_df, aligned_dates, profile)
-    pos_rate   = fire_stack.mean()
-    print(f"  Fire stack shape     : {fire_stack.shape}")
-    print(f"  Mean fire pixel rate : {pos_rate:.6%}  (raw hotspot points)")
-    run_meta["positive_rate_raw"] = float(pos_rate)
-
     # -- Spatial dilation --
-    if args.dilate_radius > 0:
-        r = args.dilate_radius
+    r = args.dilate_radius if args.dilate_radius > 0 else 0
+    if r > 0 and args.cache_dir:
         cache_key  = (f"fire_dilated_r{r}"
                       f"_{aligned_dates[0]}_{aligned_dates[-1]}"
                       f"_{H}x{W}.npy")
-        cache_path = (os.path.join(args.cache_dir, cache_key)
-                      if args.cache_dir else None)
+        cache_path = os.path.join(args.cache_dir, cache_key)
+    else:
+        cache_path = None
 
-        if cache_path and os.path.exists(cache_path):
-            print(f"\n  Loading cached dilated fire_stack: {cache_path}")
-            t0_load = time.time()
-            fire_stack = np.load(cache_path)
-            pos_rate_dil = fire_stack.mean()
-            print(f"  Loaded in {time.time()-t0_load:.0f}s  "
-                  f"positive_rate={pos_rate_dil:.4%}")
-        else:
+    if cache_path and os.path.exists(cache_path) and not args.overwrite:
+        # Fast path: dilated cache exists — skip rasterization entirely
+        print(f"\n  Found cached dilated fire_stack — skipping rasterization: {cache_path}")
+        t0_load = time.time()
+        fire_stack = np.load(cache_path)
+        pos_rate_dil = fire_stack.mean()
+        print(f"  Loaded in {time.time()-t0_load:.0f}s  positive_rate={pos_rate_dil:.4%}")
+        run_meta["dilate_radius"]         = r
+        run_meta["positive_rate_dilated"] = float(pos_rate_dil)
+    else:
+        # Slow path: rasterize from hotspot CSV, then dilate
+        fire_stack = rasterize_hotspots_batch(hotspot_df, aligned_dates, profile)
+        pos_rate   = fire_stack.mean()
+        print(f"  Fire stack shape     : {fire_stack.shape}")
+        print(f"  Mean fire pixel rate : {pos_rate:.6%}  (raw hotspot points)")
+        run_meta["positive_rate_raw"] = float(pos_rate)
+
+        if r > 0:
             yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
             disk   = (xx ** 2 + yy ** 2 <= r ** 2)
             print(f"\n  Dilating fire labels: radius={r} px  "
@@ -1125,12 +1130,11 @@ def main():
                 np.save(cache_path, fire_stack)
                 print(f"  Cached to: {cache_path}  "
                       f"({os.path.getsize(cache_path)/1e9:.1f} GB)")
-
-        run_meta["dilate_radius"]         = r
-        run_meta["positive_rate_dilated"] = float(pos_rate_dil)
-    else:
-        run_meta["dilate_radius"]         = 0
-        run_meta["positive_rate_dilated"] = float(pos_rate)
+            run_meta["dilate_radius"]         = r
+            run_meta["positive_rate_dilated"] = float(pos_rate_dil)
+        else:
+            run_meta["dilate_radius"]         = 0
+            run_meta["positive_rate_dilated"] = float(pos_rate)
 
     # ----------------------------------------------------------------
     # STEP 5  Log normalisation stats (computed in STEP 3 by streaming)
