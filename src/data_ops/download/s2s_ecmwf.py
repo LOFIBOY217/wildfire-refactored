@@ -104,13 +104,13 @@ def download_single_date(server, date_str, outdir):
 # Date utilities
 # ------------------------------------------------------------------ #
 
-def generate_date_list(start_date, end_date, issue_days_only=True):
-    """Generate list of S2S issue date strings between *start_date* and *end_date* (inclusive).
+def generate_date_list(start_date, end_date, mon_thu_only=False):
+    """Generate list of date strings between *start_date* and *end_date* (inclusive).
 
     Args:
-        issue_days_only: If True (default), only return Mondays (weekday=0) and
-                         Thursdays (weekday=3), which are the only days ECMWF
-                         issues S2S forecasts. All other dates would return no data.
+        mon_thu_only: If True, restrict to Mondays and Thursdays only (older
+                      ECMWF S2S schedule, pre ~2023). Default False = try every
+                      day and let the API skip non-issue dates automatically.
     """
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
@@ -118,7 +118,7 @@ def generate_date_list(start_date, end_date, issue_days_only=True):
     dates = []
     current = start
     while current <= end:
-        if not issue_days_only or current.weekday() in (0, 3):  # 0=Mon, 3=Thu
+        if not mon_thu_only or current.weekday() in (0, 3):  # 0=Mon, 3=Thu
             dates.append(current.strftime("%Y-%m-%d"))
         current += timedelta(days=1)
 
@@ -265,12 +265,12 @@ def main(argv=None):
     # ---- Determine date list ----
     if args.batch:
         dates = generate_date_list(args.batch_start, args.batch_end)
-        print(f"[BATCH MODE] {len(dates)} issue dates (Mon/Thu): "
+        print(f"[BATCH MODE] {len(dates)} dates: "
               f"{args.batch_start} to {args.batch_end}\n")
     elif len(args.dates) == 2:
         start_date, end_date = args.dates
         dates = generate_date_list(start_date, end_date)
-        print(f"[RANGE MODE] {len(dates)} issue dates (Mon/Thu): "
+        print(f"[RANGE MODE] {len(dates)} dates: "
               f"{start_date} to {end_date}\n")
     elif len(args.dates) == 1:
         dates = [args.dates[0]]
