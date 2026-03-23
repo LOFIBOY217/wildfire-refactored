@@ -104,15 +104,22 @@ def download_single_date(server, date_str, outdir):
 # Date utilities
 # ------------------------------------------------------------------ #
 
-def generate_date_list(start_date, end_date):
-    """Generate list of date strings between *start_date* and *end_date* (inclusive)."""
+def generate_date_list(start_date, end_date, issue_days_only=True):
+    """Generate list of S2S issue date strings between *start_date* and *end_date* (inclusive).
+
+    Args:
+        issue_days_only: If True (default), only return Mondays (weekday=0) and
+                         Thursdays (weekday=3), which are the only days ECMWF
+                         issues S2S forecasts. All other dates would return no data.
+    """
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
 
     dates = []
     current = start
     while current <= end:
-        dates.append(current.strftime("%Y-%m-%d"))
+        if not issue_days_only or current.weekday() in (0, 3):  # 0=Mon, 3=Thu
+            dates.append(current.strftime("%Y-%m-%d"))
         current += timedelta(days=1)
 
     return dates
@@ -202,15 +209,19 @@ def _build_parser():
     )
     parser.add_argument(
         "--batch", action="store_true",
-        help="Download the full default date range (2025-01-26 to 2025-11-15)",
+        help="Download all S2S issue dates (Mon/Thu) from batch-start to batch-end",
     )
     parser.add_argument(
-        "--batch-start", type=str, default="2025-01-26",
-        help="Override batch start date (default: 2025-01-26)",
+        "--batch-start", type=str, default="2017-01-01",
+        help="Batch start date (default: 2017-01-01)",
     )
     parser.add_argument(
-        "--batch-end", type=str, default="2025-11-15",
-        help="Override batch end date (default: 2025-11-15)",
+        "--batch-end", type=str, default=datetime.today().strftime("%Y-%m-%d"),
+        help="Batch end date (default: today)",
+    )
+    parser.add_argument(
+        "--outdir", type=str, default=None,
+        help="Override output directory (default: s2s_dir from config)",
     )
     parser.add_argument(
         "--wait", type=int, default=5,
@@ -245,18 +256,21 @@ def main(argv=None):
         sys.exit(1)
 
     # ---- Resolve output directory ----
-    outdir = Path(get_path(cfg, "ecmwf_dir"))
+    if args.outdir:
+        outdir = Path(args.outdir)
+    else:
+        outdir = Path(get_path(cfg, "s2s_dir", fallback=get_path(cfg, "ecmwf_dir")))
     outdir.mkdir(parents=True, exist_ok=True)
 
     # ---- Determine date list ----
     if args.batch:
         dates = generate_date_list(args.batch_start, args.batch_end)
-        print(f"[BATCH MODE] Will download {len(dates)} dates: "
+        print(f"[BATCH MODE] {len(dates)} issue dates (Mon/Thu): "
               f"{args.batch_start} to {args.batch_end}\n")
     elif len(args.dates) == 2:
         start_date, end_date = args.dates
         dates = generate_date_list(start_date, end_date)
-        print(f"[RANGE MODE] Will download {len(dates)} dates: "
+        print(f"[RANGE MODE] {len(dates)} issue dates (Mon/Thu): "
               f"{start_date} to {end_date}\n")
     elif len(args.dates) == 1:
         dates = [args.dates[0]]

@@ -10,6 +10,7 @@ paths:
   isi_dir:      "/scratch/jiaqi217/wildfire-refactored/data/isi_data"
   bui_dir:      "/scratch/jiaqi217/wildfire-refactored/data/bui_data"
   ecmwf_dir:    "/scratch/jiaqi217/wildfire-refactored/data/ecmwf_observation"
+  s2s_dir:      "/scratch/jiaqi217/wildfire-refactored/data/s2s_forecast"
   era5_dir:     "/scratch/jiaqi217/wildfire-refactored/data/era5_on_fwi_grid"
   observation_dir: "/scratch/jiaqi217/wildfire-refactored/data/ecmwf_observation"
   wind_u_dir:   "/scratch/jiaqi217/wildfire-refactored/data/era5_wind_u"
