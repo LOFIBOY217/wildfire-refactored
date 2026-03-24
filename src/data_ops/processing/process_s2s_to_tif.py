@@ -37,16 +37,16 @@ from pathlib import Path
 import numpy as np
 
 try:
-    import cfgrib
-    _CFGRIB_OK = True
+    import eccodes as _eccodes
+    _ECCODES_OK = True
 except Exception:
-    _CFGRIB_OK = False
+    _ECCODES_OK = False
 
 import rasterio
 from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
-from rasterio.warp import calculate_default_transform, reproject
+from rasterio.warp import reproject
 
 try:
     from src.config import load_config, get_path, add_config_argument
@@ -62,13 +62,12 @@ except ModuleNotFoundError:
 # Constants
 # ---------------------------------------------------------------------------
 
-# GRIB short-name / cfgrib name → output channel name
-# cfgrib uses ERA5-style short names; S2S uses the same ECMWF parametrisation
+# GRIB shortName → output channel name  (eccodes uses ECMWF shortNames directly)
 GRIB_TO_CHAN = {
-    "t2m":  "2t",    # 2m temperature   (cfgrib name)
-    "d2m":  "2d",    # 2m dewpoint      (cfgrib name)
+    "2t":   "2t",    # 2m temperature
+    "2d":   "2d",    # 2m dewpoint
     "tcw":  "tcw",   # total column water
-    "sm20": "sm20",  # volumetric soil water layer 1  (cfgrib uses param shortName directly)
+    "sm20": "sm20",  # volumetric soil water layer 1
     "st20": "st20",  # soil temperature layer 1
 }
 
@@ -139,6 +138,90 @@ def reproject_to_ref(
 # Core processing
 # ---------------------------------------------------------------------------
 
+def _read_grib_eccodes(grib_path: Path) -> dict:
+    """
+    Read all messages from a GRIB file using eccodes (fast, no index building).
+
+    Returns:
+        chan_arrays: dict  chan_name → {step_start_h: (arr_2d float32, src_crs, src_transform)}
+    """
+    import eccodes
+
+    chan_arrays = {}
+    src_crs = CRS.from_epsg(4326)
+    grid_info = {}   # shortName → (nrows, ncols, lat_min, lat_max, lon_min, lon_max, flip_lat)
+
+    with open(grib_path, "rb") as f:
+        while True:
+            msg = eccodes.codes_grib_new_from_file(f)
+            if msg is None:
+                break
+
+            try:
+                short_name = eccodes.codes_get(msg, "shortName")
+                chan_name  = GRIB_TO_CHAN.get(short_name)
+                if chan_name is None:
+                    continue
+
+                # Parse step range: "336-360" → step_start=336
+                step_range = eccodes.codes_get(msg, "stepRange")  # e.g. "336-360"
+                if "-" in str(step_range):
+                    step_start_h = int(str(step_range).split("-")[0])
+                else:
+                    step_start_h = int(step_range)
+
+                lead_day = step_start_h // 24   # 336 → 14
+
+                # Grid dimensions
+                nrows = eccodes.codes_get(msg, "Nj")
+                ncols = eccodes.codes_get(msg, "Ni")
+
+                # Values — eccodes applies bitmap automatically (missing → nan)
+                missing_val = eccodes.codes_get(msg, "missingValue")
+                values = eccodes.codes_get_values(msg).reshape(nrows, ncols).astype(np.float32)
+
+                # Replace ECMWF missing value sentinel with NaN
+                values[values == missing_val] = np.nan
+
+                # Lat/lon for transform (only need to compute once per shortName)
+                if short_name not in grid_info:
+                    lats_1d = eccodes.codes_get_array(msg, "latitudes")
+                    lons_1d = eccodes.codes_get_array(msg, "longitudes")
+                    lats_2d = lats_1d.reshape(nrows, ncols)
+                    lons_2d = lons_1d.reshape(nrows, ncols)
+
+                    lat_min = float(lats_2d.min())
+                    lat_max = float(lats_2d.max())
+                    # ECMWF uses 0–360 longitude; convert to -180–180 for EPSG:4326
+                    lons_180 = np.where(lons_2d > 180, lons_2d - 360, lons_2d)
+                    lon_min  = float(lons_180.min())
+                    lon_max  = float(lons_180.max())
+                    flip_lat = (lats_2d[0, 0] > lats_2d[-1, 0])   # N→S → True
+                    grid_info[short_name] = (nrows, ncols, lat_min, lat_max,
+                                             lon_min, lon_max, flip_lat)
+                else:
+                    _, _, lat_min, lat_max, lon_min, lon_max, flip_lat = grid_info[short_name]
+
+                # Kelvin → Celsius
+                if chan_name in KELVIN_CHANS:
+                    values -= 273.15
+
+                # Flip N→S to S→N so rasterio from_bounds works correctly
+                if flip_lat:
+                    values = np.flipud(values)
+
+                src_transform = from_bounds(lon_min, lat_min, lon_max, lat_max, ncols, nrows)
+
+                if chan_name not in chan_arrays:
+                    chan_arrays[chan_name] = {}
+                chan_arrays[chan_name][lead_day] = (values, src_crs, src_transform)
+
+            finally:
+                eccodes.codes_release(msg)
+
+    return chan_arrays
+
+
 def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
                       skip_existing: bool = True) -> bool:
     """
@@ -146,8 +229,8 @@ def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
 
     Returns True on success, False on failure.
     """
-    if not _CFGRIB_OK:
-        print("[ERROR] cfgrib not available. Load the eccodes module first.", file=sys.stderr)
+    if not _ECCODES_OK:
+        print("[ERROR] eccodes not available. Run: module load eccodes/2.31.0", file=sys.stderr)
         return False
 
     # Parse issue date from filename: s2s_ecmf_cf_YYYY-MM-DD.grib
@@ -173,92 +256,11 @@ def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
     print(f"{'='*70}")
 
     try:
-        # Open all GRIB messages grouped by step / variable
-        datasets = cfgrib.open_datasets(str(grib_path))
+        chan_arrays = _read_grib_eccodes(grib_path)
     except Exception as exc:
-        print(f"[ERROR] cfgrib.open_datasets failed: {exc}", file=sys.stderr)
+        print(f"[ERROR] reading {grib_path.name}: {exc}", file=sys.stderr)
         traceback.print_exc()
         return False
-
-    # Gather available channels: chan_name → xarray DataArray indexed by stepRange
-    chan_arrays = {}   # chan_name → {step_start_h: np.ndarray 2-D}
-
-    for ds in datasets:
-        for grib_name, chan_name in GRIB_TO_CHAN.items():
-            if grib_name not in ds.data_vars:
-                continue
-
-            da = ds[grib_name]
-
-            # Latitude / longitude
-            lats = ds.latitude.values
-            lons = ds.longitude.values
-
-            # Build source transform (EPSG:4326)
-            lat_min, lat_max = float(lats.min()), float(lats.max())
-            lon_min, lon_max = float(lons.min()), float(lons.max())
-            if lats[0] > lats[-1]:
-                flip_lat = True
-            else:
-                flip_lat = False
-
-            src_crs = CRS.from_epsg(4326)
-
-            # Iterate over step dimension
-            # cfgrib may store step as timedelta or as a coordinate
-            step_dim = None
-            for dim in da.dims:
-                if "step" in dim.lower():
-                    step_dim = dim
-                    break
-
-            if step_dim is None:
-                # Single step
-                steps = [None]
-            else:
-                steps = da[step_dim].values
-
-            if chan_name not in chan_arrays:
-                chan_arrays[chan_name] = {}
-
-            for step_val in steps:
-                if step_val is not None:
-                    arr = da.sel({step_dim: step_val}).values
-                    # stepRange attribute: e.g. "336-360"
-                    # cfgrib stores the step as the END of the 24h range
-                    # e.g. step range 336-360h → step value = 360h (15 days)
-                    # We key by step_end_h so lookup uses (lead_day+1)*24
-                    try:
-                        import pandas as pd
-                        step_end_h = int(pd.Timedelta(step_val).total_seconds() / 3600)
-                    except Exception:
-                        step_end_h = 360  # fallback: first lead end
-                else:
-                    arr = da.values
-                    step_start_h = 336  # default to first lead
-
-                if arr.ndim != 2:
-                    arr = np.squeeze(arr)
-                if arr.ndim != 2:
-                    continue
-
-                # Kelvin → Celsius
-                if chan_name in KELVIN_CHANS:
-                    arr = arr - 273.15
-
-                # Flip latitude if needed (N→S to S→N)
-                if flip_lat:
-                    arr = np.flipud(arr)
-                    _lat_min, _lat_max = lat_min, lat_max
-                else:
-                    _lat_min, _lat_max = lat_min, lat_max
-
-                h, w = arr.shape
-                src_transform = from_bounds(lon_min, _lat_min, lon_max, _lat_max, w, h)
-
-                chan_arrays[chan_name][step_end_h] = (
-                    arr.astype(np.float32), src_crs, src_transform
-                )
 
     if not chan_arrays:
         print(f"[ERROR] No recognised variables found in {grib_path.name}", file=sys.stderr)
@@ -277,7 +279,6 @@ def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
     # Write one TIF per lead day
     n_ok = 0
     for lead_day in LEAD_DAYS:
-        step_end_h = (lead_day + 1) * 24      # e.g. lead 14 → step_end 360h (range 336-360)
         out_tif = date_dir / f"lead{lead_day:02d}.tif"
 
         if skip_existing and out_tif.exists() and out_tif.stat().st_size > 0:
@@ -287,8 +288,8 @@ def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
         bands = []
         missing = []
         for chan in ["2t", "2d", "tcw", "sm20", "st20"]:
-            if chan in chan_arrays and step_end_h in chan_arrays[chan]:
-                arr, src_crs_c, src_tf = chan_arrays[chan][step_end_h]
+            if chan in chan_arrays and lead_day in chan_arrays[chan]:
+                arr, src_crs_c, src_tf = chan_arrays[chan][lead_day]
                 reprojected = reproject_to_ref(arr, src_crs_c, src_tf, ref_path)
                 bands.append(reprojected)
             else:
