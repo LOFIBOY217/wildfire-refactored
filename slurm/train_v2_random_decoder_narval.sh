@@ -6,7 +6,7 @@
 #SBATCH --partition=gpubase_bygpu_b3
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=320G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_dec_random_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_dec_random_%j.err
 #SBATCH --account=def-inghaw
