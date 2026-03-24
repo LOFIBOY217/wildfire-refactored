@@ -65,11 +65,11 @@ except ModuleNotFoundError:
 # GRIB short-name / cfgrib name → output channel name
 # cfgrib uses ERA5-style short names; S2S uses the same ECMWF parametrisation
 GRIB_TO_CHAN = {
-    "t2m":   "2t",    # 2m temperature
-    "d2m":   "2d",    # 2m dewpoint
-    "tcw":   "tcw",   # total column water
-    "swvl1": "sm20",  # volumetric soil water layer 1
-    "stl1":  "st20",  # soil temperature layer 1
+    "t2m":  "2t",    # 2m temperature   (cfgrib name)
+    "d2m":  "2d",    # 2m dewpoint      (cfgrib name)
+    "tcw":  "tcw",   # total column water
+    "sm20": "sm20",  # volumetric soil water layer 1  (cfgrib uses param shortName directly)
+    "st20": "st20",  # soil temperature layer 1
 }
 
 # Channels stored in Kelvin in GRIB → convert to Celsius
@@ -225,17 +225,14 @@ def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
                 if step_val is not None:
                     arr = da.sel({step_dim: step_val}).values
                     # stepRange attribute: e.g. "336-360"
+                    # cfgrib stores the step as the END of the 24h range
+                    # e.g. step range 336-360h → step value = 360h (15 days)
+                    # We key by step_end_h so lookup uses (lead_day+1)*24
                     try:
-                        step_range = str(da.sel({step_dim: step_val}).attrs.get("GRIB_stepRange", ""))
-                        if "-" in step_range:
-                            step_start_h = int(step_range.split("-")[0])
-                        else:
-                            # Instantaneous: step is end hour
-                            import pandas as pd
-                            step_start_h = int(pd.Timedelta(step_val).total_seconds() / 3600)
-                    except Exception:
                         import pandas as pd
-                        step_start_h = int(pd.Timedelta(step_val).total_seconds() / 3600)
+                        step_end_h = int(pd.Timedelta(step_val).total_seconds() / 3600)
+                    except Exception:
+                        step_end_h = 360  # fallback: first lead end
                 else:
                     arr = da.values
                     step_start_h = 336  # default to first lead
@@ -259,7 +256,7 @@ def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
                 h, w = arr.shape
                 src_transform = from_bounds(lon_min, _lat_min, lon_max, _lat_max, w, h)
 
-                chan_arrays[chan_name][step_start_h] = (
+                chan_arrays[chan_name][step_end_h] = (
                     arr.astype(np.float32), src_crs, src_transform
                 )
 
@@ -280,7 +277,7 @@ def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
     # Write one TIF per lead day
     n_ok = 0
     for lead_day in LEAD_DAYS:
-        step_start_h = lead_day * 24          # e.g. lead 14 → step 336
+        step_end_h = (lead_day + 1) * 24      # e.g. lead 14 → step_end 360h (range 336-360)
         out_tif = date_dir / f"lead{lead_day:02d}.tif"
 
         if skip_existing and out_tif.exists() and out_tif.stat().st_size > 0:
@@ -290,8 +287,8 @@ def process_grib_file(grib_path: Path, out_dir: Path, ref_path: Path,
         bands = []
         missing = []
         for chan in ["2t", "2d", "tcw", "sm20", "st20"]:
-            if chan in chan_arrays and step_start_h in chan_arrays[chan]:
-                arr, src_crs_c, src_tf = chan_arrays[chan][step_start_h]
+            if chan in chan_arrays and step_end_h in chan_arrays[chan]:
+                arr, src_crs_c, src_tf = chan_arrays[chan][step_end_h]
                 reprojected = reproject_to_ref(arr, src_crs_c, src_tf, ref_path)
                 bands.append(reprojected)
             else:
