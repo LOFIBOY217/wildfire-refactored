@@ -188,19 +188,36 @@ def _read_grib_eccodes(grib_path: Path) -> dict:
                     lats_1d = eccodes.codes_get_array(msg, "latitudes")
                     lons_1d = eccodes.codes_get_array(msg, "longitudes")
                     lats_2d = lats_1d.reshape(nrows, ncols)
-                    lons_2d = lons_1d.reshape(nrows, ncols)
+                    lon_row  = lons_1d[:ncols]   # first-row longitudes (0 … 358.5)
 
-                    lat_min = float(lats_2d.min())
-                    lat_max = float(lats_2d.max())
-                    # ECMWF uses 0–360 longitude; convert to -180–180 for EPSG:4326
-                    lons_180 = np.where(lons_2d > 180, lons_2d - 360, lons_2d)
-                    lon_min  = float(lons_180.min())
-                    lon_max  = float(lons_180.max())
+                    lat_min  = float(lats_2d.min())
+                    lat_max  = float(lats_2d.max())
                     flip_lat = (lats_2d[0, 0] > lats_2d[-1, 0])   # N→S → True
-                    grid_info[short_name] = (nrows, ncols, lat_min, lat_max,
-                                             lon_min, lon_max, flip_lat)
+
+                    # Detect 0-360 grid and compute roll split
+                    uses_360 = bool(lon_row[-1] > 180)
+                    if uses_360:
+                        dx = float(lon_row[1] - lon_row[0])          # 1.5°
+                        split = int(np.searchsorted(lon_row, 180.0, side="right"))
+                        # After roll: westernmost center = lon_row[split] - 360
+                        lon_min = float(lon_row[split] - 360) - dx / 2
+                        lon_max = float(lon_row[split - 1]) + dx / 2
+                    else:
+                        dx = float(lon_row[1] - lon_row[0])
+                        split = 0
+                        lon_min = float(lon_row[0])  - dx / 2
+                        lon_max = float(lon_row[-1]) + dx / 2
+
+                    dy = abs(lats_2d[1, 0] - lats_2d[0, 0])
+                    grid_info[short_name] = (nrows, ncols,
+                                             lat_min, lat_max, dy,
+                                             lon_min, lon_max, dx,
+                                             flip_lat, split)
                 else:
-                    _, _, lat_min, lat_max, lon_min, lon_max, flip_lat = grid_info[short_name]
+                    (nrows, ncols,
+                     lat_min, lat_max, dy,
+                     lon_min, lon_max, dx,
+                     flip_lat, split) = grid_info[short_name]
 
                 # Kelvin → Celsius
                 if chan_name in KELVIN_CHANS:
@@ -210,7 +227,13 @@ def _read_grib_eccodes(grib_path: Path) -> dict:
                 if flip_lat:
                     values = np.flipud(values)
 
-                src_transform = from_bounds(lon_min, lat_min, lon_max, lat_max, ncols, nrows)
+                # Roll 0-360 → -180-180 column ordering
+                if split > 0:
+                    values = np.roll(values, -split, axis=1)
+
+                src_transform = from_bounds(lon_min, lat_min - dy / 2,
+                                            lon_max, lat_max + dy / 2,
+                                            ncols, nrows)
 
                 if chan_name not in chan_arrays:
                     chan_arrays[chan_name] = {}
