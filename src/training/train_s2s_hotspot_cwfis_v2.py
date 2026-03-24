@@ -1642,6 +1642,15 @@ def main():
                           pin_memory=True, num_workers=args.num_workers,
                           persistent_workers=(args.num_workers > 0))
 
+    # Pre-compute fire-season val windows for Lift@K (avoids 0.00x from winter windows)
+    _lift_fire_months = {4, 5, 6, 7, 8, 9, 10}
+    val_wins_lift = [
+        (hs, he, ts, te) for hs, he, ts, te in val_wins
+        if all(aligned_dates[t].month in _lift_fire_months for t in range(hs, he))
+        and all(aligned_dates[t].month in _lift_fire_months for t in range(ts, te))
+    ]
+    print(f"  Val Lift@K windows (fire season only): {len(val_wins_lift)}/{len(val_wins)}")
+
     # ----------------------------------------------------------------
     # EVAL EPOCHS MODE  (--eval_epochs)
     # ----------------------------------------------------------------
@@ -1839,6 +1848,18 @@ def main():
                 break
             val_loss /= val_samples
 
+            # Lift@K on fire-season val windows
+            if val_wins_lift:
+                _m = _compute_val_lift_k(
+                    model, meteo_patched, fire_patched, val_wins_lift,
+                    n_patches, k=args.val_lift_k,
+                    n_sample_wins=args.val_lift_sample_wins,
+                    chunk=256, device=device,
+                )
+                val_lift_k = _m["lift_k"]
+                val_prec_k = _m["precision_k"]
+            model.train()
+
         # ── Epoch summary ──────────────────────────────────────────────
         elapsed_total = time.time() - train_started_at
         eta_total_min = elapsed_total / epoch * (args.epochs - epoch) / 60
@@ -1900,18 +1921,21 @@ def main():
             "n_channels":      N_CHANNELS,
             "best_val_lift_k": val_lift_k,
         }
+        # Always save epoch checkpoint for resume
+        epoch_ckpt = os.path.join(ckpt_dir, f"epoch_{epoch:02d}.pt")
+        torch.save(ckpt_payload, epoch_ckpt)
+        print(f"           → epoch_{epoch:02d}.pt saved")
+
         if args.skip_val:
-            # Save every epoch as epoch_N.pt; also overwrite best_model.pt (= last epoch)
-            epoch_ckpt = os.path.join(ckpt_dir, f"epoch_{epoch:02d}.pt")
-            torch.save(ckpt_payload, epoch_ckpt)
             torch.save(ckpt_payload, best_ckpt)
-            print(f"           ★ Checkpoint saved → {epoch_ckpt}")
         else:
-            if val_loss < best_val_loss:
-                best_val_loss   = val_loss
+            # Best model selected by Lift@K (not val_loss)
+            if val_lift_k > best_val_lift_k:
                 best_val_lift_k = val_lift_k
+                best_val_loss   = val_loss
                 torch.save(ckpt_payload, best_ckpt)
-                print(f"           ★ New best  val_loss={val_loss:.6f}  → checkpoint saved")
+                print(f"           ★ New best  Lift@{args.val_lift_k}={val_lift_k:.2f}x  "
+                      f"val_loss={val_loss:.6f}  → best_model.pt saved")
 
     print(f"\n  Best val Lift@{args.val_lift_k}: {best_val_lift_k:.2f}x  "
           f"(val_loss at that epoch: {best_val_loss:.6f})  saved → {best_ckpt}")
