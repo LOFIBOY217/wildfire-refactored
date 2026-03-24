@@ -99,19 +99,53 @@ N_CHANNELS    = len(CHANNEL_NAMES)   # 8
 # Datasets  (identical to V1 — fully generic w.r.t. enc_dim)
 # ------------------------------------------------------------------ #
 
+def _make_dec_ablation(decoder_mode, x_enc, dec_days, dec_dim):
+    """
+    Build decoder input tensor for ablation modes.
+
+    decoder_mode:
+      "zeros"       — all zeros (shape: dec_days × dec_dim)
+      "random"      — i.i.d. standard normal noise; no information leakage
+      "climatology" — repeat the per-feature mean of the encoder window
+                      (shape: dec_days × dec_dim); represents "no forecast,
+                      just use the recent past average"
+    x_enc shape: (enc_days, dec_dim)
+    """
+    if decoder_mode == "zeros":
+        return np.zeros((dec_days, dec_dim), dtype=np.float32)
+    elif decoder_mode == "random":
+        return np.random.randn(dec_days, dec_dim).astype(np.float32)
+    elif decoder_mode == "climatology":
+        # Mean over encoder days → (dec_dim,), then tile to (dec_days, dec_dim)
+        enc_mean = x_enc.mean(axis=0, keepdims=True)          # (1, dec_dim)
+        return np.repeat(enc_mean, dec_days, axis=0)           # (dec_days, dec_dim)
+    else:
+        raise NotImplementedError(f"decoder_mode='{decoder_mode}' not supported")
+
+
 class S2SHotspotDatasetMixed(Dataset):
     """
     Training dataset: pos_pairs (patches with ≥1 fire pixel in target window)
     mixed with neg_ratio × neg_pairs (pure-background patches).
+
+    decoder_mode:
+      "oracle"      — x_dec = future ERA5 obs (default, highest accuracy)
+      "zeros"       — x_dec = all zeros
+      "random"      — x_dec = i.i.d. standard normal noise
+      "climatology" — x_dec = encoder-period mean repeated across decoder days
+      "s2s"         — x_dec from ECMWF S2S forecast (not yet implemented)
     """
 
-    def __init__(self, meteo_patched, fire_patched, windows, hw, grid, all_pairs):
-        self.meteo     = meteo_patched
-        self.fire      = fire_patched
-        self.windows   = windows
-        self.hw        = hw
-        self.grid      = grid
-        self.all_pairs = all_pairs
+    def __init__(self, meteo_patched, fire_patched, windows, hw, grid, all_pairs,
+                 decoder_mode="oracle", dec_dim=None):
+        self.meteo        = meteo_patched
+        self.fire         = fire_patched
+        self.windows      = windows
+        self.hw           = hw
+        self.grid         = grid
+        self.all_pairs    = all_pairs
+        self.decoder_mode = decoder_mode
+        self.dec_dim      = dec_dim or meteo_patched.shape[2]
 
     def __len__(self):
         return len(self.all_pairs)
@@ -122,8 +156,11 @@ class S2SHotspotDatasetMixed(Dataset):
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
         x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
-        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
-        y     = self.fire[ts:te, patch_i, :].astype(np.float32)
+        if self.decoder_mode == "oracle":
+            x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
+        else:
+            x_dec = _make_dec_ablation(self.decoder_mode, x_enc, te - ts, self.dec_dim)
+        y = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
             torch.from_numpy(x_enc),
             torch.from_numpy(x_dec),
@@ -134,13 +171,16 @@ class S2SHotspotDatasetMixed(Dataset):
 class S2SHotspotDatasetUnfiltered(Dataset):
     """Unfiltered dataset for validation — all patches, no pos/neg sampling."""
 
-    def __init__(self, meteo_patched, fire_patched, windows, hw, grid):
-        self.meteo     = meteo_patched
-        self.fire      = fire_patched
-        self.windows   = windows
-        self.hw        = hw
-        self.grid      = grid
-        self.n_patches = meteo_patched.shape[0]   # (n_patches, T, enc_dim)
+    def __init__(self, meteo_patched, fire_patched, windows, hw, grid,
+                 decoder_mode="oracle", dec_dim=None):
+        self.meteo        = meteo_patched
+        self.fire         = fire_patched
+        self.windows      = windows
+        self.hw           = hw
+        self.grid         = grid
+        self.n_patches    = meteo_patched.shape[0]   # (n_patches, T, enc_dim)
+        self.decoder_mode = decoder_mode
+        self.dec_dim      = dec_dim or meteo_patched.shape[2]
 
     def __len__(self):
         return len(self.windows) * self.n_patches
@@ -152,8 +192,11 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
         x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
-        x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
-        y     = self.fire[ts:te, patch_i, :].astype(np.float32)
+        if self.decoder_mode == "oracle":
+            x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
+        else:
+            x_dec = _make_dec_ablation(self.decoder_mode, x_enc, te - ts, self.dec_dim)
+        y = self.fire[ts:te, patch_i, :].astype(np.float32)
         return (
             torch.from_numpy(x_enc),
             torch.from_numpy(x_dec),
@@ -409,7 +452,8 @@ def _load_fire_clim(tif_path, expected_h, expected_w):
 # ------------------------------------------------------------------ #
 
 def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
-                        n_patches, k, n_sample_wins, chunk, device):
+                        n_patches, k, n_sample_wins, chunk, device,
+                        decoder_mode="oracle", dec_dim=None):
     """
     Compute ranking metrics on a random sample of validation windows.
 
@@ -443,6 +487,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
     all_probs  = []
     all_labels = []
 
+    _dec_dim = dec_dim or meteo_patched.shape[2]
+
     with torch.no_grad():
         for hs, he, ts, te in sample_wins:
             prob_chunks = []
@@ -453,11 +499,21 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         meteo_patched[cs:ce, hs:he, :].astype(np.float32)
                     )
                 ).to(device)
-                xb_dec = torch.from_numpy(
-                    np.ascontiguousarray(
-                        meteo_patched[cs:ce, ts:te, :].astype(np.float32)
-                    )
-                ).to(device)
+                if decoder_mode == "oracle":
+                    xb_dec = torch.from_numpy(
+                        np.ascontiguousarray(
+                            meteo_patched[cs:ce, ts:te, :].astype(np.float32)
+                        )
+                    ).to(device)
+                else:
+                    xb_enc_np = meteo_patched[cs:ce, hs:he, :].astype(np.float32)
+                    dec_list = [
+                        _make_dec_ablation(decoder_mode, xb_enc_np[i], te - ts, _dec_dim)
+                        for i in range(ce - cs)
+                    ]
+                    xb_dec = torch.from_numpy(
+                        np.stack(dec_list, axis=0)   # (chunk, dec_days, dec_dim)
+                    ).to(device)
                 logits = model(xb_enc, xb_dec)  # (chunk, dec_days, P²)
                 prob_chunks.append(torch.sigmoid(logits).cpu().numpy())
 
@@ -838,6 +894,19 @@ def main():
                     help="Number of val windows sampled per epoch for Lift@K "
                          "computation (default=20). More = slower but more stable.")
 
+    # Decoder mode
+    ap.add_argument("--decoder", type=str, default="oracle",
+                    choices=["oracle", "zeros", "random", "climatology", "s2s"],
+                    help="Decoder input mode:\n"
+                         "  oracle      — future ERA5 obs (default, highest accuracy, 'cheating');\n"
+                         "  zeros       — all zeros (ablation);\n"
+                         "  random      — i.i.d. standard normal noise (cleanest ablation);\n"
+                         "  climatology — encoder-period mean repeated across decoder days;\n"
+                         "  s2s         — ECMWF S2S forecast TIFs (not yet implemented).")
+    ap.add_argument("--s2s_dir", type=str, default=None,
+                    help="Path to processed S2S TIF directory (for --decoder s2s). "
+                         "Defaults to 's2s_dir' key in config.")
+
     # Training verbosity
     ap.add_argument("--log_interval", type=int, default=500,
                     help="Print intra-epoch progress every N batches (default=500). "
@@ -887,7 +956,7 @@ def main():
         "run_started_at_utc": run_started_iso,
         "label_source":       "CWFIS satellite hotspots (VIIRS-M)",
         "model":              "S2SHotspotTransformer V2",
-        "decoder_mode":       "era5_oracle",
+        "decoder_mode":       args.decoder,
         "n_channels":         N_CHANNELS,
         "channels":           CHANNEL_NAMES,
         "sampling":           f"mixed — pos + {args.neg_ratio}x neg patches, precomputed",
@@ -1164,7 +1233,21 @@ def main():
     grid      = (nph, npw)
     n_patches = nph * npw
     enc_dim   = P * P * N_CHANNELS   # patch_dim_enc
-    dec_dim   = enc_dim              # ERA5 oracle: same channels for decoder
+    # dec_dim depends on --decoder mode:
+    #   oracle → same 8 channels as encoder (ERA5 future obs)
+    #   none   → same shape as oracle but filled with zeros (ablation)
+    #   s2s    → 6 channels (2t, 2d, tcw, sm20, st20, VPD) from ECMWF S2S
+    S2S_DEC_CHANNELS = 6  # 2t, 2d, tcw, sm20, st20, VPD
+    if args.decoder in ("oracle", "zeros", "random", "climatology"):
+        dec_dim = enc_dim                # ablation modes keep same architecture
+    elif args.decoder == "s2s":
+        raise NotImplementedError(
+            "--decoder s2s is not yet implemented.\n"
+            "It requires a pre-built S2S patch memmap (6 channels: 2t, 2d, tcw, sm20, st20, VPD).\n"
+            "Use --decoder oracle (current default) or --decoder none (ablation) for now."
+        )
+    else:
+        raise ValueError(f"Unknown --decoder: {args.decoder}")
     out_dim   = P * P                # patch_dim_out
 
     meteo_mmap_gb = T * n_patches * enc_dim * 2 / 1e9   # float16
@@ -1619,11 +1702,13 @@ def main():
     # Build datasets and dataloaders
     # ----------------------------------------------------------------
     train_ds = S2SHotspotDatasetMixed(
-        meteo_train, fire_patched, train_wins_eff, hw, grid, all_pairs_eff
+        meteo_train, fire_patched, train_wins_eff, hw, grid, all_pairs_eff,
+        decoder_mode=args.decoder, dec_dim=dec_dim,
     )
     if val_wins:
         val_ds = S2SHotspotDatasetUnfiltered(
-            meteo_val, fire_patched, val_wins_eff, hw, grid
+            meteo_val, fire_patched, val_wins_eff, hw, grid,
+            decoder_mode=args.decoder, dec_dim=dec_dim,
         )
     else:
         val_ds = train_ds
@@ -1692,6 +1777,7 @@ def main():
                 n_patches, k=args.val_lift_k,
                 n_sample_wins=args.eval_n_windows,
                 chunk=256, device=device,
+                decoder_mode=args.decoder, dec_dim=dec_dim,
             )
             print(f"    Lift@{args.val_lift_k}={m['lift_k']:.2f}x  "
                   f"Prec={m['precision_k']:.4f}  Recall={m['recall_k']:.4f}  "
@@ -1858,6 +1944,7 @@ def main():
                     n_patches, k=args.val_lift_k,
                     n_sample_wins=args.val_lift_sample_wins,
                     chunk=256, device=device,
+                    decoder_mode=args.decoder, dec_dim=dec_dim,
                 )
                 val_lift_k = _m["lift_k"]
                 val_prec_k = _m["precision_k"]

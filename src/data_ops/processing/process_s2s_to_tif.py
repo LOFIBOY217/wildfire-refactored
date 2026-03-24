@@ -438,13 +438,9 @@ def main():
 
     if args.workers > 1:
         from multiprocessing import Pool
-        tasks = [(str(f), str(out_dir), str(ref_path), skip_existing) for f in grib_files]
-
-        def _worker(t):
-            return process_grib_file(Path(t[0]), Path(t[1]), Path(t[2]), t[3])
-
+        tasks = [(f, out_dir, ref_path, skip_existing) for f in grib_files]
         with Pool(args.workers) as pool:
-            results = pool.map(_worker, tasks)
+            results = pool.starmap(process_grib_file, tasks)
     else:
         results = [
             process_grib_file(f, out_dir, ref_path, skip_existing)
