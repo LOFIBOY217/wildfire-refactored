@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 """
-Download ECMWF S2S (Realtime, Daily averaged, levtype=sfc) for specific dates.
-Defaults: params=2t/2d/sm20/st20/tcw, step=336-1104 by 24h, control (cf).
+Download ECMWF S2S (Realtime, Daily averaged) for specific dates.
 
-Merges the single-date and batch download scripts into one unified CLI.
+Two param sets (--param-set):
+  core     [default] : tcw / 2t / 2d / sm20 / st20        → s2s_ecmf_cf_YYYY-MM-DD.grib
+  extended           : 10u / 10v / tp / cp / sm100         → s2s_ecmf_cf_ext_YYYY-MM-DD.grib
+  pressure           : gh500 (geopotential @ 500 hPa)       → s2s_ecmf_cf_pl_YYYY-MM-DD.grib
+
+Use --param-set extended (or pressure) to download supplementary channels needed
+for FWI computation and large-scale fire-weather features.  The extended and
+pressure sets use separate filenames so existing core downloads are untouched.
 
 Usage:
-    Single date:    python -m src.data_ops.download.s2s_ecmwf 2025-01-26
-    Date range:     python -m src.data_ops.download.s2s_ecmwf 2025-01-26 2025-11-15
-    Batch mode:     python -m src.data_ops.download.s2s_ecmwf --batch
+    # Core (already downloaded):
+    python -m src.data_ops.download.s2s_ecmwf --batch
+
+    # Supplement wind + precip + deep soil moisture:
+    python -m src.data_ops.download.s2s_ecmwf --batch --param-set extended
+
+    # Supplement 500 hPa geopotential (blocking index):
+    python -m src.data_ops.download.s2s_ecmwf --batch --param-set pressure
 """
 
 import argparse
@@ -44,25 +55,54 @@ STEP_STRING = (
     "1008-1032/1032-1056/1056-1080/1080-1104"
 )
 
+# ------------------------------------------------------------------ #
+# Param sets
+# ------------------------------------------------------------------ #
 
-def download_single_date(server, date_str, outdir):
+PARAM_SETS = {
+    "core": {
+        "levtype": "sfc",
+        "param":   "136/167/168/228086/228095",  # tcw/2t/2d/sm20/st20
+        "prefix":  "s2s_ecmf_cf_",
+        "desc":    "tcw / 2t / 2d / sm20 / st20",
+    },
+    "extended": {
+        "levtype": "sfc",
+        # 10u / 10v / cp / tp / sm100 (layer-3 soil moisture, 28-100 cm)
+        "param":   "165/166/143/228/228088",
+        "prefix":  "s2s_ecmf_cf_ext_",
+        "desc":    "10u / 10v / cp / tp / sm100",
+    },
+    "pressure": {
+        "levtype":  "pl",
+        "levelist": "500",
+        "param":    "129",   # geopotential → gh500 after dividing by g
+        "prefix":   "s2s_ecmf_cf_pl_",
+        "desc":     "gh500 (geopotential @ 500 hPa)",
+    },
+}
+
+
+def download_single_date(server, date_str, outdir, param_set="core"):
     """
     Download ECMWF S2S data for a single date.
 
     Args:
-        server: ECMWFDataServer instance
-        date_str: Date in YYYY-MM-DD format (or YYYY-MM-DD/to/YYYY-MM-DD)
-        outdir: Output directory (Path)
+        server:     ECMWFDataServer instance
+        date_str:   Date in YYYY-MM-DD format
+        outdir:     Output directory (Path)
+        param_set:  One of 'core', 'extended', 'pressure'
 
     Returns:
         True on success, False on failure.
     """
+    ps = PARAM_SETS[param_set]
     safe_date = date_str.replace("/", "_")
-    target = outdir / f"s2s_ecmf_cf_{safe_date}.grib"
+    target = outdir / f"{ps['prefix']}{safe_date}.grib"
 
     # Skip if already downloaded
     if target.exists() and target.stat().st_size > 0:
-        print(f"[SKIP] {date_str} - file already exists: {target}")
+        print(f"[SKIP] {date_str} ({param_set}) - already exists: {target}")
         return True
 
     req = {
@@ -70,33 +110,35 @@ def download_single_date(server, date_str, outdir):
         "dataset": "s2s",
         "date":    date_str,
         "expver":  "prod",
-        "levtype": "sfc",
+        "levtype": ps["levtype"],
         "model":   "glob",
         "origin":  "ecmf",
-        "param":   "136/167/168/228086/228095",  # tcw/2t/2d/sm20/st20
+        "param":   ps["param"],
         "step":    STEP_STRING,
         "stream":  "enfo",
         "time":    "00:00:00",
         "type":    "cf",
         "target":  str(target),
     }
+    if "levelist" in ps:
+        req["levelist"] = ps["levelist"]
 
     try:
-        print(f"[DOWNLOADING] {date_str} -> {target}")
+        print(f"[DOWNLOADING] {date_str} ({param_set}: {ps['desc']}) -> {target.name}")
         server.retrieve(req)
 
         if target.exists() and target.stat().st_size > 0:
-            print(f"[SUCCESS] {date_str} - {target.stat().st_size / 1e6:.1f} MB")
+            print(f"[SUCCESS] {date_str} ({param_set}) - {target.stat().st_size / 1e6:.1f} MB")
             return True
         else:
-            print(f"[ERROR] {date_str} - file missing or empty", file=sys.stderr)
+            print(f"[ERROR] {date_str} ({param_set}) - file missing or empty", file=sys.stderr)
             return False
 
     except KeyboardInterrupt:
-        print(f"\n[CANCELLED] {date_str} - partial file: {target}")
+        print(f"\n[CANCELLED] {date_str} ({param_set}) - partial file: {target}")
         raise
     except Exception as e:
-        print(f"[ERROR] {date_str} - {e}", file=sys.stderr)
+        print(f"[ERROR] {date_str} ({param_set}) - {e}", file=sys.stderr)
         return False
 
 
@@ -129,15 +171,16 @@ def generate_date_list(start_date, end_date, mon_thu_only=False):
 # Batch download loop
 # ------------------------------------------------------------------ #
 
-def download_batch(server, dates, outdir, wait_time=5):
+def download_batch(server, dates, outdir, wait_time=5, param_set="core"):
     """
     Download a list of dates with progress reporting and rate limiting.
 
     Args:
-        server: ECMWFDataServer instance
-        dates: List of date strings
-        outdir: Output directory (Path)
-        wait_time: Seconds to sleep between requests
+        server:     ECMWFDataServer instance
+        dates:      List of date strings
+        outdir:     Output directory (Path)
+        wait_time:  Seconds to sleep between requests
+        param_set:  One of 'core', 'extended', 'pressure'
 
     Returns:
         Tuple (success_count, fail_count, failed_dates)
@@ -152,7 +195,7 @@ def download_batch(server, dates, outdir, wait_time=5):
             print(f"Progress: {i}/{len(dates)} ({i/len(dates)*100:.1f}%)")
             print(f"{'='*60}")
 
-            success = download_single_date(server, date, outdir)
+            success = download_single_date(server, date, outdir, param_set=param_set)
 
             if success:
                 success_count += 1
@@ -231,6 +274,16 @@ def _build_parser():
         "--mon-thu-only", action="store_true",
         help="Only request Mondays and Thursdays (pre-2023 ECMWF S2S schedule)",
     )
+    parser.add_argument(
+        "--param-set", type=str, default="core",
+        choices=list(PARAM_SETS.keys()),
+        help=(
+            "Which variable set to download (default: core). "
+            "'core' = tcw/2t/2d/sm20/st20 (already downloaded); "
+            "'extended' = 10u/10v/cp/tp/sm100 (wind+precip+deep soil); "
+            "'pressure' = gh500 (500 hPa geopotential, blocking index)."
+        ),
+    )
     return parser
 
 
@@ -293,20 +346,25 @@ def main(argv=None):
         email=ecmwf_email,
     )
 
+    param_set = args.param_set
+    ps = PARAM_SETS[param_set]
+    print(f"[PARAM SET] {param_set}: {ps['desc']}  (prefix: {ps['prefix']})")
+
     # ---- Download ----
     if len(dates) == 1:
         # Single date: match original single-date script behaviour (exit codes)
         try:
-            print(f"Requesting {dates[0]} -> {outdir}")
-            success = download_single_date(server, dates[0], outdir)
+            print(f"Requesting {dates[0]} ({param_set}) -> {outdir}")
+            success = download_single_date(server, dates[0], outdir, param_set=param_set)
             sys.exit(0 if success else 1)
         except KeyboardInterrupt:
-            target = outdir / f"s2s_ecmf_cf_{dates[0].replace('/', '_')}.grib"
+            prefix = ps["prefix"]
+            target = outdir / f"{prefix}{dates[0].replace('/', '_')}.grib"
             print(f"\nCancelled by user. Partial file (if any): {target}")
             sys.exit(130)
     else:
         _, fail_count, _ = download_batch(
-            server, dates, outdir, wait_time=args.wait
+            server, dates, outdir, wait_time=args.wait, param_set=param_set
         )
         sys.exit(0 if fail_count == 0 else 1)
 
