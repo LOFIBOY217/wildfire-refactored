@@ -727,6 +727,9 @@ def main():
         description="Train S2S Hotspot Transformer V2 [8 channels, Lead 14–46 Days]"
     )
     add_config_argument(ap)
+    ap.add_argument("--run_name", type=str, default="s2s_hotspot_cwfis_v2",
+                    help="Run name — determines checkpoint and output subdirectory. "
+                         "Use different names for parallel experiments.")
 
     # Data
     ap.add_argument("--data_start",   type=str,   default="2018-05-01",
@@ -858,9 +861,9 @@ def main():
     bui_dir     = get_path(cfg, "bui_dir")
     hotspot_csv = get_path(cfg, "hotspot_csv")
     output_dir  = os.path.join(get_path(cfg, "output_dir"),
-                               "s2s_hotspot_cwfis_v2_fire_prob")
+                               f"{args.run_name}_fire_prob")
     ckpt_dir    = os.path.join(get_path(cfg, "checkpoint_dir"),
-                               "s2s_hotspot_cwfis_v2")
+                               args.run_name)
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(ckpt_dir,   exist_ok=True)
 
