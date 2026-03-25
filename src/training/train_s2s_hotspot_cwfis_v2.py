@@ -870,6 +870,10 @@ def main():
     ap.add_argument("--skip_forecast", action="store_true",
                     help="Skip Step 10 (forecast GeoTIFF generation) after training. "
                          "Saves ~4 hours of disk IO. Run --forecast_only separately when needed.")
+    ap.add_argument("--resume", action="store_true",
+                    help="Resume training from the latest epoch checkpoint in ckpt_dir. "
+                         "Loads model, optimizer, scheduler and AMP scaler states. "
+                         "If no checkpoint exists, starts from scratch.")
     ap.add_argument("--prep_only", action="store_true",
                     help="Build all data caches (meteo memmap, fire patches) then exit "
                          "without training. Use with --cache_dir to persist the memmap to "
@@ -1856,14 +1860,38 @@ def main():
     best_val_loss  = float("inf")
     best_val_lift_k = -1.0          # checkpoint selected by Lift@K, not val_loss
     best_ckpt      = os.path.join(ckpt_dir, "best_model.pt")
+    start_epoch    = 1
+
+    # ── Resume from latest epoch checkpoint ──────────────────────────
+    if args.resume:
+        import re as _re
+        _epoch_ckpts = sorted(glob.glob(os.path.join(ckpt_dir, "epoch_*.pt")))
+        if _epoch_ckpts:
+            _latest_ckpt = _epoch_ckpts[-1]
+            print(f"  Resuming from: {_latest_ckpt}")
+            _ckpt = torch.load(_latest_ckpt, map_location=device, weights_only=False)
+            model.load_state_dict(_ckpt["model_state"])
+            if "optimizer_state" in _ckpt:
+                optimizer.load_state_dict(_ckpt["optimizer_state"])
+            if "scheduler_state" in _ckpt:
+                scheduler.load_state_dict(_ckpt["scheduler_state"])
+            if "scaler_state" in _ckpt and amp_enabled:
+                scaler.load_state_dict(_ckpt["scaler_state"])
+            start_epoch = _ckpt["epoch"] + 1
+            best_val_lift_k = _ckpt.get("best_val_lift_k_global", -1.0)
+            print(f"  Resumed: starting at epoch {start_epoch}, "
+                  f"best_val_lift_k={best_val_lift_k:.2f}")
+            del _ckpt
+        else:
+            print("  --resume: no epoch checkpoints found, starting from scratch.")
 
     n_batches_train = len(train_dl)
     train_started_at = time.time()
-    print(f"\n  Starting training: {args.epochs} epochs  "
+    print(f"\n  Starting training: epochs {start_epoch}→{args.epochs}  "
           f"{n_batches_train:,} batches/epoch  "
           f"log_interval={args.log_interval}  lr={args.lr}")
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         # -- Memory guard check (background thread sets .triggered) --
         if mem_guard.triggered:
             print(f"  Epoch {epoch}: MemoryGuard triggered — stopping training early.")
@@ -1982,7 +2010,8 @@ def main():
 
         # ── Epoch summary ──────────────────────────────────────────────
         elapsed_total = time.time() - train_started_at
-        eta_total_min = elapsed_total / epoch * (args.epochs - epoch) / 60
+        _epochs_done  = epoch - start_epoch + 1
+        eta_total_min = elapsed_total / _epochs_done * (args.epochs - epoch) / 60
         epoch_min     = epoch_train_time / 60
 
         # GPU memory
@@ -2029,6 +2058,10 @@ def main():
         ckpt_payload = {
             "epoch":           epoch,
             "model_state":     model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict(),
+            "scaler_state":    scaler.state_dict(),
+            "best_val_lift_k_global": best_val_lift_k,
             "meteo_means":     meteo_means,
             "meteo_stds":      meteo_stds,
             "patch_dim_enc":   patch_dim_enc,

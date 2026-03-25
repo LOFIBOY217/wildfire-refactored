@@ -59,4 +59,5 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --log_interval 5000 \
   --cache_dir /scratch/jiaqi217/meteo_cache \
   --load_to_ram \
-  --skip_forecast
+  --skip_forecast \
+  --resume
