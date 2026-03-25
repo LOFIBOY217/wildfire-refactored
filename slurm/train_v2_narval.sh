@@ -52,9 +52,9 @@ echo "==========================="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
   --num_workers 16 \
-  --batch_size 512 \
+  --batch_size 2048 \
   --epochs 6 \
-  --lr 1e-4 \
+  --lr 4e-4 \
   --lr_min 1e-6 \
   --log_interval 5000 \
   --cache_dir /scratch/jiaqi217/meteo_cache \
