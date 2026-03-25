@@ -28,10 +28,13 @@ export PYTHONUNBUFFERED=1
 echo "=== PREFLIGHT ==="
 echo "Node     : $(hostname)"
 echo "Python   : $(which python)"
-$PYTHON -c "import torch;    print('torch    :', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
-$PYTHON -c "import rasterio; print('rasterio :', rasterio.__version__)" || exit 1
-$PYTHON -c "import scipy;    print('scipy    :', scipy.__version__)"    || exit 1
-$PYTHON -c "import numpy;    print('numpy    :', numpy.__version__)"    || exit 1
+$PYTHON -c "import torch;        print('torch    :', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
+$PYTHON -c "import rasterio;    print('rasterio :', rasterio.__version__)" || exit 1
+$PYTHON -c "import scipy;       print('scipy    :', scipy.__version__)"    || exit 1
+$PYTHON -c "import numpy;       print('numpy    :', numpy.__version__)"    || exit 1
+$PYTHON -c "import sklearn;     print('sklearn  :', sklearn.__version__)"  || exit 1
+$PYTHON -c "import pyproj;      print('pyproj   :', pyproj.__version__)"   || exit 1
+$PYTHON -c "import pandas;      print('pandas   :', pandas.__version__)"   || exit 1
 echo "=== PREFLIGHT OK ==="
 
 # RAM check
