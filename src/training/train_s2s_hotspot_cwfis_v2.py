@@ -2054,6 +2054,13 @@ def main():
 
         scheduler.step()
 
+        # Update best_val_lift_k BEFORE building checkpoint payload
+        # so that epoch_XX.pt always contains the correct global best when resumed.
+        is_new_best = (not args.skip_val) and (val_lift_k > best_val_lift_k)
+        if is_new_best:
+            best_val_lift_k = val_lift_k
+            best_val_loss   = val_loss
+
         # Save checkpoint: every epoch when --skip_val, otherwise best val_loss
         ckpt_payload = {
             "epoch":           epoch,
@@ -2082,10 +2089,7 @@ def main():
         if args.skip_val:
             torch.save(ckpt_payload, best_ckpt)
         else:
-            # Best model selected by Lift@K (not val_loss)
-            if val_lift_k > best_val_lift_k:
-                best_val_lift_k = val_lift_k
-                best_val_loss   = val_loss
+            if is_new_best:
                 torch.save(ckpt_payload, best_ckpt)
                 print(f"           ★ New best  Lift@{args.val_lift_k}={val_lift_k:.2f}x  "
                       f"val_loss={val_loss:.6f}  → best_model.pt saved")
