@@ -112,13 +112,14 @@ def _make_dec_ablation(decoder_mode, x_enc, dec_days, dec_dim):
     x_enc shape: (enc_days, dec_dim)
     """
     if decoder_mode == "zeros":
-        return np.zeros((dec_days, dec_dim), dtype=np.float32)
+        return np.zeros((dec_days, dec_dim), dtype=np.float16)
     elif decoder_mode == "random":
-        return np.random.randn(dec_days, dec_dim).astype(np.float32)
+        return np.random.randn(dec_days, dec_dim).astype(np.float16)
     elif decoder_mode == "climatology":
         # Mean over encoder days → (dec_dim,), then tile to (dec_days, dec_dim)
-        enc_mean = x_enc.mean(axis=0, keepdims=True)          # (1, dec_dim)
-        return np.repeat(enc_mean, dec_days, axis=0)           # (dec_days, dec_dim)
+        # Cast to float32 for stable mean, then back to float16
+        enc_mean = x_enc.astype(np.float32).mean(axis=0, keepdims=True)  # (1, dec_dim)
+        return np.repeat(enc_mean, dec_days, axis=0).astype(np.float16)  # (dec_days, dec_dim)
     else:
         raise NotImplementedError(f"decoder_mode='{decoder_mode}' not supported")
 
@@ -155,12 +156,14 @@ class S2SHotspotDatasetMixed(Dataset):
         hs, he, ts, te = self.windows[win_i]
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
-        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
+        # Keep float16 — cast to float32 happens on GPU (.to(device, dtype=torch.float32))
+        # This halves the CPU copy cost and PCIe transfer bandwidth.
+        x_enc = self.meteo[patch_i, hs:he, :].copy()   # float16
         if self.decoder_mode == "oracle":
-            x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
+            x_dec = self.meteo[patch_i, ts:te, :].copy()   # float16
         else:
             x_dec = _make_dec_ablation(self.decoder_mode, x_enc, te - ts, self.dec_dim)
-        y = self.fire[ts:te, patch_i, :].astype(np.float32)
+        y = self.fire[ts:te, patch_i, :].astype(np.float32)   # uint8 → float32 (needed for BCE)
         return (
             torch.from_numpy(x_enc),
             torch.from_numpy(x_dec),
@@ -191,12 +194,13 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         hs, he, ts, te = self.windows[win_i]
         # meteo layout: (n_patches, T, enc_dim) — patch-first for sequential read
         # fire  layout: (T, n_patches, P*P)     — time-first (small, OK)
-        x_enc = self.meteo[patch_i, hs:he, :].astype(np.float32)
+        # Keep float16 — cast to float32 happens on GPU (.to(device, dtype=torch.float32))
+        x_enc = self.meteo[patch_i, hs:he, :].copy()   # float16
         if self.decoder_mode == "oracle":
-            x_dec = self.meteo[patch_i, ts:te, :].astype(np.float32)
+            x_dec = self.meteo[patch_i, ts:te, :].copy()   # float16
         else:
             x_dec = _make_dec_ablation(self.decoder_mode, x_enc, te - ts, self.dec_dim)
-        y = self.fire[ts:te, patch_i, :].astype(np.float32)
+        y = self.fire[ts:te, patch_i, :].astype(np.float32)   # uint8 → float32 (needed for BCE)
         return (
             torch.from_numpy(x_enc),
             torch.from_numpy(x_dec),
@@ -514,8 +518,10 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                     xb_dec = torch.from_numpy(
                         np.stack(dec_list, axis=0)   # (chunk, dec_days, dec_dim)
                     ).to(device)
-                logits = model(xb_enc, xb_dec)  # (chunk, dec_days, P²)
-                prob_chunks.append(torch.sigmoid(logits).cpu().numpy())
+                with torch.autocast(device_type=device.type, dtype=torch.float16,
+                                    enabled=(device.type == "cuda")):
+                    logits = model(xb_enc, xb_dec)  # (chunk, dec_days, P²)
+                prob_chunks.append(torch.sigmoid(logits.float()).cpu().numpy())
 
             probs  = np.concatenate(prob_chunks, axis=0)  # (n_patches, dec_days, P²)
             labels = fire_patched[ts:te, :, :]            # (dec_days,  n_patches, P²)
@@ -895,6 +901,10 @@ def main():
                          "computation (default=20). More = slower but more stable.")
 
     # Decoder mode
+    ap.add_argument("--no_amp", action="store_true",
+                    help="Disable automatic mixed precision (AMP). "
+                         "AMP is enabled by default on CUDA and uses float16 for the "
+                         "forward/backward pass, typically giving 2-4× speedup on A100.")
     ap.add_argument("--decoder", type=str, default="oracle",
                     choices=["oracle", "zeros", "random", "climatology", "s2s"],
                     help="Decoder input mode:\n"
@@ -1723,12 +1733,15 @@ def main():
     print(f"  Grid: {grid[0]}×{grid[1]} patches/frame  "
           f"(enc_dim={patch_dim_enc}  dec_dim={patch_dim_dec}  out_dim={patch_dim_out})")
 
+    _prefetch = 4 if args.num_workers > 0 else None
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                           pin_memory=True, num_workers=args.num_workers,
-                          persistent_workers=(args.num_workers > 0))
+                          persistent_workers=(args.num_workers > 0),
+                          prefetch_factor=_prefetch)
     val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
                           pin_memory=True, num_workers=args.num_workers,
-                          persistent_workers=(args.num_workers > 0))
+                          persistent_workers=(args.num_workers > 0),
+                          prefetch_factor=_prefetch)
 
     # Pre-compute fire-season val windows for Lift@K (avoids 0.00x from winter windows)
     _lift_fire_months = {4, 5, 6, 7, 8, 9, 10}
@@ -1835,6 +1848,11 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epochs, eta_min=args.lr_min)
 
+    # AMP (Automatic Mixed Precision) — enabled by default on CUDA
+    amp_enabled = (device.type == "cuda") and (not args.no_amp)
+    scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+    print(f"  AMP: {'enabled (float16 forward/backward)' if amp_enabled else 'disabled'}")
+
     best_val_loss  = float("inf")
     best_val_lift_k = -1.0          # checkpoint selected by Lift@K, not val_loss
     best_ckpt      = os.path.join(ckpt_dir, "best_model.pt")
@@ -1861,19 +1879,27 @@ def main():
         _gnorm_count  = 0
 
         for batch_idx, (xb_enc, xb_dec, yb) in enumerate(train_dl):
-            xb_enc, xb_dec, yb = xb_enc.to(device), xb_dec.to(device), yb.to(device)
-            logits = model(xb_enc, xb_dec)
-            loss   = criterion(logits, yb)
+            # Cast float16→float32 on GPU (2× faster transfer than CPU cast)
+            xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
+            xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
+            yb     = yb.to(device, non_blocking=True)
+            with torch.autocast(device_type=device.type, dtype=torch.float16,
+                                 enabled=amp_enabled):
+                logits = model(xb_enc, xb_dec)
+                loss   = criterion(logits, yb)
             if not torch.isfinite(loss):
                 optimizer.zero_grad()
                 continue
             optimizer.zero_grad()
-            loss.backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             _gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             if not torch.isfinite(_gnorm):
                 optimizer.zero_grad()
+                scaler.update()
                 continue
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             train_loss    += loss.item() * xb_enc.size(0)
             train_samples += xb_enc.size(0)
             _gv = _gnorm.item()
@@ -1915,8 +1941,12 @@ def main():
                 for _val_bi, (xb_enc, xb_dec, yb) in enumerate(val_dl):
                     if args.val_max_batches > 0 and _val_bi >= args.val_max_batches:
                         break
-                    xb_enc, xb_dec, yb = xb_enc.to(device), xb_dec.to(device), yb.to(device)
-                    logits_v = model(xb_enc, xb_dec)
+                    xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
+                    xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
+                    yb     = yb.to(device, non_blocking=True)
+                    with torch.autocast(device_type=device.type, dtype=torch.float16,
+                                        enabled=amp_enabled):
+                        logits_v = model(xb_enc, xb_dec)
                     vl = criterion(logits_v, yb)
                     if torch.isfinite(vl):
                         val_loss    += vl.item() * xb_enc.size(0)
