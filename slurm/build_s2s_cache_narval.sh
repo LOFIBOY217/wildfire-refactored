@@ -7,7 +7,7 @@
 #SBATCH --time=8:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/s2s_cache_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/s2s_cache_%j.err
-#SBATCH --account=def-inghaw_c
+#SBATCH --account=def-inghaw
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
