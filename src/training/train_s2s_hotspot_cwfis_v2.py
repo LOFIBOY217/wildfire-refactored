@@ -159,10 +159,17 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
     # s2s_cache[s2s_idx, patch_i] has shape (32, 6)
     lead_data = s2s_cache[s2s_idx, patch_i]   # (32, 6) float16
 
+    # Validate: dec_days must not exceed cache lead count (S2S_N_LEADS=32)
+    n_cache_leads = lead_data.shape[0]  # should be 32
+    if dec_days > n_cache_leads:
+        raise ValueError(
+            f"_make_dec_s2s: dec_days={dec_days} > cache leads={n_cache_leads}. "
+            f"Ensure --lead_end <= {LEAD_START + n_cache_leads - 1} when --decoder s2s."
+        )
+
     # Tile: each of dec_days rows → (P, P, 6) broadcast → reshape to (dec_dim,)
-    n_leads = min(dec_days, lead_data.shape[0])
     spatial_block = np.empty((P, P, S2S_N_CHANNELS), dtype=np.float16)
-    for t in range(n_leads):
+    for t in range(dec_days):
         spatial_block[:, :, :] = lead_data[t]    # broadcast (6,) → (P, P, 6)
         out[t] = spatial_block.reshape(-1)        # (P*P*6,) = (dec_dim,)
     return out
@@ -195,7 +202,7 @@ class S2SHotspotDatasetMixed(Dataset):
         self.dec_dim        = dec_dim or meteo_patched.shape[2]
         self.s2s_cache      = s2s_cache        # (n_dates, n_patches, 32, 6) float16
         self.date_to_s2s_idx = date_to_s2s_idx  # {date_str: int}
-        self.window_dates   = window_dates     # list[str]: aligned_dates[w[1]-1] for each window
+        self.window_dates   = window_dates     # list[str]: aligned_dates[w[1]] (base date) for each window
         self.patch_size     = patch_size
 
     def __len__(self):
@@ -1617,14 +1624,14 @@ def main():
 
     # Build window_dates: one date string per window (the last encoder day),
     # used as the S2S forecast issue date lookup key.
-    # For train_wins: date at index w[1]-1 (last encoder day).
-    # For val_wins: same convention.
-    # We build lists for the full set of train_wins and val_wins.
+    # For S2S cache lookup we need the BASE DATE (= aligned_dates[w[1]]),
+    # which is the first day of the prediction window / S2S forecast issue date.
+    # Step 10 inference also uses base_date, so this keeps them consistent.
     all_train_window_dates = [
-        str(aligned_dates[w[1] - 1]) for w in train_wins
+        str(aligned_dates[w[1]]) for w in train_wins
     ]
     all_val_window_dates = [
-        str(aligned_dates[w[1] - 1]) for w in val_wins
+        str(aligned_dates[w[1]]) for w in val_wins
     ]
 
     # ----------------------------------------------------------------
