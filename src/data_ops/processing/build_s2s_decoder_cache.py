@@ -140,47 +140,75 @@ def build_cache(s2s_dir, out_file, reference_tif, patch_size=16, workers=8):
     # Create output directory
     os.makedirs(os.path.dirname(os.path.abspath(out_file)), exist_ok=True)
 
-    # Create memmap: layout (n_dates, n_patches, 32, 6)
-    cache = np.memmap(out_file, dtype='float16', mode='w+',
-                      shape=(n_dates, n_patches, S2S_N_LEADS, S2S_N_CHANNELS))
+    # Resume support: check if cache file already exists with correct shape
+    done_set = set()
+    if os.path.isfile(out_file):
+        expected_bytes = n_dates * n_patches * S2S_N_LEADS * S2S_N_CHANNELS * 2
+        actual_bytes = os.path.getsize(out_file)
+        if actual_bytes == expected_bytes:
+            print(f"Existing cache found ({actual_bytes/1e9:.2f} GB). "
+                  f"Opening in r+ mode for resume...", flush=True)
+            cache = np.memmap(out_file, dtype='float16', mode='r+',
+                              shape=(n_dates, n_patches, S2S_N_LEADS, S2S_N_CHANNELS))
+            # Detect which dates are already filled (non-zero)
+            for i, d in enumerate(date_dirs):
+                # Check a small slice — if any non-zero, consider done
+                sample = cache[i, 0, :, :]  # (32, 6)
+                if np.any(sample != 0):
+                    done_set.add(d)
+            print(f"  Already processed: {len(done_set)}/{n_dates} dates", flush=True)
+        else:
+            print(f"Existing cache has wrong size ({actual_bytes} vs {expected_bytes}). "
+                  f"Recreating...", flush=True)
+            cache = np.memmap(out_file, dtype='float16', mode='w+',
+                              shape=(n_dates, n_patches, S2S_N_LEADS, S2S_N_CHANNELS))
+    else:
+        cache = np.memmap(out_file, dtype='float16', mode='w+',
+                          shape=(n_dates, n_patches, S2S_N_LEADS, S2S_N_CHANNELS))
 
-    # Build work items
+    # Build work items (skip already-done dates)
     work_items = [
         (date_str, s2s_dir, patch_size, n_patches, nph, npw, H, W)
         for date_str in date_dirs
+        if date_str not in done_set
     ]
+    n_todo = len(work_items)
 
     # Build date → index mapping for lookup
     date_to_idx = {d: i for i, d in enumerate(date_dirs)}
 
-    print(f"\nProcessing {n_dates} dates with {workers} workers...", flush=True)
-    t0 = __import__('time').time()
-
-    if workers <= 1:
-        # Single-process mode (easier to debug)
-        for n_done, item in enumerate(work_items):
-            date_str, patch_data = _extract_patch_means(item)
-            idx = date_to_idx[date_str]
-            cache[idx] = patch_data.transpose(1, 0, 2)  # (32,n_patches,6) -> (n_patches,32,6)
-            if (n_done + 1) % 50 == 0 or n_done + 1 == n_dates:
-                elapsed = __import__('time').time() - t0
-                eta_min = elapsed / (n_done + 1) * (n_dates - n_done - 1) / 60
-                print(f"  {n_done+1}/{n_dates}  {date_str}  "
-                      f"({elapsed:.0f}s  ~{eta_min:.0f} min left)", flush=True)
+    if n_todo == 0:
+        print(f"\nAll {n_dates} dates already processed. Nothing to do.", flush=True)
     else:
-        # Multi-process mode
-        with Pool(processes=workers) as pool:
-            n_done = 0
-            for date_str, patch_data in pool.imap_unordered(
-                    _extract_patch_means, work_items, chunksize=4):
+        print(f"\nProcessing {n_todo}/{n_dates} dates with {workers} workers "
+              f"(skipping {len(done_set)} already done)...", flush=True)
+        t0 = __import__('time').time()
+
+        if workers <= 1:
+            # Single-process mode (easier to debug)
+            for n_done, item in enumerate(work_items):
+                date_str, patch_data = _extract_patch_means(item)
                 idx = date_to_idx[date_str]
                 cache[idx] = patch_data.transpose(1, 0, 2)  # (32,n_patches,6) -> (n_patches,32,6)
-                n_done += 1
-                if n_done % 50 == 0 or n_done == n_dates:
+                if (n_done + 1) % 50 == 0 or n_done + 1 == n_todo:
                     elapsed = __import__('time').time() - t0
-                    eta_min = elapsed / n_done * (n_dates - n_done) / 60
-                    print(f"  {n_done}/{n_dates}  last={date_str}  "
+                    eta_min = elapsed / (n_done + 1) * (n_todo - n_done - 1) / 60
+                    print(f"  {n_done+1}/{n_todo}  {date_str}  "
                           f"({elapsed:.0f}s  ~{eta_min:.0f} min left)", flush=True)
+        else:
+            # Multi-process mode
+            with Pool(processes=workers) as pool:
+                n_done = 0
+                for date_str, patch_data in pool.imap_unordered(
+                        _extract_patch_means, work_items, chunksize=4):
+                    idx = date_to_idx[date_str]
+                    cache[idx] = patch_data.transpose(1, 0, 2)  # (32,n_patches,6) -> (n_patches,32,6)
+                    n_done += 1
+                    if n_done % 50 == 0 or n_done == n_todo:
+                        elapsed = __import__('time').time() - t0
+                        eta_min = elapsed / n_done * (n_todo - n_done) / 60
+                        print(f"  {n_done}/{n_todo}  last={date_str}  "
+                              f"({elapsed:.0f}s  ~{eta_min:.0f} min left)", flush=True)
 
     cache.flush()
     del cache

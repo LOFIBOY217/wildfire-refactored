@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=8:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/s2s_cache_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/s2s_cache_%j.err
 #SBATCH --account=def-inghaw
