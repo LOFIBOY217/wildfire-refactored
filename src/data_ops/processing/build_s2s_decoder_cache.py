@@ -161,7 +161,7 @@ def build_cache(s2s_dir, out_file, reference_tif, patch_size=16, workers=8):
         for n_done, item in enumerate(work_items):
             date_str, patch_data = _extract_patch_means(item)
             idx = date_to_idx[date_str]
-            cache[idx] = patch_data
+            cache[idx] = patch_data.transpose(1, 0, 2)  # (32,n_patches,6) -> (n_patches,32,6)
             if (n_done + 1) % 50 == 0 or n_done + 1 == n_dates:
                 elapsed = __import__('time').time() - t0
                 eta_min = elapsed / (n_done + 1) * (n_dates - n_done - 1) / 60
@@ -174,7 +174,7 @@ def build_cache(s2s_dir, out_file, reference_tif, patch_size=16, workers=8):
             for date_str, patch_data in pool.imap_unordered(
                     _extract_patch_means, work_items, chunksize=4):
                 idx = date_to_idx[date_str]
-                cache[idx] = patch_data
+                cache[idx] = patch_data.transpose(1, 0, 2)  # (32,n_patches,6) -> (n_patches,32,6)
                 n_done += 1
                 if n_done % 50 == 0 or n_done == n_dates:
                     elapsed = __import__('time').time() - t0
