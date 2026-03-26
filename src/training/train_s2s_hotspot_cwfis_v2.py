@@ -94,6 +94,9 @@ from src.models.s2s_hotspot import S2SHotspotTransformer
 CHANNEL_NAMES = ["FWI", "2t", "2d", "FFMC", "DMC", "DC", "BUI", "fire_clim"]
 N_CHANNELS    = len(CHANNEL_NAMES)   # 8
 
+# S2S decoder channel count (2t, 2d, tcw, sm20, st20, VPD)
+S2S_N_CHANNELS = 6
+
 
 # ------------------------------------------------------------------ #
 # Datasets  (identical to V1 — fully generic w.r.t. enc_dim)
@@ -124,6 +127,47 @@ def _make_dec_ablation(decoder_mode, x_enc, dec_days, dec_dim):
         raise NotImplementedError(f"decoder_mode='{decoder_mode}' not supported")
 
 
+def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
+                  dec_days, dec_dim, patch_size):
+    """
+    Build decoder input from S2S forecast patch-mean cache.
+
+    s2s_cache  : (n_dates, n_patches, 32, 6) float16 memmap or ndarray
+    date_str   : YYYY-MM-DD string for the forecast issue date
+    patch_i    : patch index (row-major)
+    dec_days   : number of decoder lead days (= lead_end - lead_start + 1 = 33)
+    dec_dim    : 6 * patch_size^2 = 1536
+    patch_size : spatial patch size (default 16)
+
+    Layout: for each of dec_days lead days, the 6-channel patch-mean is tiled
+    across all patch_size^2 spatial positions (channel-last, matching enc layout):
+        x_dec[t] = (patch_size, patch_size, 6) where each [:,:,ch] = scalar
+        reshaped to (dec_dim,) = (patch_size*patch_size*6,)
+
+    Returns (dec_days, dec_dim) float16.
+    """
+    P = patch_size
+    out = np.zeros((dec_days, dec_dim), dtype=np.float16)
+
+    if date_str is None or date_to_s2s_idx is None or s2s_cache is None:
+        return out
+
+    s2s_idx = date_to_s2s_idx.get(date_str, None)
+    if s2s_idx is None:
+        return out
+
+    # s2s_cache[s2s_idx, patch_i] has shape (32, 6)
+    lead_data = s2s_cache[s2s_idx, patch_i]   # (32, 6) float16
+
+    # Tile: each of dec_days rows → (P, P, 6) broadcast → reshape to (dec_dim,)
+    n_leads = min(dec_days, lead_data.shape[0])
+    spatial_block = np.empty((P, P, S2S_N_CHANNELS), dtype=np.float16)
+    for t in range(n_leads):
+        spatial_block[:, :, :] = lead_data[t]    # broadcast (6,) → (P, P, 6)
+        out[t] = spatial_block.reshape(-1)        # (P*P*6,) = (dec_dim,)
+    return out
+
+
 class S2SHotspotDatasetMixed(Dataset):
     """
     Training dataset: pos_pairs (patches with ≥1 fire pixel in target window)
@@ -134,19 +178,25 @@ class S2SHotspotDatasetMixed(Dataset):
       "zeros"       — x_dec = all zeros
       "random"      — x_dec = i.i.d. standard normal noise
       "climatology" — x_dec = encoder-period mean repeated across decoder days
-      "s2s"         — x_dec from ECMWF S2S forecast (not yet implemented)
+      "s2s"         — x_dec from ECMWF S2S forecast patch-mean cache
     """
 
     def __init__(self, meteo_patched, fire_patched, windows, hw, grid, all_pairs,
-                 decoder_mode="oracle", dec_dim=None):
-        self.meteo        = meteo_patched
-        self.fire         = fire_patched
-        self.windows      = windows
-        self.hw           = hw
-        self.grid         = grid
-        self.all_pairs    = all_pairs
-        self.decoder_mode = decoder_mode
-        self.dec_dim      = dec_dim or meteo_patched.shape[2]
+                 decoder_mode="oracle", dec_dim=None,
+                 s2s_cache=None, date_to_s2s_idx=None, window_dates=None,
+                 patch_size=16):
+        self.meteo          = meteo_patched
+        self.fire           = fire_patched
+        self.windows        = windows
+        self.hw             = hw
+        self.grid           = grid
+        self.all_pairs      = all_pairs
+        self.decoder_mode   = decoder_mode
+        self.dec_dim        = dec_dim or meteo_patched.shape[2]
+        self.s2s_cache      = s2s_cache        # (n_dates, n_patches, 32, 6) float16
+        self.date_to_s2s_idx = date_to_s2s_idx  # {date_str: int}
+        self.window_dates   = window_dates     # list[str]: aligned_dates[w[1]-1] for each window
+        self.patch_size     = patch_size
 
     def __len__(self):
         return len(self.all_pairs)
@@ -161,6 +211,12 @@ class S2SHotspotDatasetMixed(Dataset):
         x_enc = self.meteo[patch_i, hs:he, :].copy()   # float16
         if self.decoder_mode == "oracle":
             x_dec = self.meteo[patch_i, ts:te, :].copy()   # float16
+        elif self.decoder_mode == "s2s":
+            x_dec = _make_dec_s2s(
+                self.s2s_cache, self.date_to_s2s_idx,
+                self.window_dates[win_i], patch_i,
+                te - ts, self.dec_dim, self.patch_size,
+            )
         else:
             x_dec = _make_dec_ablation(self.decoder_mode, x_enc, te - ts, self.dec_dim)
         y = self.fire[ts:te, patch_i, :].astype(np.float32)   # uint8 → float32 (needed for BCE)
@@ -175,15 +231,21 @@ class S2SHotspotDatasetUnfiltered(Dataset):
     """Unfiltered dataset for validation — all patches, no pos/neg sampling."""
 
     def __init__(self, meteo_patched, fire_patched, windows, hw, grid,
-                 decoder_mode="oracle", dec_dim=None):
-        self.meteo        = meteo_patched
-        self.fire         = fire_patched
-        self.windows      = windows
-        self.hw           = hw
-        self.grid         = grid
-        self.n_patches    = meteo_patched.shape[0]   # (n_patches, T, enc_dim)
-        self.decoder_mode = decoder_mode
-        self.dec_dim      = dec_dim or meteo_patched.shape[2]
+                 decoder_mode="oracle", dec_dim=None,
+                 s2s_cache=None, date_to_s2s_idx=None, window_dates=None,
+                 patch_size=16):
+        self.meteo          = meteo_patched
+        self.fire           = fire_patched
+        self.windows        = windows
+        self.hw             = hw
+        self.grid           = grid
+        self.n_patches      = meteo_patched.shape[0]   # (n_patches, T, enc_dim)
+        self.decoder_mode   = decoder_mode
+        self.dec_dim        = dec_dim or meteo_patched.shape[2]
+        self.s2s_cache      = s2s_cache
+        self.date_to_s2s_idx = date_to_s2s_idx
+        self.window_dates   = window_dates
+        self.patch_size     = patch_size
 
     def __len__(self):
         return len(self.windows) * self.n_patches
@@ -198,6 +260,12 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         x_enc = self.meteo[patch_i, hs:he, :].copy()   # float16
         if self.decoder_mode == "oracle":
             x_dec = self.meteo[patch_i, ts:te, :].copy()   # float16
+        elif self.decoder_mode == "s2s":
+            x_dec = _make_dec_s2s(
+                self.s2s_cache, self.date_to_s2s_idx,
+                self.window_dates[win_i], patch_i,
+                te - ts, self.dec_dim, self.patch_size,
+            )
         else:
             x_dec = _make_dec_ablation(self.decoder_mode, x_enc, te - ts, self.dec_dim)
         y = self.fire[ts:te, patch_i, :].astype(np.float32)   # uint8 → float32 (needed for BCE)
@@ -457,7 +525,9 @@ def _load_fire_clim(tif_path, expected_h, expected_w):
 
 def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         n_patches, k, n_sample_wins, chunk, device,
-                        decoder_mode="oracle", dec_dim=None):
+                        decoder_mode="oracle", dec_dim=None,
+                        s2s_cache=None, date_to_s2s_idx=None,
+                        val_win_dates=None, patch_size=16):
     """
     Compute ranking metrics on a random sample of validation windows.
 
@@ -484,9 +554,14 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
 
     if len(val_wins) > n_sample_wins:
         idx         = rng.choice(len(val_wins), size=n_sample_wins, replace=False)
-        sample_wins = [val_wins[i] for i in sorted(idx)]
+        sample_idxs = sorted(idx)
+        sample_wins = [val_wins[i] for i in sample_idxs]
+        sample_dates = ([val_win_dates[i] for i in sample_idxs]
+                        if val_win_dates is not None else [None] * len(sample_wins))
     else:
-        sample_wins = val_wins
+        sample_wins  = val_wins
+        sample_dates = (val_win_dates if val_win_dates is not None
+                        else [None] * len(val_wins))
 
     all_probs  = []
     all_labels = []
@@ -494,7 +569,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
     _dec_dim = dec_dim or meteo_patched.shape[2]
 
     with torch.no_grad():
-        for hs, he, ts, te in sample_wins:
+        for win_idx, (hs, he, ts, te) in enumerate(sample_wins):
+            win_date = sample_dates[win_idx] if sample_dates else None
             prob_chunks = []
             for cs in range(0, n_patches, chunk):
                 ce = min(cs + chunk, n_patches)
@@ -508,6 +584,18 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         np.ascontiguousarray(
                             meteo_patched[cs:ce, ts:te, :].astype(np.float32)
                         )
+                    ).to(device)
+                elif decoder_mode == "s2s":
+                    dec_list = [
+                        _make_dec_s2s(
+                            s2s_cache, date_to_s2s_idx,
+                            win_date, cs + pi,
+                            te - ts, _dec_dim, patch_size,
+                        ).astype(np.float32)
+                        for pi in range(ce - cs)
+                    ]
+                    xb_dec = torch.from_numpy(
+                        np.stack(dec_list, axis=0)   # (chunk, dec_days, dec_dim)
                     ).to(device)
                 else:
                     xb_enc_np = meteo_patched[cs:ce, hs:he, :].astype(np.float32)
@@ -920,6 +1008,10 @@ def main():
     ap.add_argument("--s2s_dir", type=str, default=None,
                     help="Path to processed S2S TIF directory (for --decoder s2s). "
                          "Defaults to 's2s_dir' key in config.")
+    ap.add_argument("--s2s_cache", type=str, default=None,
+                    help="Path to pre-built S2S decoder patch-mean cache (.dat file). "
+                         "Required when --decoder s2s. "
+                         "Build with: python -m src.data_ops.processing.build_s2s_decoder_cache")
 
     # Training verbosity
     ap.add_argument("--log_interval", type=int, default=500,
@@ -1001,10 +1093,19 @@ def main():
     lead_end        = args.lead_end
     decoder_days    = lead_end - lead_start + 1
 
+    _dec_label = {
+        "oracle":      "ERA5 future obs (oracle)",
+        "zeros":       "zeros (ablation)",
+        "random":      "random noise (ablation)",
+        "climatology": "encoder-period mean (climatology ablation)",
+        "s2s":         f"ECMWF S2S forecast (6-channel, dec_dim={S2S_N_CHANNELS * args.patch_size**2})",
+    }.get(args.decoder, args.decoder)
+
     print("\n" + "=" * 70)
-    print("S2S HOTSPOT TRANSFORMER V2  [8 channels + ERA5 Oracle Decoder]")
+    print("S2S HOTSPOT TRANSFORMER V2  [8 channels]")
     print("=" * 70)
     print(f"  Channels          : {N_CHANNELS} — {', '.join(CHANNEL_NAMES)}")
+    print(f"  decoder           : {_dec_label}")
     print(f"  data_start        : {data_start_date}")
     print(f"  pred_start        : {pred_start_date}  (train/val split boundary)")
     print(f"  pred_end          : {pred_end_date}")
@@ -1249,19 +1350,41 @@ def main():
     enc_dim   = P * P * N_CHANNELS   # patch_dim_enc
     # dec_dim depends on --decoder mode:
     #   oracle → same 8 channels as encoder (ERA5 future obs)
-    #   none   → same shape as oracle but filled with zeros (ablation)
+    #   zeros/random/climatology → same shape as oracle (ablation)
     #   s2s    → 6 channels (2t, 2d, tcw, sm20, st20, VPD) from ECMWF S2S
-    S2S_DEC_CHANNELS = 6  # 2t, 2d, tcw, sm20, st20, VPD
     if args.decoder in ("oracle", "zeros", "random", "climatology"):
         dec_dim = enc_dim                # ablation modes keep same architecture
     elif args.decoder == "s2s":
-        raise NotImplementedError(
-            "--decoder s2s is not yet implemented.\n"
-            "It requires a pre-built S2S patch memmap (6 channels: 2t, 2d, tcw, sm20, st20, VPD).\n"
-            "Use --decoder oracle (current default) or --decoder none (ablation) for now."
-        )
+        dec_dim = S2S_N_CHANNELS * P * P   # 6 * 256 = 1536
+        print(f"\n[S2S decoder] dec_dim={dec_dim}  ({S2S_N_CHANNELS} channels × {P}²={P*P} pixels)")
+        # Load S2S cache
+        s2s_cache_path = args.s2s_cache
+        if not s2s_cache_path:
+            raise ValueError("--decoder s2s requires --s2s_cache <path to .dat file>")
+        if not os.path.exists(s2s_cache_path):
+            raise FileNotFoundError(f"S2S cache not found: {s2s_cache_path}\n"
+                                    "Run: python -m src.data_ops.processing.build_s2s_decoder_cache")
+        dates_file = s2s_cache_path + ".dates.npy"
+        if not os.path.exists(dates_file):
+            raise FileNotFoundError(f"S2S dates companion file not found: {dates_file}")
+        s2s_dates = np.load(dates_file, allow_pickle=True)
+        s2s_n_dates = len(s2s_dates)
+        print(f"  S2S cache dates: {s2s_n_dates}  ({s2s_dates[0]} .. {s2s_dates[-1]})")
+        # Open as read-only memmap: shape (n_dates, n_patches, 32, 6)
+        s2s_cache = np.memmap(s2s_cache_path, dtype='float16', mode='r',
+                              shape=(s2s_n_dates, n_patches, 32, S2S_N_CHANNELS))
+        print(f"  S2S cache shape: {s2s_cache.shape}  "
+              f"({os.path.getsize(s2s_cache_path)/1e9:.2f} GB)")
+        # Build date_str → cache row index mapping
+        date_to_s2s_idx = {str(d): i for i, d in enumerate(s2s_dates)}
     else:
         raise ValueError(f"Unknown --decoder: {args.decoder}")
+
+    # s2s_cache / date_to_s2s_idx only used when decoder == "s2s"
+    if args.decoder != "s2s":
+        s2s_cache        = None
+        date_to_s2s_idx  = None
+
     out_dim   = P * P                # patch_dim_out
 
     meteo_mmap_gb = T * n_patches * enc_dim * 2 / 1e9   # float16
@@ -1460,6 +1583,18 @@ def main():
           f"target_days={decoder_days})")
     print(f"  Total: {len(all_windows)}  train: {len(train_wins)}  val: {len(val_wins)}")
 
+    # Build window_dates: one date string per window (the last encoder day),
+    # used as the S2S forecast issue date lookup key.
+    # For train_wins: date at index w[1]-1 (last encoder day).
+    # For val_wins: same convention.
+    # We build lists for the full set of train_wins and val_wins.
+    all_train_window_dates = [
+        str(aligned_dates[w[1] - 1]) for w in train_wins
+    ]
+    all_val_window_dates = [
+        str(aligned_dates[w[1] - 1]) for w in val_wins
+    ]
+
     # ----------------------------------------------------------------
     # STEP 7b  Build positive pairs; sample negative pairs
     # ----------------------------------------------------------------
@@ -1569,9 +1704,10 @@ def main():
     # ----------------------------------------------------------------
     # Optionally copy only training time steps into RAM
     # ----------------------------------------------------------------
-    meteo_train    = meteo_patched   # default: training reads from disk
-    train_wins_eff = train_wins      # effective windows passed to train_ds
-    all_pairs_eff  = all_pairs       # effective pairs passed to train_ds
+    meteo_train           = meteo_patched        # default: training reads from disk
+    train_wins_eff        = train_wins           # effective windows passed to train_ds
+    all_pairs_eff         = all_pairs            # effective pairs passed to train_ds
+    train_window_dates_eff = all_train_window_dates  # effective window_dates for train_ds
 
     if args.load_train_to_ram and not args.load_to_ram:
         import psutil
@@ -1609,6 +1745,9 @@ def main():
             train_wins_eff = [(int(t_remap[hs]),    int(t_remap[he - 1] + 1),
                                int(t_remap[ts]),    int(t_remap[te - 1] + 1))
                               for hs, he, ts, te in filtered_wins]
+
+            # Remap window_dates to match filtered windows
+            train_window_dates_eff = [all_train_window_dates[i] for i in valid_idxs]
 
             # Remap all_pairs: filter to valid windows, remap win_i
             win_remap = np.full(len(train_wins), -1, dtype=np.int32)
@@ -1651,8 +1790,9 @@ def main():
     # ----------------------------------------------------------------
     # Optionally copy only validation time steps into RAM
     # ----------------------------------------------------------------
-    meteo_val    = meteo_patched   # default: val reads from disk
-    val_wins_eff = val_wins
+    meteo_val            = meteo_patched   # default: val reads from disk
+    val_wins_eff         = val_wins
+    val_window_dates_eff = all_val_window_dates
 
     if args.load_val_to_ram and not args.load_to_ram and val_wins:
         import psutil
@@ -1662,14 +1802,17 @@ def main():
         # in encoder+decoder range is a fire-season month (same logic as train).
         # NOTE: val windows CAN span non-fire-season months because lead_end=46 days
         # means a window starting in late September may target into November.
-        val_wins_for_ram = val_wins
+        val_wins_for_ram        = val_wins
+        val_dates_for_ram       = all_val_window_dates
         if args.fire_season_only:
             fire_months = set(int(m) for m in args.fire_season_months.split(","))
-            val_wins_for_ram = [
-                (hs, he, ts, te) for hs, he, ts, te in val_wins
-                if all(aligned_dates[t].month in fire_months for t in range(hs, he))
-                and all(aligned_dates[t].month in fire_months for t in range(ts, te))
+            _val_filtered = [
+                (w, d) for w, d in zip(val_wins, all_val_window_dates)
+                if all(aligned_dates[t].month in fire_months for t in range(w[0], w[1]))
+                and all(aligned_dates[t].month in fire_months for t in range(w[2], w[3]))
             ]
+            val_wins_for_ram  = [x[0] for x in _val_filtered]
+            val_dates_for_ram = [x[1] for x in _val_filtered]
             print(f"\n[--load_val_to_ram --fire_season_only] "
                   f"{len(val_wins_for_ram)}/{len(val_wins)} val windows kept "
                   f"(months {sorted(fire_months)})")
@@ -1687,6 +1830,7 @@ def main():
         val_wins_eff = [(int(t_remap_val[hs]),    int(t_remap_val[he - 1] + 1),
                          int(t_remap_val[ts]),    int(t_remap_val[te - 1] + 1))
                         for hs, he, ts, te in val_wins_for_ram]
+        val_window_dates_eff = val_dates_for_ram
 
         needed_gb_val = len(t_indices_val) * n_patches * enc_dim * 2 / 1e9
         ram = psutil.virtual_memory()
@@ -1718,11 +1862,15 @@ def main():
     train_ds = S2SHotspotDatasetMixed(
         meteo_train, fire_patched, train_wins_eff, hw, grid, all_pairs_eff,
         decoder_mode=args.decoder, dec_dim=dec_dim,
+        s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+        window_dates=train_window_dates_eff, patch_size=P,
     )
     if val_wins:
         val_ds = S2SHotspotDatasetUnfiltered(
             meteo_val, fire_patched, val_wins_eff, hw, grid,
             decoder_mode=args.decoder, dec_dim=dec_dim,
+            s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+            window_dates=val_window_dates_eff, patch_size=P,
         )
     else:
         val_ds = train_ds
@@ -1749,11 +1897,13 @@ def main():
 
     # Pre-compute fire-season val windows for Lift@K (avoids 0.00x from winter windows)
     _lift_fire_months = {4, 5, 6, 7, 8, 9, 10}
-    val_wins_lift = [
-        (hs, he, ts, te) for hs, he, ts, te in val_wins
-        if all(aligned_dates[t].month in _lift_fire_months for t in range(hs, he))
-        and all(aligned_dates[t].month in _lift_fire_months for t in range(ts, te))
+    _lift_filtered = [
+        (w, d) for w, d in zip(val_wins, all_val_window_dates)
+        if all(aligned_dates[t].month in _lift_fire_months for t in range(w[0], w[1]))
+        and all(aligned_dates[t].month in _lift_fire_months for t in range(w[2], w[3]))
     ]
+    val_wins_lift       = [x[0] for x in _lift_filtered]
+    val_wins_lift_dates = [x[1] for x in _lift_filtered]
     print(f"  Val Lift@K windows (fire season only): {len(val_wins_lift)}/{len(val_wins)}")
 
     # ----------------------------------------------------------------
@@ -1795,6 +1945,8 @@ def main():
                 n_sample_wins=args.eval_n_windows,
                 chunk=256, device=device,
                 decoder_mode=args.decoder, dec_dim=dec_dim,
+                s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+                val_win_dates=all_val_window_dates, patch_size=P,
             )
             print(f"    Lift@{args.val_lift_k}={m['lift_k']:.2f}x  "
                   f"Prec={m['precision_k']:.4f}  Recall={m['recall_k']:.4f}  "
@@ -2003,6 +2155,8 @@ def main():
                     n_sample_wins=args.val_lift_sample_wins,
                     chunk=256, device=device,
                     decoder_mode=args.decoder, dec_dim=dec_dim,
+                    s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+                    val_win_dates=val_wins_lift_dates, patch_size=P,
                 )
                 val_lift_k = _m["lift_k"]
                 val_prec_k = _m["precision_k"]
