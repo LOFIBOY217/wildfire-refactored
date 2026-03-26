@@ -668,8 +668,7 @@ def _run_forecast_only(args, cfg, fwi_dir, obs_root, ffmc_dir, dmc_dir, dc_dir,
                        bui_dir, fire_clim_path, output_dir, ckpt_dir):
     """
     Load the best checkpoint and generate forecast TIFs for --forecast_years.
-    Uses ERA5 oracle decoder (precomputed future meteo) — same normalisation
-    stats as training.
+    Decoder input matches the mode used during training (oracle / s2s / ablation).
     """
     best_ckpt = os.path.join(ckpt_dir, "best_model.pt")
     if not os.path.exists(best_ckpt):
@@ -813,10 +812,15 @@ def _run_forecast_only(args, cfg, fwi_dir, obs_root, ffmc_dir, dmc_dir, dc_dir,
                 continue
 
             enc_hist = meteo_y[base_idx - in_days: base_idx]
-            dec_fut  = meteo_y[base_idx + lead_start: base_idx + lead_end + 1]
-
             enc_patches, pred_hw, pred_grid = patchify(enc_hist, P)
-            dec_patches, _, _               = patchify(dec_fut,  P)
+            _decoder_mode = saved_args.get("decoder", "oracle")
+            _dec_dim_saved = patch_dim_dec
+
+            if _decoder_mode == "oracle":
+                dec_fut  = meteo_y[base_idx + lead_start: base_idx + lead_end + 1]
+                dec_patches, _, _ = patchify(dec_fut, P)
+            else:
+                dec_patches = None   # built per-chunk below
 
             chunk, n_p = args.pred_batch_size, enc_patches.shape[0]
             prob_list = []
@@ -824,7 +828,24 @@ def _run_forecast_only(args, cfg, fwi_dir, obs_root, ffmc_dir, dmc_dir, dc_dir,
                 for cs in range(0, n_p, chunk):
                     ce  = min(cs + chunk, n_p)
                     xb_enc = torch.from_numpy(enc_patches[cs:ce].copy()).float().to(device)
-                    xb_dec = torch.from_numpy(dec_patches[cs:ce].copy()).float().to(device)
+                    if _decoder_mode == "oracle":
+                        xb_dec = torch.from_numpy(dec_patches[cs:ce].copy()).float().to(device)
+                    elif _decoder_mode in ("zeros", "random", "climatology"):
+                        enc_np = enc_patches[cs:ce]
+                        dec_list = [
+                            _make_dec_ablation(_decoder_mode, enc_np[i],
+                                               decoder_days, _dec_dim_saved)
+                            for i in range(ce - cs)
+                        ]
+                        xb_dec = torch.from_numpy(
+                            np.stack(dec_list, axis=0).astype(np.float32)
+                        ).to(device)
+                    else:
+                        # s2s or unknown — not yet supported in forecast_only
+                        raise NotImplementedError(
+                            f"--forecast_only with --decoder {_decoder_mode} "
+                            "is not yet supported. Use the training script's Step 10 instead."
+                        )
                     logits = model(xb_enc, xb_dec)
                     prob_list.append(torch.sigmoid(logits).cpu().numpy())
             probs = np.concatenate(prob_list, axis=0)
@@ -1091,6 +1112,12 @@ def main():
     in_days         = args.in_days
     lead_start      = args.lead_start
     lead_end        = args.lead_end
+    # S2S forecasts only cover lead days 14..45 (32 days).
+    # Clip lead_end to 45 to avoid a systematically zero-filled last decoder day.
+    if args.decoder == "s2s" and lead_end > 45:
+        print(f"  [S2S] Clipping lead_end from {lead_end} to 45 "
+              f"(S2S data available for leads {lead_start}..45)")
+        lead_end = 45
     decoder_days    = lead_end - lead_start + 1
 
     _dec_label = {
@@ -1575,13 +1602,18 @@ def main():
 
     # Build S2S windows
     all_windows = _build_s2s_windows(T, in_days, lead_start, lead_end)
+    # Split by TARGET END date for train (no label leakage into val period)
+    # and by BASE DATE for val (no gap at the start of the val period).
+    # w = (hs, he, ts, te) where he = base_date_index, te = exclusive target end
     train_wins  = [w for w in all_windows
-                   if aligned_dates[w[1] - 1] < pred_start_date]
+                   if aligned_dates[w[3] - 1] < pred_start_date]
     val_wins    = [w for w in all_windows
-                   if aligned_dates[w[0]] >= pred_start_date]
+                   if aligned_dates[w[1]] >= pred_start_date]
+    n_gap = len(all_windows) - len(train_wins) - len(val_wins)
     print(f"\n  S2S windows built (enc_days={in_days}, gap={lead_start-1}, "
           f"target_days={decoder_days})")
-    print(f"  Total: {len(all_windows)}  train: {len(train_wins)}  val: {len(val_wins)}")
+    print(f"  Total: {len(all_windows)}  train: {len(train_wins)}  "
+          f"val: {len(val_wins)}  buffer_gap: {n_gap}")
 
     # Build window_dates: one date string per window (the last encoder day),
     # used as the S2S forecast issue date lookup key.
@@ -2029,6 +2061,15 @@ def main():
                 scheduler.load_state_dict(_ckpt["scheduler_state"])
             if "scaler_state" in _ckpt and amp_enabled:
                 scaler.load_state_dict(_ckpt["scaler_state"])
+                # Guard: if scaler scale collapsed to 0 (e.g. from excessive overflows
+                # in a previous run with too-high lr), reset to default to avoid
+                # div-by-zero in unscale_() → all-NaN gradients.
+                if hasattr(scaler, '_scale') and scaler._scale is not None:
+                    if scaler._scale.item() <= 0:
+                        print(f"  WARNING: loaded scaler scale={scaler._scale.item():.1f} → "
+                              f"resetting to 2^16 (previous run likely had gradient overflow)")
+                        scaler._scale = torch.tensor(2**16, dtype=torch.float32,
+                                                      device=scaler._scale.device)
             start_epoch = _ckpt["epoch"] + 1
             best_val_lift_k = _ckpt.get("best_val_lift_k_global", -1.0)
             print(f"  Resumed: starting at epoch {start_epoch}, "
@@ -2293,6 +2334,8 @@ def main():
 
         chunk = args.pred_batch_size
         n_p   = n_patches
+        _dec_days_pred = dec_end - dec_start
+        _base_date_str = str(base_date)
         prob_list = []
         with torch.no_grad():
             for cs in range(0, n_p, chunk):
@@ -2302,11 +2345,36 @@ def main():
                         meteo_patched[cs:ce, enc_start:enc_end, :].astype(np.float32)
                     )
                 ).to(device)
-                xb_dec = torch.from_numpy(
-                    np.ascontiguousarray(
-                        meteo_patched[cs:ce, dec_start:dec_end, :].astype(np.float32)
-                    )
-                ).to(device)
+                # Decoder input must match training mode
+                if args.decoder == "oracle":
+                    xb_dec = torch.from_numpy(
+                        np.ascontiguousarray(
+                            meteo_patched[cs:ce, dec_start:dec_end, :].astype(np.float32)
+                        )
+                    ).to(device)
+                elif args.decoder == "s2s":
+                    dec_list = [
+                        _make_dec_s2s(
+                            s2s_cache, date_to_s2s_idx,
+                            _base_date_str, cs + pi,
+                            _dec_days_pred, dec_dim, P,
+                        ).astype(np.float32)
+                        for pi in range(ce - cs)
+                    ]
+                    xb_dec = torch.from_numpy(
+                        np.stack(dec_list, axis=0)
+                    ).to(device)
+                else:
+                    # Ablation modes: zeros / random / climatology
+                    enc_np = meteo_patched[cs:ce, enc_start:enc_end, :].astype(np.float32)
+                    dec_list = [
+                        _make_dec_ablation(args.decoder, enc_np[i],
+                                           _dec_days_pred, dec_dim)
+                        for i in range(ce - cs)
+                    ]
+                    xb_dec = torch.from_numpy(
+                        np.stack(dec_list, axis=0).astype(np.float32)
+                    ).to(device)
                 logits = model(xb_enc, xb_dec)
                 prob_list.append(torch.sigmoid(logits).cpu().numpy())
         probs = np.concatenate(prob_list, axis=0)

@@ -94,12 +94,14 @@ def _extract_patch_means(args_tuple):
         nph_eff = Hc_eff // patch_size
         npw_eff = Wc_eff // patch_size
 
-        # Crop and compute patch means for each channel
+        # Crop and compute patch means for each channel (nanmean to handle NaN/nodata)
         for ch in range(S2S_N_CHANNELS):
             band = arr[ch, :Hc_eff, :Wc_eff]     # (Hc_eff, Wc_eff)
             # Reshape to (nph_eff, P, npw_eff, P) -> mean over patch dims
             band_r = band.reshape(nph_eff, patch_size, npw_eff, patch_size)
-            patch_means = band_r.mean(axis=(1, 3))  # (nph_eff, npw_eff)
+            patch_means = np.nanmean(band_r, axis=(1, 3))  # (nph_eff, npw_eff)
+            # Fill any remaining NaN (entire-patch missing) with 0
+            np.nan_to_num(patch_means, copy=False, nan=0.0)
             # Flatten to patch index
             flat = patch_means.reshape(-1)           # (n_patches_eff,)
             n_fill = min(len(flat), n_patches)
