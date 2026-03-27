@@ -126,11 +126,14 @@ def _read_era5_grib(path, variable, H, W, fallback_arr=None):
 
 
 def _patchify_frame(frame, P):
-    """(H, W, C) -> (n_patches, P*P*C) float32. H,W must be divisible by P."""
+    """(H, W, C) -> (n_patches, P*P*C) float32. Crops H,W to nearest multiple of P."""
     H, W, C = frame.shape
-    nph = H // P
-    npw = W // P
-    return (frame
+    Hc = H - H % P
+    Wc = W - W % P
+    f = frame[:Hc, :Wc, :]
+    nph = Hc // P
+    npw = Wc // P
+    return (f
             .reshape(nph, P, npw, P, C)
             .transpose(0, 2, 1, 3, 4)
             .reshape(nph * npw, P * P * C))
