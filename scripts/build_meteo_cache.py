@@ -361,7 +361,7 @@ def main():
             t0 = time.time()
 
             for t_idx in range(T):
-                frame = np.empty((H, W, N_CHANNELS), dtype=np.float32)
+                frame = np.empty((Hc, Wc, N_CHANNELS), dtype=np.float32)
                 for ch_idx, ch_paths in enumerate(_dyn_paths_all):
                     arr = _read_tif_safe(ch_paths[t_idx], _fallbacks[ch_idx])
                     if arr is None:
@@ -370,8 +370,8 @@ def main():
                     arr = np.nan_to_num(arr, nan=float(fills[ch_idx]),
                                         posinf=float(fills[ch_idx]),
                                         neginf=float(fills[ch_idx]))
-                    frame[..., ch_idx] = arr
-                frame[..., 7] = fire_clim
+                    frame[..., ch_idx] = arr[:Hc, :Wc]
+                frame[..., 7] = fire_clim[:Hc, :Wc]
                 frame -= meteo_means
                 frame /= meteo_stds
                 np.clip(frame, -10.0, 10.0, out=frame)
