@@ -10,6 +10,34 @@ ts() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
+# Copy venv to local SSD and activate it
+# Usage: copy_venv <scratch_venv_path>
+copy_venv() {
+    local src="$1"
+    local dst="$SLURM_TMPDIR/venv"
+
+    ts "=== COPYING VENV TO LOCAL SSD ==="
+    ts "  Source : $src"
+    ts "  Dest   : $dst"
+    local t0=$SECONDS
+
+    cp -a "$src" "$dst"
+    local rc=$?
+    local elapsed=$((SECONDS - t0))
+
+    if [ $rc -eq 0 ]; then
+        local sz=$(du -sh "$dst" | cut -f1)
+        ts "  DONE  venv copy: $sz in ${elapsed}s"
+        # Activate local venv
+        source "$dst/bin/activate"
+        export PYTHON="$dst/bin/python"
+        ts "  Python now: $(which python)"
+    else
+        ts "  WARNING: venv copy failed (rc=$rc), falling back to Lustre venv"
+    fi
+    ts "=== VENV COPY COMPLETE ==="
+}
+
 # Copy a single file with timeout and speed reporting
 # Usage: copy_with_timeout <src> <dst_dir> <timeout_seconds>
 copy_with_timeout() {

@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:1
 #SBATCH --mem=64G
 #SBATCH --time=48:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_dec_s2s_%j.out
@@ -13,11 +13,9 @@
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1 eccodes/2.31.0
-source $SCRATCH/venv-wildfire/bin/activate
 
 mkdir -p /scratch/jiaqi217/logs
 
-PYTHON=$SCRATCH/venv-wildfire/bin/python
 SCRATCH_CACHE=/scratch/jiaqi217/meteo_cache
 LOCAL_CACHE=$SLURM_TMPDIR/cache
 
@@ -27,6 +25,10 @@ export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/
 export PYTHONUNBUFFERED=1
 
 source slurm/lib_copy_cache.sh
+
+# Copy venv to local SSD (saves ~3h preflight)
+copy_venv $SCRATCH/venv-wildfire
+PYTHON=$SLURM_TMPDIR/venv/bin/python
 
 ts "=== PREFLIGHT ==="
 ts "Node     : $(hostname)"
@@ -46,12 +48,12 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --run_name s2s_decoder_s2s \
   --decoder s2s \
   --s2s_cache $LOCAL_CACHE/s2s_decoder_cache.dat \
-  --num_workers 8 \
-  --batch_size 2048 \
+  --num_workers 16 \
+  --batch_size 8192 \
   --epochs 6 \
   --lr 1e-4 \
   --lr_min 1e-6 \
-  --log_interval 5000 \
+  --log_interval 1000 \
   --cache_dir $LOCAL_CACHE \
   --skip_forecast
 

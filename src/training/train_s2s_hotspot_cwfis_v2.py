@@ -1924,14 +1924,15 @@ def main():
     print(f"  Grid: {grid[0]}×{grid[1]} patches/frame  "
           f"(enc_dim={patch_dim_enc}  dec_dim={patch_dim_dec}  out_dim={patch_dim_out})")
 
-    _prefetch = 2 if args.num_workers > 0 else None
+    _prefetch = 4 if args.num_workers > 0 else None
+    _persistent = args.num_workers > 0
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                           pin_memory=True, num_workers=args.num_workers,
-                          persistent_workers=False,
+                          persistent_workers=_persistent,
                           prefetch_factor=_prefetch)
     val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
                           pin_memory=True, num_workers=args.num_workers,
-                          persistent_workers=False,
+                          persistent_workers=_persistent,
                           prefetch_factor=_prefetch)
 
     # Pre-compute fire-season val windows for Lift@K (avoids 0.00x from winter windows)
