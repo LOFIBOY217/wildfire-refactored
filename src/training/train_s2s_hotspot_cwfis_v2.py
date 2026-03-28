@@ -1251,13 +1251,29 @@ def main():
           f"({T - train_end_idx} val days)")
 
     # Check if stats are already cached on disk — skip expensive streaming if so.
-    # stats_path lives in cache_dir, named after the full date range + T.
+    # Stats only depend on the training split, not on T or date range, so we
+    # first look for a canonical name, then fall back to any *_stats.npy match.
     _early_stats_path = None
     if args.cache_dir:
+        # Canonical name (T-independent)
+        _canonical_stats = os.path.join(args.cache_dir,
+                                        f"meteo_p{args.patch_size}_C{N_CHANNELS}_stats.npy")
+        # Legacy name (T-dependent, from build_meteo_cache.py)
         _early_mmap_key  = (f"meteo_p{args.patch_size}_C{N_CHANNELS}_T{T}"
                             f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
-        _early_stats_path = os.path.join(args.cache_dir,
-                                         _early_mmap_key.replace("_pf.dat", "_stats.npy"))
+        _legacy_stats = os.path.join(args.cache_dir,
+                                     _early_mmap_key.replace("_pf.dat", "_stats.npy"))
+        if os.path.exists(_canonical_stats):
+            _early_stats_path = _canonical_stats
+        elif os.path.exists(_legacy_stats):
+            _early_stats_path = _legacy_stats
+        else:
+            # Glob for any matching stats file from build_meteo_cache
+            import glob as _glob
+            _candidates = sorted(_glob.glob(os.path.join(
+                args.cache_dir, f"meteo_p{args.patch_size}_C{N_CHANNELS}_T*_stats.npy")))
+            if _candidates:
+                _early_stats_path = _candidates[-1]  # newest
 
     if (not args.overwrite and
             _early_stats_path and os.path.exists(_early_stats_path)):
@@ -1436,7 +1452,19 @@ def main():
         mmap_key   = (f"meteo_p{P}_C{N_CHANNELS}_T{T}"
                       f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
         mmap_path  = os.path.join(args.cache_dir, mmap_key)
-        stats_path = mmap_path.replace("_pf.dat", "_stats.npy")
+        # Stats don't depend on T — look for canonical, legacy, then glob
+        _canon_sp = os.path.join(args.cache_dir,
+                                 f"meteo_p{P}_C{N_CHANNELS}_stats.npy")
+        _legacy_sp = mmap_path.replace("_pf.dat", "_stats.npy")
+        if os.path.exists(_canon_sp):
+            stats_path = _canon_sp
+        elif os.path.exists(_legacy_sp):
+            stats_path = _legacy_sp
+        else:
+            import glob as _glob
+            _cands = sorted(_glob.glob(os.path.join(
+                args.cache_dir, f"meteo_p{P}_C{N_CHANNELS}_T*_stats.npy")))
+            stats_path = _cands[-1] if _cands else _legacy_sp
     else:
         mmap_path  = None
         stats_path = None
