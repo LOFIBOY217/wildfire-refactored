@@ -15,26 +15,32 @@ ts() {
 copy_venv() {
     local src="$1"
     local dst="$SLURM_TMPDIR/venv"
+    local timeout_sec="${2:-1800}"  # default 30 min
 
     ts "=== COPYING VENV TO LOCAL SSD ==="
     ts "  Source : $src"
     ts "  Dest   : $dst"
+    ts "  Timeout: ${timeout_sec}s"
     local t0=$SECONDS
 
-    cp -a "$src" "$dst"
+    timeout $timeout_sec cp -a "$src" "$dst"
     local rc=$?
     local elapsed=$((SECONDS - t0))
 
     if [ $rc -eq 0 ]; then
         local sz=$(du -sh "$dst" | cut -f1)
         ts "  DONE  venv copy: $sz in ${elapsed}s"
-        # Activate local venv
         source "$dst/bin/activate"
         export PYTHON="$dst/bin/python"
-        ts "  Python now: $(which python)"
+    elif [ $rc -eq 124 ]; then
+        ts "  TIMEOUT: venv copy took >${timeout_sec}s, falling back to Lustre venv"
+        rm -rf "$dst" 2>/dev/null
+        export PYTHON="$src/bin/python"
     else
         ts "  WARNING: venv copy failed (rc=$rc), falling back to Lustre venv"
+        export PYTHON="$src/bin/python"
     fi
+    ts "  Python now: $PYTHON"
     ts "=== VENV COPY COMPLETE ==="
 }
 
@@ -87,11 +93,14 @@ copy_meteo_caches() {
 
     # Meteo cache (the big one)
     local copied=0
+    local use_lustre=0
     for f in $scratch/meteo_p16_*_pf.dat; do
         [ -f "$f" ] || continue
         copy_with_timeout "$f" "$local_dir" "$timeout_sec" || {
-            ts "FATAL: Lustre copy failed/timed out. Aborting."
-            exit 1
+            ts "WARNING: Lustre copy failed/timed out. Will use Lustre path directly."
+            use_lustre=1
+            # Symlink instead so training finds the file
+            ln -sf "$f" "$local_dir/$(basename $f)"
         }
         copied=$((copied + 1))
     done
@@ -105,7 +114,8 @@ copy_meteo_caches() {
     for pattern in "*_stats.npy" "fire_*.npy" "fire_*.dat" "norm_stats*"; do
         for f in $scratch/$pattern; do
             [ -f "$f" ] || continue
-            copy_with_timeout "$f" "$local_dir" 300
+            copy_with_timeout "$f" "$local_dir" 300 || \
+                ln -sf "$f" "$local_dir/$(basename $f)"
         done
     done
 
