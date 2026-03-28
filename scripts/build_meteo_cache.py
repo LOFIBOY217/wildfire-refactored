@@ -451,7 +451,7 @@ def main():
                 try:
                     lat = float(row.get('lat', row.get('latitude', 0)))
                     lon = float(row.get('lon', row.get('longitude', 0)))
-                    date_str = str(row.get('rep_date', row.get('date', '')))
+                    date_str = str(row.get('rep_date', row.get('acq_date', row.get('date', ''))))
                     d = date.fromisoformat(date_str[:10])
                 except (ValueError, TypeError):
                     continue

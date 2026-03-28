@@ -128,8 +128,8 @@ copy_s2s_cache() {
             ts "FATAL: S2S cache copy failed/timed out."
             exit 1
         }
-        [ -f "$scratch/s2s_decoder_cache.dates.npy" ] && \
-            copy_with_timeout "$scratch/s2s_decoder_cache.dates.npy" "$local_dir" 60
+        [ -f "$scratch/s2s_decoder_cache.dat.dates.npy" ] && \
+            copy_with_timeout "$scratch/s2s_decoder_cache.dat.dates.npy" "$local_dir" 60
     else
         ts "WARNING: s2s_decoder_cache.dat not found in $scratch"
     fi
