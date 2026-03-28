@@ -49,6 +49,6 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --cache_dir $LOCAL_CACHE \
   --skip_forecast \
   --eval_epochs \
-  --eval_n_windows 50
+  --eval_n_windows 9999
 
 ts "=== EVALUATION FINISHED (exit code: $?) ==="
