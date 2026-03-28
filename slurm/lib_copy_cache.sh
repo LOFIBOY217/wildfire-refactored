@@ -150,7 +150,7 @@ copy_back() {
         local fname=$(basename "$f")
         local sz=$(du -h "$f" | cut -f1)
         ts "  $fname ($sz)..."
-        timeout 1800 cp "$f" "$scratch/" || ts "  ERROR: failed to copy $fname back"
+        timeout 7200 cp "$f" "$scratch/" || ts "  ERROR: failed to copy $fname back"
     done
 
     ts "  Total copy-back time: $((SECONDS - t0))s"
