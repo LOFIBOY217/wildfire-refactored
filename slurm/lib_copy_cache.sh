@@ -30,6 +30,15 @@ copy_venv() {
     ts "  Dest        : $dst"
 
     # Step 1: Ensure tar exists on Lustre (one-time creation)
+    # Validate existing tar (must be > 1MB to be a real venv)
+    if [ -f "$tar_path" ]; then
+        local existing_sz=$(stat --format="%s" "$tar_path" 2>/dev/null || echo 0)
+        if [ "$existing_sz" -lt 1048576 ]; then
+            ts "  [tar] Existing archive too small (${existing_sz} bytes) — likely corrupt, removing"
+            rm -f "$tar_path"
+        fi
+    fi
+
     if [ ! -f "$tar_path" ]; then
         ts "  [tar] Archive not found, creating from venv directory..."
         ts "  [tar] File count: $(find "$src" -type f | wc -l) files"

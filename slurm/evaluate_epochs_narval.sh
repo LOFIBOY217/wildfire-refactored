@@ -28,7 +28,7 @@ source slurm/lib_copy_cache.sh
 
 # Copy venv to local SSD
 copy_venv $SCRATCH/venv-wildfire
-PYTHON=$SLURM_TMPDIR/venv/bin/python
+# PYTHON is set by copy_venv (local SSD or Lustre fallback)
 
 ts "=== PREFLIGHT ==="
 ts "Node     : $(hostname)"
