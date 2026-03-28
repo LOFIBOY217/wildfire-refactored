@@ -10,37 +10,103 @@ ts() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
-# Copy venv to local SSD and activate it
+# Copy venv to local SSD via tar (single-file sequential IO, avoids Lustre metadata overhead)
 # Usage: copy_venv <scratch_venv_path>
+#
+# Strategy: tar archive on Lustre → single large file copy → extract on local SSD
+# Why tar?  venv has ~50k small files. Lustre metadata ops are slow (can take hours).
+#           tar packs them into one file → sequential read → fast even on slow nodes.
+# Diagnostics: logs file count, tar size, copy speed, extract speed separately
+#              so we can identify which phase is the bottleneck.
 copy_venv() {
     local src="$1"
     local dst="$SLURM_TMPDIR/venv"
-    local timeout_sec="${2:-1800}"  # default 30 min
+    local tar_path="${src}.tar"
+    local timeout_sec="${2:-600}"  # default 10 min (tar should be fast)
 
-    ts "=== COPYING VENV TO LOCAL SSD ==="
-    ts "  Source : $src"
-    ts "  Dest   : $dst"
-    ts "  Timeout: ${timeout_sec}s"
-    local t0=$SECONDS
+    ts "=== COPYING VENV TO LOCAL SSD (tar method) ==="
+    ts "  Source venv : $src"
+    ts "  Tar archive : $tar_path"
+    ts "  Dest        : $dst"
 
-    timeout $timeout_sec cp -a "$src" "$dst"
-    local rc=$?
-    local elapsed=$((SECONDS - t0))
-
-    if [ $rc -eq 0 ]; then
-        local sz=$(du -sh "$dst" | cut -f1)
-        ts "  DONE  venv copy: $sz in ${elapsed}s"
-        source "$dst/bin/activate"
-        export PYTHON="$dst/bin/python"
-    elif [ $rc -eq 124 ]; then
-        ts "  TIMEOUT: venv copy took >${timeout_sec}s, falling back to Lustre venv"
-        rm -rf "$dst" 2>/dev/null
-        export PYTHON="$src/bin/python"
+    # Step 1: Ensure tar exists on Lustre (one-time creation)
+    if [ ! -f "$tar_path" ]; then
+        ts "  [tar] Archive not found, creating from venv directory..."
+        ts "  [tar] File count: $(find "$src" -type f | wc -l) files"
+        local t_tar=$SECONDS
+        tar cf "$tar_path" -C "$(dirname $src)" "$(basename $src)"
+        local rc_tar=$?
+        local elapsed_tar=$((SECONDS - t_tar))
+        if [ $rc_tar -eq 0 ]; then
+            local tar_sz=$(du -h "$tar_path" | cut -f1)
+            ts "  [tar] Created $tar_path ($tar_sz) in ${elapsed_tar}s"
+        else
+            ts "  [tar] FAILED to create tar (rc=$rc_tar). Falling back to Lustre venv."
+            export PYTHON="$src/bin/python"
+            ts "  Python now: $PYTHON"
+            ts "=== VENV COPY COMPLETE (fallback) ==="
+            return
+        fi
     else
-        ts "  WARNING: venv copy failed (rc=$rc), falling back to Lustre venv"
+        local tar_sz=$(du -h "$tar_path" | cut -f1)
+        ts "  [tar] Found existing archive ($tar_sz)"
+    fi
+
+    # Step 2: Copy tar to local SSD (single file = fast sequential IO)
+    local tar_bytes=$(stat --format="%s" "$tar_path" 2>/dev/null || echo 0)
+    ts "  [copy] Copying tar to local SSD (timeout=${timeout_sec}s)..."
+    local t_copy=$SECONDS
+    timeout $timeout_sec cp "$tar_path" "$SLURM_TMPDIR/venv.tar"
+    local rc_copy=$?
+    local elapsed_copy=$((SECONDS - t_copy))
+
+    if [ $rc_copy -eq 0 ]; then
+        local speed="N/A"
+        if [ $elapsed_copy -gt 0 ] && [ $tar_bytes -gt 0 ]; then
+            speed=$(echo "$tar_bytes $elapsed_copy" | awk '{printf "%.1f MB/s", $1/1048576/$2}')
+        fi
+        ts "  [copy] DONE in ${elapsed_copy}s ($speed)"
+    elif [ $rc_copy -eq 124 ]; then
+        ts "  [copy] TIMEOUT after ${timeout_sec}s. Falling back to Lustre venv."
+        rm -f "$SLURM_TMPDIR/venv.tar" 2>/dev/null
+        export PYTHON="$src/bin/python"
+        ts "  Python now: $PYTHON"
+        ts "=== VENV COPY COMPLETE (fallback) ==="
+        return
+    else
+        ts "  [copy] FAILED (rc=$rc_copy). Falling back to Lustre venv."
+        export PYTHON="$src/bin/python"
+        ts "  Python now: $PYTHON"
+        ts "=== VENV COPY COMPLETE (fallback) ==="
+        return
+    fi
+
+    # Step 3: Extract on local SSD (local IO, should be very fast)
+    ts "  [extract] Extracting on local SSD..."
+    local t_extract=$SECONDS
+    mkdir -p "$SLURM_TMPDIR"
+    tar xf "$SLURM_TMPDIR/venv.tar" -C "$SLURM_TMPDIR/"
+    local rc_extract=$?
+    local elapsed_extract=$((SECONDS - t_extract))
+
+    # Rename extracted dir to expected name
+    local extracted_name=$(basename "$src")
+    if [ "$extracted_name" != "venv" ] && [ -d "$SLURM_TMPDIR/$extracted_name" ]; then
+        mv "$SLURM_TMPDIR/$extracted_name" "$dst"
+    fi
+
+    rm -f "$SLURM_TMPDIR/venv.tar"
+
+    if [ $rc_extract -eq 0 ]; then
+        ts "  [extract] DONE in ${elapsed_extract}s"
+        export PYTHON="$dst/bin/python"
+    else
+        ts "  [extract] FAILED (rc=$rc_extract). Falling back to Lustre venv."
         export PYTHON="$src/bin/python"
     fi
+
     ts "  Python now: $PYTHON"
+    ts "  Total venv setup: $((SECONDS - t_copy))s (copy=${elapsed_copy}s + extract=${elapsed_extract}s)"
     ts "=== VENV COPY COMPLETE ==="
 }
 
