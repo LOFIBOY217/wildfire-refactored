@@ -46,14 +46,18 @@ copy_s2s_cache $SCRATCH_CACHE $LOCAL_CACHE 1800
 ts "=== STARTING TRAINING (S2S decoder) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
-  --run_name s2s_decoder_s2s_v2 \
+  --run_name s2s_decoder_s2s_v3 \
   --decoder s2s \
   --s2s_cache $LOCAL_CACHE/s2s_decoder_cache.dat \
   --num_workers 8 \
   --batch_size 8192 \
-  --epochs 6 \
+  --epochs 12 \
   --lr 1e-4 \
   --lr_min 1e-6 \
+  --dropout 0.2 \
+  --weight_decay 0.05 \
+  --label_smoothing 0.05 \
+  --neg_buffer 2 \
   --log_interval 1000 \
   --cache_dir $LOCAL_CACHE \
   --skip_forecast

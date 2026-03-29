@@ -90,6 +90,7 @@ class S2SHotspotTransformer(nn.Module):
         # Separate linear projections for encoder (history) and decoder (forecast)
         self.enc_embed = nn.Linear(patch_dim_enc, d_model)
         self.dec_embed = nn.Linear(patch_dim_dec, d_model)
+        self.embed_drop = nn.Dropout(dropout)
 
         # Shared sinusoidal positional encoding
         self.pos_enc = PositionalEncoding(
@@ -126,8 +127,8 @@ class S2SHotspotTransformer(nn.Module):
             logits: (B, decoder_days, patch_dim_out)
                     Raw fire-probability logits (apply sigmoid for probabilities).
         """
-        enc = self.pos_enc(self.enc_embed(encoder_input))  # (B, enc_days, d_model)
-        dec = self.pos_enc(self.dec_embed(decoder_input))  # (B, dec_days, d_model)
+        enc = self.pos_enc(self.embed_drop(self.enc_embed(encoder_input)))  # (B, enc_days, d_model)
+        dec = self.pos_enc(self.embed_drop(self.dec_embed(decoder_input)))  # (B, dec_days, d_model)
 
         memory = self.transformer.encoder(enc)              # (B, enc_days, d_model)
         output = self.transformer.decoder(dec, memory)      # (B, dec_days, d_model)

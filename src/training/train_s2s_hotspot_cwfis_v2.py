@@ -732,6 +732,7 @@ def _run_forecast_only(args, cfg, fwi_dir, obs_root, ffmc_dir, dmc_dir, dc_dir,
         num_encoder_layers=saved_args["enc_layers"],
         num_decoder_layers=saved_args["dec_layers"],
         dim_feedforward=saved_args["d_model"] * 4,
+        dropout=saved_args.get("dropout", 0.1),
         encoder_days=in_days,
         decoder_days=decoder_days,
     ).to(device)
@@ -959,6 +960,15 @@ def main():
     ap.add_argument("--nhead",        type=int,   default=8)
     ap.add_argument("--enc_layers",   type=int,   default=4)
     ap.add_argument("--dec_layers",   type=int,   default=4)
+    ap.add_argument("--dropout",      type=float, default=0.1,
+                    help="Dropout rate for Transformer + embedding layers (default: 0.1)")
+    ap.add_argument("--weight_decay", type=float, default=0.01,
+                    help="AdamW weight decay (L2 reg). Default: 0.01. Try 0.05 for more reg.")
+    ap.add_argument("--label_smoothing", type=float, default=0.0,
+                    help="Label smoothing for BCE (0=none, 0.05=light)")
+    ap.add_argument("--neg_buffer",   type=int,   default=0,
+                    help="Exclude negative patches within this many patches of any positive. "
+                         "0=no buffer (current). 2=exclude ~32km around fires.")
 
     # Training
     ap.add_argument("--epochs",       type=int,   default=30)
@@ -1837,14 +1847,35 @@ def main():
         pos_pairs = [pos_pairs[i] for i in idx_cap]
         print(f"  Capped pos_pairs → {len(pos_pairs):,}")
 
-    max_available_neg = total_pairs - len(pos_pairs)
-    n_neg_target      = min(int(len(pos_pairs) * args.neg_ratio), max_available_neg)
-    print(f"  neg_target={n_neg_target:,}  max_available_neg={max_available_neg:,}")
-
     pos_flat = np.array([w * n_patches + p for w, p in pos_pairs], dtype=np.int64)
     pos_mask = np.zeros(total_pairs, dtype=bool)
     pos_mask[pos_flat] = True
-    neg_flat    = np.where(~pos_mask)[0]
+
+    # Spatial buffer: exclude patches near positive patches from negative pool
+    if args.neg_buffer > 0:
+        from scipy.ndimage import binary_dilation
+        _buf = args.neg_buffer
+        _struct = np.ones((2*_buf+1, 2*_buf+1), dtype=bool)
+        _nrow, _ncol = grid  # (142, 169)
+        _n_excluded = 0
+        for win_i in range(len(train_wins)):
+            _win_offset = win_i * n_patches
+            _win_pos = pos_mask[_win_offset:_win_offset + n_patches]
+            if not _win_pos.any():
+                continue
+            _pos_grid = _win_pos.reshape(_nrow, _ncol)
+            _buf_grid = binary_dilation(_pos_grid, structure=_struct)
+            _buf_flat = _buf_grid.reshape(-1)
+            # Mark buffer patches as excluded (treat as positive → can't be neg)
+            _newly_excluded = _buf_flat & ~_win_pos
+            pos_mask[_win_offset:_win_offset + n_patches] |= _buf_flat
+            _n_excluded += _newly_excluded.sum()
+        print(f"  neg_buffer={_buf}: excluded {_n_excluded:,} additional buffer patches")
+
+    neg_flat          = np.where(~pos_mask)[0]
+    max_available_neg = int(neg_flat.shape[0])
+    n_neg_target      = min(int(len(pos_pairs) * args.neg_ratio), max_available_neg)
+    print(f"  neg_target={n_neg_target:,}  max_available_neg={max_available_neg:,}")
     chosen      = rng.choice(neg_flat, size=n_neg_target, replace=False)
     neg_wins    = (chosen // n_patches).astype(np.int32)
     neg_patches = (chosen %  n_patches).astype(np.int32)
@@ -2140,6 +2171,8 @@ def main():
             epoch_name = os.path.basename(ckpt_path).replace(".pt", "")
             print(f"\n  Loading {epoch_name}...")
             ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+            _ckpt_args = ckpt.get("args", {})
+            _ckpt_dropout = _ckpt_args.get("dropout", args.dropout)
             model_eval = S2SHotspotTransformer(
                 patch_dim_enc=patch_dim_enc,
                 patch_dim_dec=patch_dim_dec,
@@ -2149,6 +2182,7 @@ def main():
                 num_encoder_layers=args.enc_layers,
                 num_decoder_layers=args.dec_layers,
                 dim_feedforward=args.d_model * 4,
+                dropout=_ckpt_dropout,
                 encoder_days=in_days,
                 decoder_days=decoder_days,
             ).to(device)
@@ -2204,18 +2238,22 @@ def main():
         num_encoder_layers=args.enc_layers,
         num_decoder_layers=args.dec_layers,
         dim_feedforward=args.d_model * 4,
+        dropout=args.dropout,
         encoder_days=in_days,
         decoder_days=decoder_days,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Parameters: {n_params:,}")
+    print(f"  Regularization: dropout={args.dropout}  weight_decay={args.weight_decay}  "
+          f"label_smoothing={args.label_smoothing}  neg_buffer={args.neg_buffer}")
     run_meta["n_params"] = n_params
 
     criterion = nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor([pos_weight_val], dtype=torch.float32).to(device)
     )
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
+                                   weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epochs, eta_min=args.lr_min)
 
@@ -2287,6 +2325,8 @@ def main():
             xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
             xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
             yb     = yb.to(device, non_blocking=True)
+            if args.label_smoothing > 0:
+                yb = yb * (1.0 - args.label_smoothing) + 0.5 * args.label_smoothing
             with torch.autocast(device_type=device.type, dtype=torch.float16,
                                  enabled=amp_enabled):
                 logits = model(xb_enc, xb_dec)
