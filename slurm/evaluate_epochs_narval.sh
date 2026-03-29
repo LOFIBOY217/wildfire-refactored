@@ -37,7 +37,8 @@ $PYTHON -c "import rasterio; print('rasterio:', rasterio.__version__)" || exit 1
 ts "=== PREFLIGHT OK ==="
 
 # Copy caches to local SSD
-copy_meteo_caches $SCRATCH_CACHE $LOCAL_CACHE 3600
+DATA_START=2018-05-01
+copy_meteo_caches $SCRATCH_CACHE $LOCAL_CACHE 3600 $DATA_START
 
 ts "=== STARTING EVALUATION (random decoder) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \

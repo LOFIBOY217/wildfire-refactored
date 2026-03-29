@@ -152,43 +152,75 @@ copy_with_timeout() {
     return 0
 }
 
-# Copy all meteo caches (meteo_pf, stats, fire) to LOCAL_CACHE
-# Usage: copy_meteo_caches <scratch_cache_dir> <local_cache_dir> <timeout_per_file>
+# Copy meteo caches to LOCAL_CACHE, filtered by data_start date
+# Usage: copy_meteo_caches <scratch_cache_dir> <local_cache_dir> <timeout_per_file> [data_start]
+# If data_start is given (e.g. "2018-05-01"), only copy files matching that date.
+# Otherwise copies all files (backward compatible).
 copy_meteo_caches() {
     local scratch="$1"
     local local_dir="$2"
     local timeout_sec="${3:-3600}"
+    local data_start="${4:-}"  # optional filter
 
     ts "=== COPYING CACHES TO LOCAL SSD ==="
     ts "  Source : $scratch"
     ts "  Dest   : $local_dir"
+    if [ -n "$data_start" ]; then
+        ts "  Filter : data_start=$data_start"
+    fi
     echo "  SLURM_TMPDIR disk:"
     df -h $SLURM_TMPDIR
     mkdir -p "$local_dir"
 
-    # Meteo cache (the big one)
+    # Meteo cache (the big one) — pick the best match
     local copied=0
-    local use_lustre=0
-    for f in $scratch/meteo_p16_*_pf.dat; do
-        [ -f "$f" ] || continue
-        copy_with_timeout "$f" "$local_dir" "$timeout_sec" || {
-            ts "WARNING: Lustre copy failed/timed out. Will use Lustre path directly."
-            use_lustre=1
-            # Symlink instead so training finds the file
-            ln -sf "$f" "$local_dir/$(basename $f)"
+    local best_pf=""
+
+    if [ -n "$data_start" ]; then
+        # Find the largest pf.dat matching data_start (largest T = most complete)
+        for f in $scratch/meteo_p16_*_${data_start}_*_pf.dat; do
+            [ -f "$f" ] || continue
+            if [ -z "$best_pf" ] || [ "$(stat --format=%s "$f")" -gt "$(stat --format=%s "$best_pf")" ]; then
+                best_pf="$f"
+            fi
+        done
+    fi
+
+    if [ -n "$best_pf" ]; then
+        ts "  Selected pf.dat: $(basename $best_pf) ($(du -h "$best_pf" | cut -f1))"
+        copy_with_timeout "$best_pf" "$local_dir" "$timeout_sec" || {
+            ts "WARNING: copy failed/timed out. Symlinking to Lustre."
+            ln -sf "$best_pf" "$local_dir/$(basename $best_pf)"
         }
-        copied=$((copied + 1))
-    done
+        copied=1
+    else
+        # No filter or no match — copy all (backward compatible)
+        for f in $scratch/meteo_p16_*_pf.dat; do
+            [ -f "$f" ] || continue
+            copy_with_timeout "$f" "$local_dir" "$timeout_sec" || {
+                ts "WARNING: copy failed/timed out. Symlinking to Lustre."
+                ln -sf "$f" "$local_dir/$(basename $f)"
+            }
+            copied=$((copied + 1))
+        done
+    fi
 
     if [ $copied -eq 0 ]; then
         ts "WARNING: No meteo_pf.dat cache found in $scratch"
         ts "  Training will build cache from scratch (slow but OK)"
     fi
 
-    # Small files (stats, fire cache, norm_stats) — 5 min timeout each
+    # Small files — filter by data_start if given
     for pattern in "*_stats.npy" "fire_*.npy" "fire_*.dat" "norm_stats*"; do
         for f in $scratch/$pattern; do
             [ -f "$f" ] || continue
+            # Skip files that don't match data_start (if filter is set)
+            if [ -n "$data_start" ]; then
+                case "$(basename $f)" in
+                    *${data_start}*|*_stats.npy|norm_stats*) ;;  # match or universal
+                    *) ts "  SKIP (wrong date range): $(basename $f)"; continue ;;
+                esac
+            fi
             copy_with_timeout "$f" "$local_dir" 300 || \
                 ln -sf "$f" "$local_dir/$(basename $f)"
         done

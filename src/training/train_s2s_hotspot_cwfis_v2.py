@@ -1327,6 +1327,22 @@ def main():
                       f"_{aligned_dates[0]}_{aligned_dates[-1]}"
                       f"_{H}x{W}.npy")
         cache_path = os.path.join(args.cache_dir, cache_key)
+        # Fuzzy match: if exact file not found, look for one with same
+        # data_start, same H×W, and T >= our T (can slice first T frames)
+        if not os.path.exists(cache_path):
+            import glob as _glob
+            _ds = str(aligned_dates[0])
+            _fire_candidates = sorted(_glob.glob(os.path.join(
+                args.cache_dir, f"fire_dilated_r{r}_{_ds}_*_{H}x{W}.npy")))
+            for _fc in _fire_candidates:
+                # Check file is large enough (T frames × H × W bytes)
+                _fc_size = os.path.getsize(_fc)
+                _min_size = T * H * W  # uint8, so 1 byte per element
+                if _fc_size >= _min_size:
+                    print(f"  [cache] Exact fire_dilated not found, "
+                          f"using compatible: {os.path.basename(_fc)}")
+                    cache_path = _fc
+                    break
     else:
         cache_path = None
 
@@ -1335,6 +1351,10 @@ def main():
         print(f"\n  Found cached dilated fire_stack — skipping rasterization: {cache_path}")
         t0_load = time.time()
         fire_stack = np.load(cache_path)
+        if fire_stack.shape[0] > T:
+            print(f"  [cache] fire_stack has {fire_stack.shape[0]} frames, "
+                  f"slicing to T={T}")
+            fire_stack = fire_stack[:T]
         pos_rate_dil = fire_stack.mean()
         print(f"  Loaded in {time.time()-t0_load:.0f}s  positive_rate={pos_rate_dil:.4%}")
         run_meta["dilate_radius"]         = r
