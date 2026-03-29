@@ -1269,11 +1269,14 @@ def main():
             _early_stats_path = _legacy_stats
         else:
             # Glob for any matching stats file from build_meteo_cache
+            # Prefer files whose date range starts with our data_start
             import glob as _glob
             _candidates = sorted(_glob.glob(os.path.join(
                 args.cache_dir, f"meteo_p{args.patch_size}_C{N_CHANNELS}_T*_stats.npy")))
             if _candidates:
-                _early_stats_path = _candidates[-1]  # newest
+                _data_start_str = str(aligned_dates[0])
+                _matching = [c for c in _candidates if _data_start_str in c]
+                _early_stats_path = _matching[-1] if _matching else _candidates[-1]
 
     if (not args.overwrite and
             _early_stats_path and os.path.exists(_early_stats_path)):
@@ -1452,7 +1455,31 @@ def main():
         mmap_key   = (f"meteo_p{P}_C{N_CHANNELS}_T{T}"
                       f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
         mmap_path  = os.path.join(args.cache_dir, mmap_key)
-        # Stats don't depend on T — look for canonical, legacy, then glob
+
+        # Fuzzy match: if exact pf.dat not found, look for one with same
+        # data_start and T >= our T (can slice the first T timesteps).
+        _cache_T = T  # the T in the cache file (may differ from training T)
+        if not os.path.exists(mmap_path):
+            import glob as _glob
+            _data_start_str = str(aligned_dates[0])
+            _pf_candidates = sorted(_glob.glob(os.path.join(
+                args.cache_dir,
+                f"meteo_p{P}_C{N_CHANNELS}_T*_{_data_start_str}_*_pf.dat")))
+            for _pf_cand in _pf_candidates:
+                # Extract T from filename
+                import re as _re
+                _m = _re.search(r'_T(\d+)_', os.path.basename(_pf_cand))
+                if _m:
+                    _cand_T = int(_m.group(1))
+                    if _cand_T >= T:
+                        print(f"  [cache] Exact pf.dat not found (T={T}), "
+                              f"using compatible cache (T={_cand_T}): "
+                              f"{os.path.basename(_pf_cand)}")
+                        mmap_path = _pf_cand
+                        _cache_T = _cand_T
+                        break
+
+        # Stats: look for canonical, legacy, then glob (prefer same data_start)
         _canon_sp = os.path.join(args.cache_dir,
                                  f"meteo_p{P}_C{N_CHANNELS}_stats.npy")
         _legacy_sp = mmap_path.replace("_pf.dat", "_stats.npy")
@@ -1462,20 +1489,27 @@ def main():
             stats_path = _legacy_sp
         else:
             import glob as _glob
+            _data_start_str = str(aligned_dates[0])
             _cands = sorted(_glob.glob(os.path.join(
                 args.cache_dir, f"meteo_p{P}_C{N_CHANNELS}_T*_stats.npy")))
-            stats_path = _cands[-1] if _cands else _legacy_sp
+            _matching = [c for c in _cands if _data_start_str in c]
+            stats_path = _matching[-1] if _matching else (_cands[-1] if _cands else _legacy_sp)
     else:
         mmap_path  = None
         stats_path = None
+        _cache_T   = T
 
     _stats_ok = stats_path and os.path.exists(stats_path)
 
     if mmap_path and os.path.exists(mmap_path) and _stats_ok:
         # ── Fast path: load existing float16 patch-first cache ───────
         print(f"  Loading cached memmap (float16 patch-first): {mmap_path}")
+        if _cache_T > T:
+            # Cache has more timesteps than needed — load full, slice later
+            print(f"  [cache] Cache has T={_cache_T}, training needs T={T}, "
+                  f"loading full cache (will slice in Dataset)")
         meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
-                                  shape=(n_patches, T, enc_dim))
+                                  shape=(n_patches, _cache_T, enc_dim))
         _saved_stats  = np.load(stats_path)
         meteo_means   = _saved_stats[0]
         meteo_stds    = _saved_stats[1]
