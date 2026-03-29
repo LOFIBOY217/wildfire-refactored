@@ -164,7 +164,7 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
     if dec_days > n_cache_leads:
         raise ValueError(
             f"_make_dec_s2s: dec_days={dec_days} > cache leads={n_cache_leads}. "
-            f"Ensure --lead_end <= {LEAD_START + n_cache_leads - 1} when --decoder s2s."
+            f"Ensure --lead_end <= {14 + n_cache_leads - 1} when --decoder s2s."
         )
 
     # Tile: each of dec_days rows → (P, P, 6) broadcast → reshape to (dec_dim,)

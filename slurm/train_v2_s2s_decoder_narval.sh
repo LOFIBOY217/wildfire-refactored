@@ -2,9 +2,9 @@
 #SBATCH --job-name=wf-dec-s2s
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --mem=64G
+#SBATCH --mem=256G
 #SBATCH --time=48:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_dec_s2s_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_dec_s2s_%j.err
@@ -49,7 +49,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --run_name s2s_decoder_s2s_v2 \
   --decoder s2s \
   --s2s_cache $LOCAL_CACHE/s2s_decoder_cache.dat \
-  --num_workers 16 \
+  --num_workers 8 \
   --batch_size 8192 \
   --epochs 6 \
   --lr 1e-4 \
