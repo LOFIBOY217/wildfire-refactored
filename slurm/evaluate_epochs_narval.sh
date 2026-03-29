@@ -2,10 +2,10 @@
 #SBATCH --job-name=eval-random
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --mem=64G
-#SBATCH --time=12:00:00
+#SBATCH --mem=256G
+#SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/eval_random_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/eval_random_%j.err
 #SBATCH --account=def-inghaw
@@ -45,7 +45,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
   --run_name s2s_decoder_random \
   --decoder random \
-  --num_workers 16 \
+  --num_workers 8 \
   --batch_size 8192 \
   --cache_dir $LOCAL_CACHE \
   --skip_forecast \
