@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=wf-baseline-reg
+#SBATCH --job-name=wf-dec-random
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-node=1
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch/jiaqi217/logs/train_v2_gpu_%j.out
-#SBATCH --error=/scratch/jiaqi217/logs/train_v2_gpu_%j.err
+#SBATCH --output=/scratch/jiaqi217/logs/train_dec_random_%j.out
+#SBATCH --error=/scratch/jiaqi217/logs/train_dec_random_%j.err
 #SBATCH --account=def-inghaw
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
@@ -45,10 +45,11 @@ fi
 echo "RAM OK: ${TOTAL_RAM_GB}GB available"
 echo "==========================="
 
-echo "=== STARTING TRAINING (baseline + regularization) ==="
+echo "=== STARTING TRAINING (random decoder + regularization) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_trillium.yaml \
-  --run_name baseline_reg_v1 \
+  --run_name random_decoder_reg_v1 \
+  --decoder random \
   --pred_end 2025-10-31 \
   --num_workers 12 \
   --batch_size 1024 \
