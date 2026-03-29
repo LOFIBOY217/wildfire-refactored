@@ -46,7 +46,7 @@ copy_s2s_cache $SCRATCH_CACHE $LOCAL_CACHE 1800
 ts "=== STARTING TRAINING (S2S decoder) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
-  --run_name s2s_decoder_s2s \
+  --run_name s2s_decoder_s2s_v2 \
   --decoder s2s \
   --s2s_cache $LOCAL_CACHE/s2s_decoder_cache.dat \
   --num_workers 16 \
