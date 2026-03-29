@@ -1853,7 +1853,6 @@ def main():
 
     # Spatial buffer: exclude patches near positive patches from negative pool
     if args.neg_buffer > 0:
-        from scipy.ndimage import binary_dilation
         _buf = args.neg_buffer
         _struct = np.ones((2*_buf+1, 2*_buf+1), dtype=bool)
         _nrow, _ncol = grid  # (142, 169)
