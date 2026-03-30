@@ -45,6 +45,7 @@ Usage (quick test — 1 year training):
 """
 
 import argparse
+from bisect import bisect_right
 import glob
 import gc
 import json
@@ -127,6 +128,43 @@ def _make_dec_ablation(decoder_mode, x_enc, dec_days, dec_dim):
         raise NotImplementedError(f"decoder_mode='{decoder_mode}' not supported")
 
 
+def _expand_s2s_date_mapping(s2s_dates, aligned_dates, max_lag_days):
+    """
+    Expand sparse S2S issue dates into a dense lookup over *aligned_dates*.
+
+    ECMWF S2S hindcasts are often only available on issue days, so exact
+    base-date lookup leaves many windows with an all-zero decoder. This maps
+    each aligned base date to the most recent available issue date within
+    *max_lag_days*; dates with no recent issue stay unmapped.
+
+    Returns:
+        dense_map:         {YYYY-MM-DD: s2s_row_index}
+        dense_map_exact:   {YYYY-MM-DD: True if exact issue-date hit else False}
+    """
+    s2s_date_objs = [date.fromisoformat(str(d)) for d in s2s_dates]
+    date_to_idx_exact = {str(d): i for i, d in enumerate(s2s_dates)}
+    dense_map = {}
+    dense_map_exact = {}
+
+    for d in aligned_dates:
+        d_str = str(d)
+        exact_idx = date_to_idx_exact.get(d_str)
+        if exact_idx is not None:
+            dense_map[d_str] = exact_idx
+            dense_map_exact[d_str] = True
+            continue
+
+        pos = bisect_right(s2s_date_objs, d) - 1
+        if pos < 0:
+            continue
+        lag_days = (d - s2s_date_objs[pos]).days
+        if lag_days <= max_lag_days:
+            dense_map[d_str] = pos
+            dense_map_exact[d_str] = False
+
+    return dense_map, dense_map_exact
+
+
 def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
                   dec_days, dec_dim, patch_size,
                   s2s_means=None, s2s_stds=None):
@@ -137,20 +175,16 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
     date_str   : YYYY-MM-DD string for the forecast issue date
     patch_i    : patch index (row-major)
     dec_days   : number of decoder lead days (= lead_end - lead_start + 1 = 33)
-    dec_dim    : 6 * patch_size^2 = 1536
-    patch_size : spatial patch size (default 16)
+    dec_dim    : S2S_N_CHANNELS = 6 (compact representation, no spatial tiling)
+    patch_size : (unused, kept for API compatibility)
     s2s_means  : (6,) float32 per-channel means for z-score normalization (or None)
     s2s_stds   : (6,) float32 per-channel stds  for z-score normalization (or None)
 
-    Layout: for each of dec_days lead days, the 6-channel patch-mean is tiled
-    across all patch_size^2 spatial positions (channel-last, matching enc layout):
-        x_dec[t] = (patch_size, patch_size, 6) where each [:,:,ch] = scalar
-        reshaped to (dec_dim,) = (patch_size*patch_size*6,)
-
-    Returns (dec_days, dec_dim) float16.
+    Returns (dec_days, 6) float16 — compact 6-channel patch-mean per lead day.
+    The model's dec_embed (Linear(6, d_model)) projects this directly into
+    transformer space, preserving the full information content of each channel.
     """
-    P = patch_size
-    out = np.zeros((dec_days, dec_dim), dtype=np.float16)
+    out = np.zeros((dec_days, S2S_N_CHANNELS), dtype=np.float16)
 
     if date_str is None or date_to_s2s_idx is None or s2s_cache is None:
         return out
@@ -177,11 +211,8 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
         np.clip(lead_data, -10.0, 10.0, out=lead_data)
         lead_data = lead_data.astype(np.float16)
 
-    # Tile: each of dec_days rows → (P, P, 6) broadcast → reshape to (dec_dim,)
-    spatial_block = np.empty((P, P, S2S_N_CHANNELS), dtype=np.float16)
-    for t in range(dec_days):
-        spatial_block[:, :, :] = lead_data[t]    # broadcast (6,) → (P, P, 6)
-        out[t] = spatial_block.reshape(-1)        # (P*P*6,) = (dec_dim,)
+    # Direct copy: (dec_days, 6) — no spatial tiling
+    out[:dec_days] = lead_data[:dec_days]
     return out
 
 
@@ -1070,6 +1101,10 @@ def main():
                     help="Path to pre-built S2S decoder patch-mean cache (.dat file). "
                          "Required when --decoder s2s. "
                          "Build with: python -m src.data_ops.processing.build_s2s_decoder_cache")
+    ap.add_argument("--s2s_max_issue_lag", type=int, default=3,
+                    help="For --decoder s2s, allow base dates to reuse the most recent "
+                         "available S2S issue date up to this many days back. "
+                         "Default 3 captures sparse issue schedules without falling too stale.")
 
     # Training verbosity
     ap.add_argument("--log_interval", type=int, default=500,
@@ -1162,7 +1197,7 @@ def main():
         "zeros":       "zeros (ablation)",
         "random":      "random noise (ablation)",
         "climatology": "encoder-period mean (climatology ablation)",
-        "s2s":         f"ECMWF S2S forecast (6-channel, dec_dim={S2S_N_CHANNELS * args.patch_size**2})",
+        "s2s":         f"ECMWF S2S forecast (6-channel compact, dec_dim={S2S_N_CHANNELS})",
     }.get(args.decoder, args.decoder)
 
     print("\n" + "=" * 70)
@@ -1458,8 +1493,8 @@ def main():
     if args.decoder in ("oracle", "zeros", "random", "climatology"):
         dec_dim = enc_dim                # ablation modes keep same architecture
     elif args.decoder == "s2s":
-        dec_dim = S2S_N_CHANNELS * P * P   # 6 * 256 = 1536
-        print(f"\n[S2S decoder] dec_dim={dec_dim}  ({S2S_N_CHANNELS} channels × {P}²={P*P} pixels)")
+        dec_dim = S2S_N_CHANNELS   # 6 — compact patch-mean, no spatial tiling
+        print(f"\n[S2S decoder] dec_dim={dec_dim}  ({S2S_N_CHANNELS} channels, compact)")
         # Load S2S cache
         s2s_cache_path = args.s2s_cache
         if not s2s_cache_path:
@@ -1478,8 +1513,21 @@ def main():
                               shape=(s2s_n_dates, n_patches, 32, S2S_N_CHANNELS))
         print(f"  S2S cache shape: {s2s_cache.shape}  "
               f"({os.path.getsize(s2s_cache_path)/1e9:.2f} GB)")
-        # Build date_str → cache row index mapping
-        date_to_s2s_idx = {str(d): i for i, d in enumerate(s2s_dates)}
+        # Build date_str → cache row index mapping.
+        # Allow recent fallback so sparse S2S issue schedules do not collapse
+        # most windows to an all-zero decoder.
+        date_to_s2s_idx, date_to_s2s_exact = _expand_s2s_date_mapping(
+            s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
+        )
+        _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
+        _n_fallback = sum(
+            1 for d in aligned_dates
+            if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
+        )
+        _n_miss = len(aligned_dates) - _n_exact - _n_fallback
+        print(f"  S2S date mapping over aligned dates: exact={_n_exact}  "
+              f"fallback={_n_fallback}  miss={_n_miss}  "
+              f"(max_issue_lag={args.s2s_max_issue_lag}d)")
 
         # ── Compute S2S per-channel normalization stats ──────────────
         # Use only training-period rows (dates < pred_start_date)
@@ -1541,6 +1589,7 @@ def main():
     if args.decoder != "s2s":
         s2s_cache        = None
         date_to_s2s_idx  = None
+        date_to_s2s_exact = None
         s2s_means        = None
         s2s_stds         = None
 
@@ -1804,17 +1853,25 @@ def main():
 
     # ── S2S cache coverage diagnostic ────────────────────────────────
     if args.decoder == "s2s" and date_to_s2s_idx is not None:
-        _train_exact = sum(1 for d in all_train_window_dates if d in date_to_s2s_idx)
-        _train_miss  = len(all_train_window_dates) - _train_exact
-        _val_exact   = sum(1 for d in all_val_window_dates if d in date_to_s2s_idx)
-        _val_miss    = len(all_val_window_dates) - _val_exact
+        _train_exact = sum(1 for d in all_train_window_dates
+                           if date_to_s2s_exact.get(d, False))
+        _train_total = sum(1 for d in all_train_window_dates if d in date_to_s2s_idx)
+        _train_fb    = _train_total - _train_exact
+        _train_miss  = len(all_train_window_dates) - _train_total
+        _val_exact   = sum(1 for d in all_val_window_dates
+                           if date_to_s2s_exact.get(d, False))
+        _val_total   = sum(1 for d in all_val_window_dates if d in date_to_s2s_idx)
+        _val_fb      = _val_total - _val_exact
+        _val_miss    = len(all_val_window_dates) - _val_total
         print(f"\n  S2S cache coverage:")
         print(f"    train: {_train_exact}/{len(all_train_window_dates)} exact  "
+              f"{_train_fb} fallback  "
               f"{_train_miss} miss  "
-              f"({100*_train_exact/max(len(all_train_window_dates),1):.1f}% hit)")
+              f"({100*_train_total/max(len(all_train_window_dates),1):.1f}% usable)")
         print(f"    val  : {_val_exact}/{len(all_val_window_dates)} exact  "
+              f"{_val_fb} fallback  "
               f"{_val_miss} miss  "
-              f"({100*_val_exact/max(len(all_val_window_dates),1):.1f}% hit)")
+              f"({100*_val_total/max(len(all_val_window_dates),1):.1f}% usable)")
 
     # ----------------------------------------------------------------
     # STEP 7b  Build positive pairs; sample negative pairs
