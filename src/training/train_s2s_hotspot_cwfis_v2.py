@@ -97,8 +97,8 @@ N_CHANNELS    = len(CHANNEL_NAMES)   # 8
 
 # S2S decoder channel count (2t, 2d, tcw, sm20, st20, VPD)
 S2S_N_CHANNELS = 6
-# S2S decoder input dim: 6 weather channels + issue_age + is_fallback
-S2S_DEC_DIM = S2S_N_CHANNELS + 2  # 8
+# S2S decoder input dim: 6 weather channels + issue_age + is_fallback + is_missing
+S2S_DEC_DIM = S2S_N_CHANNELS + 3  # 9
 
 
 # ------------------------------------------------------------------ #
@@ -182,25 +182,29 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
     date_str   : YYYY-MM-DD string for the forecast issue date
     patch_i    : patch index (row-major)
     dec_days   : number of decoder lead days (= lead_end - lead_start + 1 = 33)
-    dec_dim    : S2S_DEC_DIM = 8 (6 weather + issue_age + is_fallback)
+    dec_dim    : S2S_DEC_DIM = 9 (6 weather + issue_age + is_fallback + is_missing)
     patch_size : (unused, kept for API compatibility)
     s2s_means  : (6,) float32 per-channel means for z-score normalization (or None)
     s2s_stds   : (6,) float32 per-channel stds  for z-score normalization (or None)
     date_to_s2s_lag : {YYYY-MM-DD: int} lag days for each date (0=exact)
     s2s_max_lag     : int, max lag days for normalization of issue_age feature
 
-    Returns (dec_days, 8) float16:
-      [:, :6]  — 6-channel S2S forecast (z-score normalized)
+    Returns (dec_days, 9) float16:
+      [:, :6]  — 6-channel S2S forecast (z-score normalized; 0 if missing)
       [:, 6]   — issue_age: lag_days / s2s_max_lag, in [0, 1]
       [:, 7]   — is_fallback: 0.0 (exact) or 1.0 (fallback)
+      [:, 8]   — is_missing: 1.0 if lead-day data is missing (all-zero in cache)
     """
     out = np.zeros((dec_days, S2S_DEC_DIM), dtype=np.float16)
 
     if date_str is None or date_to_s2s_idx is None or s2s_cache is None:
+        # Entire date unmapped — mark all lead days as missing
+        out[:, S2S_N_CHANNELS + 2] = np.float16(1.0)
         return out
 
     s2s_idx = date_to_s2s_idx.get(date_str, None)
     if s2s_idx is None:
+        out[:, S2S_N_CHANNELS + 2] = np.float16(1.0)
         return out
 
     # s2s_cache[s2s_idx, patch_i] has shape (32, 6)
@@ -214,6 +218,11 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
             f"Ensure --lead_end <= {14 + n_cache_leads - 1} when --decoder s2s."
         )
 
+    # Detect cache-internal missing: rows where ALL 6 channels are 0
+    # (caused by missing lead tif or NaN-only patches in build_s2s_decoder_cache)
+    lead_slice = lead_data[:dec_days]  # (dec_days, 6)
+    missing_mask = np.all(lead_slice == 0, axis=1)  # (dec_days,) bool
+
     # Normalize: z-score per channel, then clip to [-10, 10]
     if s2s_means is not None and s2s_stds is not None:
         lead_data = np.array(lead_data, dtype=np.float32)  # copy for arithmetic
@@ -223,6 +232,12 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
 
     # Weather channels: (dec_days, 6)
     out[:dec_days, :S2S_N_CHANNELS] = lead_data[:dec_days]
+
+    # Zero out weather channels for missing lead days (set to mean in z-space)
+    # This prevents false signals from (0 - mean) / std
+    if missing_mask.any():
+        out[missing_mask, :S2S_N_CHANNELS] = np.float16(0.0)
+        out[missing_mask, S2S_N_CHANNELS + 2] = np.float16(1.0)
 
     # Metadata features: issue_age and is_fallback (constant across all lead days)
     lag = 0
@@ -1231,7 +1246,7 @@ def main():
         "zeros":       "zeros (ablation)",
         "random":      "random noise (ablation)",
         "climatology": "encoder-period mean (climatology ablation)",
-        "s2s":         f"ECMWF S2S forecast (6 weather + age/fallback, dec_dim={S2S_DEC_DIM})",
+        "s2s":         f"ECMWF S2S forecast (6 weather + age/fallback/missing, dec_dim={S2S_DEC_DIM})",
     }.get(args.decoder, args.decoder)
 
     print("\n" + "=" * 70)
@@ -1527,8 +1542,8 @@ def main():
     if args.decoder in ("oracle", "zeros", "random", "climatology"):
         dec_dim = enc_dim                # ablation modes keep same architecture
     elif args.decoder == "s2s":
-        dec_dim = S2S_DEC_DIM   # 8 — 6 weather channels + issue_age + is_fallback
-        print(f"\n[S2S decoder] dec_dim={dec_dim}  ({S2S_N_CHANNELS} weather + 2 metadata)")
+        dec_dim = S2S_DEC_DIM   # 9 — 6 weather + issue_age + is_fallback + is_missing
+        print(f"\n[S2S decoder] dec_dim={dec_dim}  ({S2S_N_CHANNELS} weather + 3 metadata)")
         # Load S2S cache
         s2s_cache_path = args.s2s_cache
         if not s2s_cache_path:
@@ -1907,6 +1922,27 @@ def main():
               f"{_val_fb} fallback  "
               f"{_val_miss} miss  "
               f"({100*_val_total/max(len(all_val_window_dates),1):.1f}% usable)")
+
+        # ── S2S cache internal missing-value diagnostic ─────────────
+        # Sample random (date, patch) pairs to estimate % of all-zero lead rows
+        _rng_diag = np.random.RandomState(42)
+        _n_sample_dates = min(200, s2s_cache.shape[0])
+        _n_sample_patches = min(50, s2s_cache.shape[1])
+        _diag_date_idxs = _rng_diag.choice(s2s_cache.shape[0], _n_sample_dates, replace=False)
+        _diag_patch_idxs = _rng_diag.choice(s2s_cache.shape[1], _n_sample_patches, replace=False)
+        _total_leads = 0
+        _missing_leads = 0
+        for _di in _diag_date_idxs:
+            for _pi in _diag_patch_idxs:
+                _row = s2s_cache[_di, _pi]  # (32, 6)
+                _allzero = np.all(_row == 0, axis=1)  # (32,) bool
+                _total_leads += _row.shape[0]
+                _missing_leads += int(_allzero.sum())
+        _miss_pct = 100.0 * _missing_leads / max(_total_leads, 1)
+        print(f"\n  S2S cache internal missing (sampled {_n_sample_dates} dates × "
+              f"{_n_sample_patches} patches):")
+        print(f"    all-zero lead-day rows: {_missing_leads}/{_total_leads} ({_miss_pct:.1f}%)")
+        print(f"    → these will get is_missing=1 + weather channels zeroed in z-space")
 
     # ── S2S: drop TRAIN windows with no forecast data ───────────────
     # Val windows are NOT filtered — keeps val set identical to random/oracle
