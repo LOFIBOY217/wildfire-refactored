@@ -68,9 +68,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --weight_decay 0.05 \
   --label_smoothing 0.05 \
   --neg_buffer 2 \
-  --load_train_to_ram \
   --fire_season_only \
-  --load_val_to_ram \
   --skip_forecast
 
 echo "=== TRAINING FINISHED (exit code: $?) ==="
