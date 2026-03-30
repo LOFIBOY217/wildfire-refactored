@@ -1873,6 +1873,23 @@ def main():
               f"{_val_miss} miss  "
               f"({100*_val_total/max(len(all_val_window_dates),1):.1f}% usable)")
 
+    # ── S2S: drop windows with no forecast data ─────────────────────
+    if args.decoder == "s2s" and date_to_s2s_idx is not None:
+        _orig_train = len(train_wins)
+        _orig_val   = len(val_wins)
+        _keep_train = [i for i, d in enumerate(all_train_window_dates)
+                       if d in date_to_s2s_idx]
+        _keep_val   = [i for i, d in enumerate(all_val_window_dates)
+                       if d in date_to_s2s_idx]
+        train_wins = [train_wins[i] for i in _keep_train]
+        all_train_window_dates = [all_train_window_dates[i] for i in _keep_train]
+        val_wins   = [val_wins[i] for i in _keep_val]
+        all_val_window_dates   = [all_val_window_dates[i] for i in _keep_val]
+        print(f"\n  S2S window filter: train {_orig_train}→{len(train_wins)}  "
+              f"val {_orig_val}→{len(val_wins)}  "
+              f"(dropped {_orig_train - len(train_wins) + _orig_val - len(val_wins)} "
+              f"windows with no S2S data)")
+
     # ----------------------------------------------------------------
     # STEP 7b  Build positive pairs; sample negative pairs
     # ----------------------------------------------------------------
