@@ -50,6 +50,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
   --run_name s2s_decoder_random \
   --decoder random \
+  --pred_end 2025-10-31 \
   --num_workers 16 \
   --batch_size 8192 \
   --epochs 6 \

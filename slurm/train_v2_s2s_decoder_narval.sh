@@ -49,6 +49,8 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --run_name s2s_decoder_s2s_v3 \
   --decoder s2s \
   --s2s_cache $LOCAL_CACHE/s2s_decoder_cache.dat \
+  --pred_end 2025-10-31 \
+  --s2s_max_issue_lag 3 \
   --num_workers 8 \
   --batch_size 8192 \
   --epochs 12 \
