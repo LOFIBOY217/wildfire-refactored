@@ -328,9 +328,11 @@ def main():
         description="Compute Lift@K for baseline fire prediction methods")
     parser.add_argument("--config", required=True, help="YAML config path")
     parser.add_argument("--baseline", nargs="+",
-                        choices=["fwi_oracle", "fwi_max", "climatology"],
+                        choices=["fwi_oracle", "fwi_max", "climatology", "s2s_fwi"],
                         default=["fwi_oracle", "climatology"],
                         help="Baselines to evaluate")
+    parser.add_argument("--s2s_fwi_dir", default=None,
+                        help="Directory with pre-computed S2S-FWI TIFs (for s2s_fwi baseline)")
     parser.add_argument("--pred_start", default="2022-05-01")
     parser.add_argument("--pred_end", default="2025-10-31")
     parser.add_argument("--in_days", type=int, default=7)
@@ -414,6 +416,72 @@ def main():
             all_results["climatology"] = compute_baseline_lift_k(
                 clim_score, fire_patched, val_wins, n_patches,
                 args.k_values, args.n_sample_wins, "climatology")
+
+    # --- S2S-FWI: FWI computed from S2S forecast weather ---
+    if "s2s_fwi" in args.baseline:
+        print(f"\n{'='*40}")
+        print("Baseline: S2S-FWI (forecast-derived FWI)")
+        print(f"{'='*40}")
+
+        s2s_fwi_dir = args.s2s_fwi_dir
+        if s2s_fwi_dir is None:
+            with open(args.config) as f:
+                _cfg = yaml.safe_load(f)["paths"]
+            s2s_fwi_dir = os.path.join(_cfg["project_root"], "data", "s2s_fwi")
+
+        if not os.path.isdir(s2s_fwi_dir):
+            print(f"  SKIP: {s2s_fwi_dir} not found.")
+            print(f"  Run 'python -m src.data_ops.processing.compute_s2s_fwi' first.")
+        else:
+            # Build date index for S2S-FWI mean TIFs
+            s2s_fwi_dates = {}
+            for entry in sorted(os.listdir(s2s_fwi_dir)):
+                mean_path = os.path.join(s2s_fwi_dir, entry, "s2s_fwi_mean.tif")
+                if os.path.exists(mean_path):
+                    try:
+                        d = _parse_date(entry)
+                        s2s_fwi_dates[d] = mean_path
+                    except Exception:
+                        continue
+            print(f"  Found {len(s2s_fwi_dates)} S2S-FWI issue dates")
+
+            if len(s2s_fwi_dates) == 0:
+                print("  SKIP: no S2S-FWI TIFs found")
+            else:
+                P = args.patch_size
+                # Pre-load S2S-FWI into patched format indexed by aligned_dates
+                date_to_tidx = {d: i for i, d in enumerate(aligned_dates)}
+                s2s_fwi_patched = {}  # tidx -> (n_patches, P²)
+                _n_loaded = 0
+                for d, path in s2s_fwi_dates.items():
+                    if d not in date_to_tidx:
+                        continue
+                    arr = _read_tif(path)
+                    Hc = arr.shape[0] - arr.shape[0] % P
+                    Wc = arr.shape[1] - arr.shape[1] % P
+                    frame = arr[:Hc, :Wc, np.newaxis]
+                    patched = _patchify_frame(frame, P).astype(np.float16)
+                    s2s_fwi_patched[date_to_tidx[d]] = patched
+                    _n_loaded += 1
+                print(f"  Loaded {_n_loaded} S2S-FWI maps into patch format")
+
+                def s2s_fwi_score(win):
+                    hs, he, ts, te = win
+                    # Use the S2S-FWI for the base date (he = enc_end = base date idx)
+                    base_tidx = he
+                    if base_tidx in s2s_fwi_patched:
+                        return s2s_fwi_patched[base_tidx].astype(np.float32)
+                    # Fallback: try nearby dates
+                    for offset in range(1, 4):
+                        if (base_tidx - offset) in s2s_fwi_patched:
+                            return s2s_fwi_patched[base_tidx - offset].astype(np.float32)
+                    # No S2S-FWI available — return zeros
+                    return np.zeros_like(next(iter(s2s_fwi_patched.values())),
+                                        dtype=np.float32)
+
+                all_results["s2s_fwi"] = compute_baseline_lift_k(
+                    s2s_fwi_score, fire_patched, val_wins, n_patches,
+                    args.k_values, args.n_sample_wins, "s2s_fwi")
 
     # --- Summary ---
     print(f"\n{'='*70}")
