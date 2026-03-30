@@ -4,6 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-node=1
+#SBATCH --mem=0
 #SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_dec_s2s_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_dec_s2s_%j.err
@@ -68,7 +69,9 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --weight_decay 0.05 \
   --label_smoothing 0.05 \
   --neg_buffer 2 \
+  --load_train_to_ram \
   --fire_season_only \
+  --load_val_to_ram \
   --skip_forecast
 
 echo "=== TRAINING FINISHED (exit code: $?) ==="
