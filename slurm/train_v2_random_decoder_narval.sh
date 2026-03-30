@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
-#SBATCH --time=48:00:00
+#SBATCH --time=17:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_dec_random_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_dec_random_%j.err
 #SBATCH --account=def-inghaw

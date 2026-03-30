@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --mem=256G
-#SBATCH --time=48:00:00
+#SBATCH --time=17:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_dec_s2s_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_dec_s2s_%j.err
 #SBATCH --account=def-inghaw
@@ -53,7 +53,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --s2s_max_issue_lag 3 \
   --num_workers 8 \
   --batch_size 8192 \
-  --epochs 12 \
+  --epochs 8 \
   --lr 1e-4 \
   --lr_min 1e-6 \
   --dropout 0.2 \
