@@ -3,8 +3,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --gpus-per-node=1
-#SBATCH --mem=0
+#SBATCH --gpus-per-node=4
+#SBATCH --partition=compute_full_node
 #SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_dec_random_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_dec_random_%j.err
