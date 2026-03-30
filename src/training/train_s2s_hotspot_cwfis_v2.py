@@ -1908,22 +1908,21 @@ def main():
               f"{_val_miss} miss  "
               f"({100*_val_total/max(len(all_val_window_dates),1):.1f}% usable)")
 
-    # ── S2S: drop windows with no forecast data ─────────────────────
+    # ── S2S: drop TRAIN windows with no forecast data ───────────────
+    # Val windows are NOT filtered — keeps val set identical to random/oracle
+    # for fair Lift@K comparison. S2S model sees zero decoder for val misses,
+    # matching the real-world scenario where some dates lack S2S data.
     if args.decoder == "s2s" and date_to_s2s_idx is not None:
         _orig_train = len(train_wins)
-        _orig_val   = len(val_wins)
         _keep_train = [i for i, d in enumerate(all_train_window_dates)
-                       if d in date_to_s2s_idx]
-        _keep_val   = [i for i, d in enumerate(all_val_window_dates)
                        if d in date_to_s2s_idx]
         train_wins = [train_wins[i] for i in _keep_train]
         all_train_window_dates = [all_train_window_dates[i] for i in _keep_train]
-        val_wins   = [val_wins[i] for i in _keep_val]
-        all_val_window_dates   = [all_val_window_dates[i] for i in _keep_val]
+        _val_miss = sum(1 for d in all_val_window_dates if d not in date_to_s2s_idx)
         print(f"\n  S2S window filter: train {_orig_train}→{len(train_wins)}  "
-              f"val {_orig_val}→{len(val_wins)}  "
-              f"(dropped {_orig_train - len(train_wins) + _orig_val - len(val_wins)} "
-              f"windows with no S2S data)")
+              f"(dropped {_orig_train - len(train_wins)} windows with no S2S data)")
+        print(f"  Val windows kept unfiltered: {len(val_wins)}  "
+              f"({_val_miss} will use zero decoder for fair comparison)")
 
     # ----------------------------------------------------------------
     # STEP 7b  Build positive pairs; sample negative pairs
