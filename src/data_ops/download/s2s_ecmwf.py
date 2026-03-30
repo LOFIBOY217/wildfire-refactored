@@ -47,13 +47,21 @@ except ModuleNotFoundError:
 # Core download logic
 # ------------------------------------------------------------------ #
 
-STEP_STRING = (
+# Daily-average step ranges for core set (lead days 14-46, 24h averages)
+STEP_STRING_DAILY_AVG = (
     "336-360/360-384/384-408/408-432/432-456/456-480/480-504/"
     "504-528/528-552/552-576/576-600/600-624/624-648/648-672/"
     "672-696/696-720/720-744/744-768/768-792/792-816/816-840/"
     "840-864/864-888/888-912/912-936/936-960/960-984/984-1008/"
     "1008-1032/1032-1056/1056-1080/1080-1104"
 )
+
+# Instantaneous steps for extended set (wind/precip not available as daily avg)
+# Every 24h from lead day 14 (336h) to day 46 (1104h), 33 steps
+STEP_STRING_INSTANT = "/".join(str(h) for h in range(336, 1104 + 1, 24))
+
+# Backward-compatible alias
+STEP_STRING = STEP_STRING_DAILY_AVG
 
 # ------------------------------------------------------------------ #
 # Param sets
@@ -70,6 +78,7 @@ PARAM_SETS = {
         "levtype": "sfc",
         # 10u / 10v / cp / tp / sm100 (layer-3 soil moisture, 28-100 cm)
         "param":   "165/166/143/228/228088",
+        "step":    STEP_STRING_INSTANT,  # instantaneous, not daily average
         "prefix":  "s2s_ecmf_cf_ext_",
         "desc":    "10u / 10v / cp / tp / sm100",
     },
@@ -114,7 +123,7 @@ def download_single_date(server, date_str, outdir, param_set="core"):
         "model":   "glob",
         "origin":  "ecmf",
         "param":   ps["param"],
-        "step":    STEP_STRING,
+        "step":    ps.get("step", STEP_STRING),
         "stream":  "enfo",
         "time":    "00:00:00",
         "type":    "cf",
