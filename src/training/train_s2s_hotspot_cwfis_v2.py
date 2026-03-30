@@ -190,7 +190,7 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
     s2s_max_lag     : int, max lag days for normalization of issue_age feature
 
     Returns (dec_days, 9) float16:
-      [:, :6]  — 6-channel S2S forecast (z-score normalized; 0 if missing)
+      [:, :6]  — 6-channel S2S forecast (z-score normalized; random N(0,1) if missing)
       [:, 6]   — issue_age: lag_days / s2s_max_lag, in [0, 1]
       [:, 7]   — is_fallback: 0.0 (exact) or 1.0 (fallback)
       [:, 8]   — is_missing: 1.0 if lead-day data is missing (all-zero in cache)
@@ -198,12 +198,17 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
     out = np.zeros((dec_days, S2S_DEC_DIM), dtype=np.float16)
 
     if date_str is None or date_to_s2s_idx is None or s2s_cache is None:
-        # Entire date unmapped — mark all lead days as missing
+        # Entire date unmapped — random noise + is_missing=1
+        # Random breaks decoder attention dependence; better than zero (see doc)
+        out[:, :S2S_N_CHANNELS] = np.random.standard_normal(
+            (dec_days, S2S_N_CHANNELS)).astype(np.float16)
         out[:, S2S_N_CHANNELS + 2] = np.float16(1.0)
         return out
 
     s2s_idx = date_to_s2s_idx.get(date_str, None)
     if s2s_idx is None:
+        out[:, :S2S_N_CHANNELS] = np.random.standard_normal(
+            (dec_days, S2S_N_CHANNELS)).astype(np.float16)
         out[:, S2S_N_CHANNELS + 2] = np.float16(1.0)
         return out
 
@@ -233,10 +238,12 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
     # Weather channels: (dec_days, 6)
     out[:dec_days, :S2S_N_CHANNELS] = lead_data[:dec_days]
 
-    # Zero out weather channels for missing lead days (set to mean in z-space)
-    # This prevents false signals from (0 - mean) / std
+    # Fill missing lead days with random noise instead of (0-mean)/std false signal
+    # Random breaks decoder attention dependence; is_missing=1 tells model to ignore
     if missing_mask.any():
-        out[missing_mask, :S2S_N_CHANNELS] = np.float16(0.0)
+        n_miss = int(missing_mask.sum())
+        out[missing_mask, :S2S_N_CHANNELS] = np.random.standard_normal(
+            (n_miss, S2S_N_CHANNELS)).astype(np.float16)
         out[missing_mask, S2S_N_CHANNELS + 2] = np.float16(1.0)
 
     # Metadata features: issue_age and is_fallback (constant across all lead days)
@@ -1942,7 +1949,7 @@ def main():
         print(f"\n  S2S cache internal missing (sampled {_n_sample_dates} dates × "
               f"{_n_sample_patches} patches):")
         print(f"    all-zero lead-day rows: {_missing_leads}/{_total_leads} ({_miss_pct:.1f}%)")
-        print(f"    → these will get is_missing=1 + weather channels zeroed in z-space")
+        print(f"    → these will get is_missing=1 + random N(0,1) weather channels")
 
     # ── S2S: drop TRAIN windows with no forecast data ───────────────
     # Val windows are NOT filtered — keeps val set identical to random/oracle
