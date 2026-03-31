@@ -76,11 +76,11 @@ PARAM_SETS = {
     },
     "extended": {
         "levtype": "sfc",
-        # 10u / 10v / cp / tp / sm100 (layer-3 soil moisture, 28-100 cm)
-        "param":   "165/166/143/228/228088",
+        # 10u / 10v / tp (wind + total precip — minimal set for FWI computation)
+        "param":   "165/166/228",
         "step":    STEP_STRING_INSTANT,  # instantaneous, not daily average
         "prefix":  "s2s_ecmf_cf_ext_",
-        "desc":    "10u / 10v / cp / tp / sm100",
+        "desc":    "10u / 10v / tp",
     },
     "pressure": {
         "levtype":  "pl",
