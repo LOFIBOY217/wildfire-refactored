@@ -360,9 +360,11 @@ def main():
         def fwi_oracle_score(win):
             hs, he, ts, te = win
             # fwi_patched: (n_patches, T, P²)
-            # Mean FWI over target window
-            fwi_window = fwi_patched[:, ts:te, :]  # (n_patches, dec_days, P²)
-            return fwi_window.mean(axis=1).astype(np.float32)  # (n_patches, P²)
+            # Mean FWI over target window; NaN (nodata/winter) → 0 before averaging
+            fwi_window = np.nan_to_num(
+                fwi_patched[:, ts:te, :].astype(np.float32), nan=0.0
+            )  # (n_patches, dec_days, P²)
+            return fwi_window.mean(axis=1)  # (n_patches, P²)
 
         all_results["fwi_oracle"] = compute_baseline_lift_k(
             fwi_oracle_score, fire_patched, val_wins, n_patches,
@@ -376,8 +378,10 @@ def main():
 
         def fwi_max_score(win):
             hs, he, ts, te = win
-            fwi_window = fwi_patched[:, ts:te, :]
-            return fwi_window.max(axis=1).astype(np.float32)
+            fwi_window = np.nan_to_num(
+                fwi_patched[:, ts:te, :].astype(np.float32), nan=0.0
+            )
+            return fwi_window.max(axis=1)
 
         all_results["fwi_max"] = compute_baseline_lift_k(
             fwi_max_score, fire_patched, val_wins, n_patches,
