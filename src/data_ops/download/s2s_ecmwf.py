@@ -79,7 +79,9 @@ PARAM_SETS = {
         # 10u / 10v / cp / tp — wind + precip for FWI computation
         # sm100 (228088) excluded: not available in MARS for S2S
         "param":   "165/166/143/228",
-        # Uses default STEP_STRING (daily-average step ranges) — same as core
+        # Must use instantaneous steps — daily-average ranges not available
+        # for wind/precip in S2S MARS archive
+        "step":    STEP_STRING_INSTANT,
         "prefix":  "s2s_ecmf_cf_ext_",
         "desc":    "10u / 10v / cp / tp",
     },
