@@ -76,11 +76,12 @@ PARAM_SETS = {
     },
     "extended": {
         "levtype": "sfc",
-        # 10u / 10v / tp (wind + total precip — minimal set for FWI computation)
-        "param":   "165/166/228",
-        "step":    STEP_STRING_INSTANT,  # instantaneous, not daily average
+        # 10u / 10v / cp / tp — wind + precip for FWI computation
+        # sm100 (228088) excluded: not available in MARS for S2S
+        "param":   "165/166/143/228",
+        # Uses default STEP_STRING (daily-average step ranges) — same as core
         "prefix":  "s2s_ecmf_cf_ext_",
-        "desc":    "10u / 10v / tp",
+        "desc":    "10u / 10v / cp / tp",
     },
     "pressure": {
         "levtype":  "pl",
