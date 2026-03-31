@@ -165,39 +165,22 @@ def load_data(config_path, pred_start_str, pred_end_str, in_days, lead_start,
         print(f"  shape={clim_patched.shape}  "
               f"nonzero={np.count_nonzero(clim_patched)}")
 
-    # Load fire ground truth
+    # Load fire ground truth — reuse the same rasterization as training
     print(f"\n[4] Loading hotspot data...")
     hotspot_csv = cfg["hotspot_csv"]
-    import pandas as pd
-    df = pd.read_csv(hotspot_csv)
-    # Rasterize to (T, H, W)
-    print(f"  Records: {len(df):,}")
+    from src.data_ops.processing.rasterize_hotspots import (
+        load_hotspot_data, rasterize_hotspots_batch,
+    )
+    hotspot_df = load_hotspot_data(hotspot_csv)
+    print(f"  Records: {len(hotspot_df):,}")
 
-    # Need CRS info from reference TIF
+    # Get rasterio profile from reference TIF
     with rasterio.open(sample_path) as src:
-        transform = src.transform
-        crs = src.crs
+        profile = src.profile
 
-    from pyproj import Transformer
-    transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
-
-    fire_stack = np.zeros((T, H, W), dtype=np.uint8)
-    n_rasterized = 0
-    for _, row in df.iterrows():
-        try:
-            d = _parse_date(str(row["rep_date"])[:10])
-        except Exception:
-            continue
-        if d not in date_to_idx:
-            continue
-        t_idx = date_to_idx[d]
-        x, y = transformer.transform(row["longitude"], row["latitude"])
-        col = int((x - transform.c) / transform.a)
-        row_idx = int((y - transform.f) / transform.e)
-        if 0 <= row_idx < H and 0 <= col < W:
-            fire_stack[t_idx, row_idx, col] = 1
-            n_rasterized += 1
-    print(f"  Rasterized: {n_rasterized:,} hotspot points")
+    fire_stack = rasterize_hotspots_batch(hotspot_df, all_dates, profile)
+    n_rasterized = int(fire_stack.sum())
+    print(f"  Rasterized: {n_rasterized:,} hotspot pixels")
 
     # Dilate fire labels
     if dilate_radius > 0:
