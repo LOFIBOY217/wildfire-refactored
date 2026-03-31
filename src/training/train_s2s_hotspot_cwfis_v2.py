@@ -135,7 +135,7 @@ def _expand_s2s_date_mapping(s2s_dates, aligned_dates, max_lag_days):
     Expand sparse S2S issue dates into a dense lookup over *aligned_dates*.
 
     ECMWF S2S hindcasts are often only available on issue days, so exact
-    base-date lookup leaves many windows with an all-zero decoder. This maps
+    base-date lookup leaves many windows unmapped. This maps
     each aligned base date to the most recent available issue date within
     *max_lag_days*; dates with no recent issue stay unmapped.
 
@@ -259,6 +259,25 @@ def _make_dec_s2s(s2s_cache, date_to_s2s_idx, date_str, patch_i,
     return out
 
 
+def _make_dec_s2s_full(s2s_full_cache, date_to_s2s_idx, date_str, patch_i,
+                       dec_days, enc_dim):
+    """
+    Build decoder input from full-patch S2S cache (Oracle-format).
+
+    s2s_full_cache: (n_dates, n_patches, 32, P²×8) float16 memmap
+    Values are already z-score normalized (same as meteo_patched).
+    Returns (dec_days, enc_dim) float16.
+    """
+    if date_str is None or date_to_s2s_idx is None or s2s_full_cache is None:
+        return np.zeros((dec_days, enc_dim), dtype=np.float16)
+
+    idx = date_to_s2s_idx.get(date_str)
+    if idx is None:
+        return np.zeros((dec_days, enc_dim), dtype=np.float16)
+
+    return s2s_full_cache[idx, patch_i, :dec_days, :].copy()
+
+
 class S2SHotspotDatasetMixed(Dataset):
     """
     Training dataset: pos_pairs (patches with ≥1 fire pixel in target window)
@@ -276,7 +295,8 @@ class S2SHotspotDatasetMixed(Dataset):
                  decoder_mode="oracle", dec_dim=None,
                  s2s_cache=None, date_to_s2s_idx=None, window_dates=None,
                  patch_size=16, s2s_means=None, s2s_stds=None,
-                 date_to_s2s_lag=None, s2s_max_lag=3):
+                 date_to_s2s_lag=None, s2s_max_lag=3,
+                 s2s_full_cache=None):
         self.meteo          = meteo_patched
         self.fire           = fire_patched
         self.windows        = windows
@@ -293,6 +313,7 @@ class S2SHotspotDatasetMixed(Dataset):
         self.s2s_stds       = s2s_stds         # (6,) float32 or None
         self.date_to_s2s_lag = date_to_s2s_lag  # {date_str: int} lag days
         self.s2s_max_lag    = s2s_max_lag       # int, for age normalization
+        self.s2s_full_cache = s2s_full_cache   # (n_dates, n_patches, 32, enc_dim) float16 or None
 
     def __len__(self):
         return len(self.all_pairs)
@@ -308,14 +329,21 @@ class S2SHotspotDatasetMixed(Dataset):
         if self.decoder_mode == "oracle":
             x_dec = self.meteo[patch_i, ts:te, :].copy()   # float16
         elif self.decoder_mode == "s2s":
-            x_dec = _make_dec_s2s(
-                self.s2s_cache, self.date_to_s2s_idx,
-                self.window_dates[win_i], patch_i,
-                te - ts, self.dec_dim, self.patch_size,
-                s2s_means=self.s2s_means, s2s_stds=self.s2s_stds,
-                date_to_s2s_lag=self.date_to_s2s_lag,
-                s2s_max_lag=self.s2s_max_lag,
-            )
+            if self.s2s_full_cache is not None:
+                x_dec = _make_dec_s2s_full(
+                    self.s2s_full_cache, self.date_to_s2s_idx,
+                    self.window_dates[win_i], patch_i,
+                    te - ts, self.dec_dim,
+                )
+            else:
+                x_dec = _make_dec_s2s(
+                    self.s2s_cache, self.date_to_s2s_idx,
+                    self.window_dates[win_i], patch_i,
+                    te - ts, self.dec_dim, self.patch_size,
+                    s2s_means=self.s2s_means, s2s_stds=self.s2s_stds,
+                    date_to_s2s_lag=self.date_to_s2s_lag,
+                    s2s_max_lag=self.s2s_max_lag,
+                )
         else:
             x_dec = _make_dec_ablation(self.decoder_mode, x_enc, te - ts, self.dec_dim)
         y = self.fire[ts:te, patch_i, :].astype(np.float32)   # uint8 → float32 (needed for BCE)
@@ -333,7 +361,8 @@ class S2SHotspotDatasetUnfiltered(Dataset):
                  decoder_mode="oracle", dec_dim=None,
                  s2s_cache=None, date_to_s2s_idx=None, window_dates=None,
                  patch_size=16, s2s_means=None, s2s_stds=None,
-                 date_to_s2s_lag=None, s2s_max_lag=3):
+                 date_to_s2s_lag=None, s2s_max_lag=3,
+                 s2s_full_cache=None):
         self.meteo          = meteo_patched
         self.fire           = fire_patched
         self.windows        = windows
@@ -350,6 +379,7 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         self.s2s_stds       = s2s_stds
         self.date_to_s2s_lag = date_to_s2s_lag
         self.s2s_max_lag    = s2s_max_lag
+        self.s2s_full_cache = s2s_full_cache   # (n_dates, n_patches, 32, enc_dim) float16 or None
 
     def __len__(self):
         return len(self.windows) * self.n_patches
@@ -365,14 +395,21 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         if self.decoder_mode == "oracle":
             x_dec = self.meteo[patch_i, ts:te, :].copy()   # float16
         elif self.decoder_mode == "s2s":
-            x_dec = _make_dec_s2s(
-                self.s2s_cache, self.date_to_s2s_idx,
-                self.window_dates[win_i], patch_i,
-                te - ts, self.dec_dim, self.patch_size,
-                s2s_means=self.s2s_means, s2s_stds=self.s2s_stds,
-                date_to_s2s_lag=self.date_to_s2s_lag,
-                s2s_max_lag=self.s2s_max_lag,
-            )
+            if self.s2s_full_cache is not None:
+                x_dec = _make_dec_s2s_full(
+                    self.s2s_full_cache, self.date_to_s2s_idx,
+                    self.window_dates[win_i], patch_i,
+                    te - ts, self.dec_dim,
+                )
+            else:
+                x_dec = _make_dec_s2s(
+                    self.s2s_cache, self.date_to_s2s_idx,
+                    self.window_dates[win_i], patch_i,
+                    te - ts, self.dec_dim, self.patch_size,
+                    s2s_means=self.s2s_means, s2s_stds=self.s2s_stds,
+                    date_to_s2s_lag=self.date_to_s2s_lag,
+                    s2s_max_lag=self.s2s_max_lag,
+                )
         else:
             x_dec = _make_dec_ablation(self.decoder_mode, x_enc, te - ts, self.dec_dim)
         y = self.fire[ts:te, patch_i, :].astype(np.float32)   # uint8 → float32 (needed for BCE)
@@ -636,7 +673,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         s2s_cache=None, date_to_s2s_idx=None,
                         val_win_dates=None, patch_size=16,
                         s2s_means=None, s2s_stds=None,
-                        date_to_s2s_lag=None, s2s_max_lag=3):
+                        date_to_s2s_lag=None, s2s_max_lag=3,
+                        s2s_full_cache=None):
     """
     Compute ranking metrics on a random sample of validation windows.
 
@@ -695,17 +733,27 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         )
                     ).to(device)
                 elif decoder_mode == "s2s":
-                    dec_list = [
-                        _make_dec_s2s(
-                            s2s_cache, date_to_s2s_idx,
-                            win_date, cs + pi,
-                            te - ts, _dec_dim, patch_size,
-                            s2s_means=s2s_means, s2s_stds=s2s_stds,
-                            date_to_s2s_lag=date_to_s2s_lag,
-                            s2s_max_lag=s2s_max_lag,
-                        ).astype(np.float32)
-                        for pi in range(ce - cs)
-                    ]
+                    if s2s_full_cache is not None:
+                        dec_list = [
+                            _make_dec_s2s_full(
+                                s2s_full_cache, date_to_s2s_idx,
+                                win_date, cs + pi,
+                                te - ts, _dec_dim,
+                            ).astype(np.float32)
+                            for pi in range(ce - cs)
+                        ]
+                    else:
+                        dec_list = [
+                            _make_dec_s2s(
+                                s2s_cache, date_to_s2s_idx,
+                                win_date, cs + pi,
+                                te - ts, _dec_dim, patch_size,
+                                s2s_means=s2s_means, s2s_stds=s2s_stds,
+                                date_to_s2s_lag=date_to_s2s_lag,
+                                s2s_max_lag=s2s_max_lag,
+                            ).astype(np.float32)
+                            for pi in range(ce - cs)
+                        ]
                     xb_dec = torch.from_numpy(
                         np.stack(dec_list, axis=0)   # (chunk, dec_days, dec_dim)
                     ).to(device)
@@ -1157,6 +1205,12 @@ def main():
                     help="Path to pre-built S2S decoder patch-mean cache (.dat file). "
                          "Required when --decoder s2s. "
                          "Build with: python -m src.data_ops.processing.build_s2s_decoder_cache")
+    ap.add_argument("--s2s_full_cache", type=str, default=None,
+                    help="Path to full-patch S2S decoder cache (.dat file, shape "
+                         "(n_dates, n_patches, 32, P^2*8)). When provided with "
+                         "--decoder s2s, uses Oracle-format patches (dec_dim=2048) "
+                         "instead of patch-mean format (dec_dim=9). "
+                         "Build with: python -m src.data_ops.processing.build_s2s_full_patch_cache")
     ap.add_argument("--s2s_max_issue_lag", type=int, default=3,
                     help="For --decoder s2s, allow base dates to reuse the most recent "
                          "available S2S issue date up to this many days back. "
@@ -1549,95 +1603,135 @@ def main():
     if args.decoder in ("oracle", "zeros", "random", "climatology"):
         dec_dim = enc_dim                # ablation modes keep same architecture
     elif args.decoder == "s2s":
-        dec_dim = S2S_DEC_DIM   # 9 — 6 weather + issue_age + is_fallback + is_missing
-        print(f"\n[S2S decoder] dec_dim={dec_dim}  ({S2S_N_CHANNELS} weather + 3 metadata)")
-        # Load S2S cache
-        s2s_cache_path = args.s2s_cache
-        if not s2s_cache_path:
-            raise ValueError("--decoder s2s requires --s2s_cache <path to .dat file>")
-        if not os.path.exists(s2s_cache_path):
-            raise FileNotFoundError(f"S2S cache not found: {s2s_cache_path}\n"
-                                    "Run: python -m src.data_ops.processing.build_s2s_decoder_cache")
-        dates_file = s2s_cache_path + ".dates.npy"
-        if not os.path.exists(dates_file):
-            raise FileNotFoundError(f"S2S dates companion file not found: {dates_file}")
-        s2s_dates = np.load(dates_file, allow_pickle=True)
-        s2s_n_dates = len(s2s_dates)
-        print(f"  S2S cache dates: {s2s_n_dates}  ({s2s_dates[0]} .. {s2s_dates[-1]})")
-        # Open as read-only memmap: shape (n_dates, n_patches, 32, 6)
-        s2s_cache = np.memmap(s2s_cache_path, dtype='float16', mode='r',
-                              shape=(s2s_n_dates, n_patches, 32, S2S_N_CHANNELS))
-        print(f"  S2S cache shape: {s2s_cache.shape}  "
-              f"({os.path.getsize(s2s_cache_path)/1e9:.2f} GB)")
-        # Build date_str → cache row index mapping.
-        # Allow recent fallback so sparse S2S issue schedules do not collapse
-        # most windows to an all-zero decoder.
-        date_to_s2s_idx, date_to_s2s_exact, date_to_s2s_lag = _expand_s2s_date_mapping(
-            s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
-        )
-        _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
-        _n_fallback = sum(
-            1 for d in aligned_dates
-            if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
-        )
-        _n_miss = len(aligned_dates) - _n_exact - _n_fallback
-        print(f"  S2S date mapping over aligned dates: exact={_n_exact}  "
-              f"fallback={_n_fallback}  miss={_n_miss}  "
-              f"(max_issue_lag={args.s2s_max_issue_lag}d)")
-
-        # ── Compute S2S per-channel normalization stats ──────────────
-        # Use only training-period rows (dates < pred_start_date)
-        from datetime import date as _date_cls
-        _pred_start = _date_cls.fromisoformat(str(args.pred_start))
-        _s2s_train_rows = [
-            i for i, d in enumerate(s2s_dates)
-            if _date_cls.fromisoformat(str(d)) < _pred_start
-        ]
-        _S2S_CH_NAMES = ["2t", "2d", "tcw", "sm20", "st20", "VPD"]
-        if _s2s_train_rows:
-            _rng_s2s = np.random.default_rng(42)
-            _sample_patches = _rng_s2s.choice(n_patches, size=min(2000, n_patches), replace=False)
-            # Accumulate per-channel stats from training rows + sampled patches
-            _ch_sums  = np.zeros(S2S_N_CHANNELS, dtype=np.float64)
-            _ch_sqsums = np.zeros(S2S_N_CHANNELS, dtype=np.float64)
-            _ch_counts = np.zeros(S2S_N_CHANNELS, dtype=np.int64)
-            _ch_mins = np.full(S2S_N_CHANNELS, np.inf)
-            _ch_maxs = np.full(S2S_N_CHANNELS, -np.inf)
-            _n_nonzero_rows = 0
-            _n_total_rows = 0
-            for _row_i in _s2s_train_rows:
-                _block = np.array(s2s_cache[_row_i, _sample_patches, :, :],
-                                  dtype=np.float32)  # (n_sample, 32, 6)
-                _flat = _block.reshape(-1, S2S_N_CHANNELS)  # (n_sample*32, 6)
-                _nz_mask = np.any(_flat != 0, axis=1)
-                _n_nonzero_rows += _nz_mask.sum()
-                _n_total_rows += len(_nz_mask)
-                _valid = _flat[_nz_mask]
-                if len(_valid) > 0:
-                    _ch_sums += _valid.sum(axis=0)
-                    _ch_sqsums += (_valid ** 2).sum(axis=0)
-                    _ch_counts += len(_valid)
-                    _ch_mins = np.minimum(_ch_mins, _valid.min(axis=0))
-                    _ch_maxs = np.maximum(_ch_maxs, _valid.max(axis=0))
-            s2s_means = np.zeros(S2S_N_CHANNELS, dtype=np.float32)
-            s2s_stds  = np.ones(S2S_N_CHANNELS, dtype=np.float32)
-            for _ch in range(S2S_N_CHANNELS):
-                if _ch_counts[_ch] > 0:
-                    s2s_means[_ch] = _ch_sums[_ch] / _ch_counts[_ch]
-                    _var = _ch_sqsums[_ch] / _ch_counts[_ch] - s2s_means[_ch] ** 2
-                    s2s_stds[_ch] = max(np.sqrt(max(_var, 0)), 1e-6)
-            print(f"\n  S2S normalization stats ({len(_s2s_train_rows)} train rows, "
-                  f"{len(_sample_patches)} sampled patches):")
-            print(f"    nonzero rows: {_n_nonzero_rows}/{_n_total_rows} "
-                  f"({100*_n_nonzero_rows/max(_n_total_rows,1):.1f}%)")
-            for _ch in range(S2S_N_CHANNELS):
-                print(f"    ch{_ch} ({_S2S_CH_NAMES[_ch]:>4s}):  "
-                      f"mean={s2s_means[_ch]:10.4f}  std={s2s_stds[_ch]:10.4f}  "
-                      f"min={_ch_mins[_ch]:10.4f}  max={_ch_maxs[_ch]:10.4f}")
-        else:
-            print("  WARNING: no S2S training-period rows found — skipping normalization")
+        if args.s2s_full_cache:
+            # ── Full-patch S2S cache (Oracle-format, pre-normalized) ──
+            dec_dim = enc_dim  # 2048 = P²×8, same as Oracle encoder
+            print(f"\n[S2S decoder — full-patch mode] dec_dim={dec_dim}  (Oracle-format, pre-normalized)")
+            s2s_full_cache_path = args.s2s_full_cache
+            if not os.path.exists(s2s_full_cache_path):
+                raise FileNotFoundError(f"S2S full cache not found: {s2s_full_cache_path}\n"
+                                        "Run: python -m src.data_ops.processing.build_s2s_full_patch_cache")
+            dates_file = s2s_full_cache_path + ".dates.npy"
+            if not os.path.exists(dates_file):
+                raise FileNotFoundError(f"S2S dates companion file not found: {dates_file}")
+            s2s_dates = np.load(dates_file, allow_pickle=True)
+            s2s_n_dates = len(s2s_dates)
+            print(f"  S2S full cache dates: {s2s_n_dates}  ({s2s_dates[0]} .. {s2s_dates[-1]})")
+            # Open as read-only memmap: shape (n_dates, n_patches, 32, enc_dim)
+            s2s_full_cache = np.memmap(s2s_full_cache_path, dtype='float16', mode='r',
+                                       shape=(s2s_n_dates, n_patches, 32, enc_dim))
+            print(f"  S2S full cache shape: {s2s_full_cache.shape}  "
+                  f"({os.path.getsize(s2s_full_cache_path)/1e9:.2f} GB)")
+            # Old patch-mean cache not needed
+            s2s_cache = None
+            # No per-channel normalization needed (values are pre-normalized)
             s2s_means = None
             s2s_stds  = None
+            # Build date_str → cache row index mapping (same as patch-mean path)
+            date_to_s2s_idx, date_to_s2s_exact, date_to_s2s_lag = _expand_s2s_date_mapping(
+                s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
+            )
+            _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
+            _n_fallback = sum(
+                1 for d in aligned_dates
+                if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
+            )
+            _n_miss = len(aligned_dates) - _n_exact - _n_fallback
+            print(f"  S2S date mapping over aligned dates: exact={_n_exact}  "
+                  f"fallback={_n_fallback}  miss={_n_miss}  "
+                  f"(max_issue_lag={args.s2s_max_issue_lag}d)")
+        else:
+            # ── Patch-mean S2S cache (original format) ──
+            dec_dim = S2S_DEC_DIM   # 9 — 6 weather + issue_age + is_fallback + is_missing
+            print(f"\n[S2S decoder] dec_dim={dec_dim}  ({S2S_N_CHANNELS} weather + 3 metadata)")
+            # Load S2S cache
+            s2s_cache_path = args.s2s_cache
+            if not s2s_cache_path:
+                raise ValueError("--decoder s2s requires --s2s_cache <path to .dat file>")
+            if not os.path.exists(s2s_cache_path):
+                raise FileNotFoundError(f"S2S cache not found: {s2s_cache_path}\n"
+                                        "Run: python -m src.data_ops.processing.build_s2s_decoder_cache")
+            dates_file = s2s_cache_path + ".dates.npy"
+            if not os.path.exists(dates_file):
+                raise FileNotFoundError(f"S2S dates companion file not found: {dates_file}")
+            s2s_dates = np.load(dates_file, allow_pickle=True)
+            s2s_n_dates = len(s2s_dates)
+            print(f"  S2S cache dates: {s2s_n_dates}  ({s2s_dates[0]} .. {s2s_dates[-1]})")
+            # Open as read-only memmap: shape (n_dates, n_patches, 32, 6)
+            s2s_cache = np.memmap(s2s_cache_path, dtype='float16', mode='r',
+                                  shape=(s2s_n_dates, n_patches, 32, S2S_N_CHANNELS))
+            print(f"  S2S cache shape: {s2s_cache.shape}  "
+                  f"({os.path.getsize(s2s_cache_path)/1e9:.2f} GB)")
+            # Build date_str → cache row index mapping.
+            # Allow recent fallback so sparse S2S issue schedules do not leave
+            # most windows unmapped.
+            date_to_s2s_idx, date_to_s2s_exact, date_to_s2s_lag = _expand_s2s_date_mapping(
+                s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
+            )
+            _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
+            _n_fallback = sum(
+                1 for d in aligned_dates
+                if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
+            )
+            _n_miss = len(aligned_dates) - _n_exact - _n_fallback
+            print(f"  S2S date mapping over aligned dates: exact={_n_exact}  "
+                  f"fallback={_n_fallback}  miss={_n_miss}  "
+                  f"(max_issue_lag={args.s2s_max_issue_lag}d)")
+
+            # ── Compute S2S per-channel normalization stats ──────────────
+            # Use only training-period rows (dates < pred_start_date)
+            from datetime import date as _date_cls
+            _pred_start = _date_cls.fromisoformat(str(args.pred_start))
+            _s2s_train_rows = [
+                i for i, d in enumerate(s2s_dates)
+                if _date_cls.fromisoformat(str(d)) < _pred_start
+            ]
+            _S2S_CH_NAMES = ["2t", "2d", "tcw", "sm20", "st20", "VPD"]
+            if _s2s_train_rows:
+                _rng_s2s = np.random.default_rng(42)
+                _sample_patches = _rng_s2s.choice(n_patches, size=min(2000, n_patches), replace=False)
+                # Accumulate per-channel stats from training rows + sampled patches
+                _ch_sums  = np.zeros(S2S_N_CHANNELS, dtype=np.float64)
+                _ch_sqsums = np.zeros(S2S_N_CHANNELS, dtype=np.float64)
+                _ch_counts = np.zeros(S2S_N_CHANNELS, dtype=np.int64)
+                _ch_mins = np.full(S2S_N_CHANNELS, np.inf)
+                _ch_maxs = np.full(S2S_N_CHANNELS, -np.inf)
+                _n_nonzero_rows = 0
+                _n_total_rows = 0
+                for _row_i in _s2s_train_rows:
+                    _block = np.array(s2s_cache[_row_i, _sample_patches, :, :],
+                                      dtype=np.float32)  # (n_sample, 32, 6)
+                    _flat = _block.reshape(-1, S2S_N_CHANNELS)  # (n_sample*32, 6)
+                    _nz_mask = np.any(_flat != 0, axis=1)
+                    _n_nonzero_rows += _nz_mask.sum()
+                    _n_total_rows += len(_nz_mask)
+                    _valid = _flat[_nz_mask]
+                    if len(_valid) > 0:
+                        _ch_sums += _valid.sum(axis=0)
+                        _ch_sqsums += (_valid ** 2).sum(axis=0)
+                        _ch_counts += len(_valid)
+                        _ch_mins = np.minimum(_ch_mins, _valid.min(axis=0))
+                        _ch_maxs = np.maximum(_ch_maxs, _valid.max(axis=0))
+                s2s_means = np.zeros(S2S_N_CHANNELS, dtype=np.float32)
+                s2s_stds  = np.ones(S2S_N_CHANNELS, dtype=np.float32)
+                for _ch in range(S2S_N_CHANNELS):
+                    if _ch_counts[_ch] > 0:
+                        s2s_means[_ch] = _ch_sums[_ch] / _ch_counts[_ch]
+                        _var = _ch_sqsums[_ch] / _ch_counts[_ch] - s2s_means[_ch] ** 2
+                        s2s_stds[_ch] = max(np.sqrt(max(_var, 0)), 1e-6)
+                print(f"\n  S2S normalization stats ({len(_s2s_train_rows)} train rows, "
+                      f"{len(_sample_patches)} sampled patches):")
+                print(f"    nonzero rows: {_n_nonzero_rows}/{_n_total_rows} "
+                      f"({100*_n_nonzero_rows/max(_n_total_rows,1):.1f}%)")
+                for _ch in range(S2S_N_CHANNELS):
+                    print(f"    ch{_ch} ({_S2S_CH_NAMES[_ch]:>4s}):  "
+                          f"mean={s2s_means[_ch]:10.4f}  std={s2s_stds[_ch]:10.4f}  "
+                          f"min={_ch_mins[_ch]:10.4f}  max={_ch_maxs[_ch]:10.4f}")
+            else:
+                print("  WARNING: no S2S training-period rows found — skipping normalization")
+                s2s_means = None
+                s2s_stds  = None
+            s2s_full_cache = None  # not using full cache in patch-mean mode
     else:
         raise ValueError(f"Unknown --decoder: {args.decoder}")
 
@@ -1649,6 +1743,10 @@ def main():
         date_to_s2s_lag  = None
         s2s_means        = None
         s2s_stds         = None
+        s2s_full_cache   = None
+    if not hasattr(args, 's2s_full_cache') or args.s2s_full_cache is None:
+        if 's2s_full_cache' not in dir():
+            s2s_full_cache = None
 
     out_dim   = P * P                # patch_dim_out
 
@@ -1951,21 +2049,10 @@ def main():
         print(f"    all-zero lead-day rows: {_missing_leads}/{_total_leads} ({_miss_pct:.1f}%)")
         print(f"    → these will get is_missing=1 + random N(0,1) weather channels")
 
-    # ── S2S: drop TRAIN windows with no forecast data ───────────────
-    # Val windows are NOT filtered — keeps val set identical to random/oracle
-    # for fair Lift@K comparison. S2S model sees zero decoder for val misses,
-    # matching the real-world scenario where some dates lack S2S data.
-    if args.decoder == "s2s" and date_to_s2s_idx is not None:
-        _orig_train = len(train_wins)
-        _keep_train = [i for i, d in enumerate(all_train_window_dates)
-                       if d in date_to_s2s_idx]
-        train_wins = [train_wins[i] for i in _keep_train]
-        all_train_window_dates = [all_train_window_dates[i] for i in _keep_train]
-        _val_miss = sum(1 for d in all_val_window_dates if d not in date_to_s2s_idx)
-        print(f"\n  S2S window filter: train {_orig_train}→{len(train_wins)}  "
-              f"(dropped {_orig_train - len(train_wins)} windows with no S2S data)")
-        print(f"  Val windows kept unfiltered: {len(val_wins)}  "
-              f"({_val_miss} will use zero decoder for fair comparison)")
+    # Do not filter train/val windows by S2S coverage here.
+    # _make_dec_s2s already handles unmapped base dates by injecting
+    # random weather channels and setting is_missing=1, which preserves
+    # the full training history when the S2S archive starts late.
 
     # ----------------------------------------------------------------
     # STEP 7b  Build positive pairs; sample negative pairs
@@ -2258,6 +2345,7 @@ def main():
         window_dates=train_window_dates_eff, patch_size=P,
         s2s_means=s2s_means, s2s_stds=s2s_stds,
         date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+        s2s_full_cache=s2s_full_cache,
     )
     if val_wins:
         val_ds = S2SHotspotDatasetUnfiltered(
@@ -2267,6 +2355,7 @@ def main():
             window_dates=val_window_dates_eff, patch_size=P,
             s2s_means=s2s_means, s2s_stds=s2s_stds,
             date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+            s2s_full_cache=s2s_full_cache,
         )
     else:
         val_ds = train_ds
@@ -2349,6 +2438,7 @@ def main():
                 val_win_dates=all_val_window_dates, patch_size=P,
                 s2s_means=s2s_means, s2s_stds=s2s_stds,
                 date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+                s2s_full_cache=s2s_full_cache,
             )
             print(f"    Lift@{args.val_lift_k}={m['lift_k']:.2f}x  "
                   f"Prec={m['precision_k']:.4f}  Recall={m['recall_k']:.4f}  "
@@ -2576,6 +2666,7 @@ def main():
                     val_win_dates=val_wins_lift_dates, patch_size=P,
                     s2s_means=s2s_means, s2s_stds=s2s_stds,
                     date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+                    s2s_full_cache=s2s_full_cache,
                 )
                 val_lift_k = _m["lift_k"]
                 val_prec_k = _m["precision_k"]
