@@ -1,0 +1,3 @@
+# Ignore raw SLURM output files (large, machine-generated)
+*.out
+*.err
