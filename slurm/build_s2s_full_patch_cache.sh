@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=256G
+#SBATCH --mem=512G
 #SBATCH --time=48:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/build_s2s_cache_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/build_s2s_cache_%j.err
