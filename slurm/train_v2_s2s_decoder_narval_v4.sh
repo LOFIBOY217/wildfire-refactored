@@ -43,11 +43,11 @@ DATA_START=2018-05-01
 copy_meteo_caches $SCRATCH_CACHE $LOCAL_CACHE 3600 $DATA_START
 copy_s2s_cache $SCRATCH_CACHE $LOCAL_CACHE 1800
 
-ts "=== STARTING TRAINING (S2S decoder v4 — light regularization) ==="
+ts "=== STARTING TRAINING (S2S legacy decoder v4 — light regularization) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
   --run_name s2s_decoder_s2s_v4 \
-  --decoder s2s \
+  --decoder s2s_legacy \
   --s2s_cache $LOCAL_CACHE/s2s_decoder_cache.dat \
   --pred_end 2025-10-31 \
   --s2s_max_issue_lag 3 \
