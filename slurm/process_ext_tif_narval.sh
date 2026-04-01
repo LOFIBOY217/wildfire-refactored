@@ -23,5 +23,6 @@ python -m src.data_ops.processing.process_s2s_to_tif \
     --ext-only \
     --ext-dir data/ecmwf_observation \
     --s2s-dir data/s2s_processed \
+    --overwrite \
     --workers 16
 echo "Done: $(date)"
