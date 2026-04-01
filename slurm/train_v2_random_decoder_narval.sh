@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
-#SBATCH --mem=256G
+#SBATCH --mem=498G
 #SBATCH --time=17:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_dec_random_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_dec_random_%j.err
