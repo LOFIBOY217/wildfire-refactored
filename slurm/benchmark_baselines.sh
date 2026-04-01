@@ -31,12 +31,14 @@ echo "=== PREFLIGHT OK ==="
 
 $PYTHON -m src.evaluation.benchmark_baselines \
   --config configs/paths_narval.yaml \
-  --baseline fwi_oracle fwi_max climatology \
+  --baseline fwi_oracle climatology \
+  --eval_mode per_leadday \
   --pred_start 2022-05-01 \
   --pred_end 2025-10-31 \
   --k_values 1000 2500 5000 10000 25000 \
   --n_sample_wins 20 \
   --dilate_radius 14 \
-  --output_csv outputs/benchmark_baselines.csv
+  --fire_season_only \
+  --output_csv outputs/benchmark_baselines_per_leadday.csv
 
 echo "=== BENCHMARK FINISHED (exit code: $?) ==="
