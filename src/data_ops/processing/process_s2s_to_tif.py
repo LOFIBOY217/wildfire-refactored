@@ -183,10 +183,20 @@ def _read_grib_eccodes(grib_path: Path, chan_map=None, kelvin_chans=None) -> dic
                 if chan_name is None:
                     continue
 
-                # Parse step range: "336-360" → step_start=336
-                step_range = eccodes.codes_get(msg, "stepRange")  # e.g. "336-360"
-                if "-" in str(step_range):
-                    step_start_h = int(str(step_range).split("-")[0])
+                # Parse step range to determine lead day.
+                # Two formats exist in ECMWF S2S GRIB:
+                #   "336-360"  — daily-average range (core vars: 2t, 2d, tcw, sm20, st20)
+                #                → use start of range: 336 // 24 = lead 14
+                #   "0-336"    — accumulated from forecast start (precip: tp, cp)
+                #                → use END of range: 336 // 24 = lead 14
+                #   "336"      — instantaneous (wind: 10u, 10v)
+                #                → use value directly
+                step_range = eccodes.codes_get(msg, "stepRange")
+                parts = str(step_range).split("-")
+                if len(parts) == 2:
+                    start_h, end_h = int(parts[0]), int(parts[1])
+                    # Accumulated field (start=0): use end step for lead day
+                    step_start_h = end_h if start_h == 0 else start_h
                 else:
                     step_start_h = int(step_range)
 
