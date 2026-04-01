@@ -328,8 +328,8 @@ class S2SHotspotDatasetMixed(Dataset):
         x_enc = self.meteo[patch_i, hs:he, :].copy()   # float16
         if self.decoder_mode == "oracle":
             x_dec = self.meteo[patch_i, ts:te, :].copy()   # float16
-        elif self.decoder_mode == "s2s":
-            if self.s2s_full_cache is not None:
+        elif self.decoder_mode in ("s2s", "s2s_legacy"):
+            if self.decoder_mode == "s2s" and self.s2s_full_cache is not None:
                 x_dec = _make_dec_s2s_full(
                     self.s2s_full_cache, self.date_to_s2s_idx,
                     self.window_dates[win_i], patch_i,
@@ -394,8 +394,8 @@ class S2SHotspotDatasetUnfiltered(Dataset):
         x_enc = self.meteo[patch_i, hs:he, :].copy()   # float16
         if self.decoder_mode == "oracle":
             x_dec = self.meteo[patch_i, ts:te, :].copy()   # float16
-        elif self.decoder_mode == "s2s":
-            if self.s2s_full_cache is not None:
+        elif self.decoder_mode in ("s2s", "s2s_legacy"):
+            if self.decoder_mode == "s2s" and self.s2s_full_cache is not None:
                 x_dec = _make_dec_s2s_full(
                     self.s2s_full_cache, self.date_to_s2s_idx,
                     self.window_dates[win_i], patch_i,
@@ -732,8 +732,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                             meteo_patched[cs:ce, ts:te, :].astype(np.float32)
                         )
                     ).to(device)
-                elif decoder_mode == "s2s":
-                    if s2s_full_cache is not None:
+                elif decoder_mode in ("s2s", "s2s_legacy"):
+                    if decoder_mode == "s2s" and s2s_full_cache is not None:
                         dec_list = [
                             _make_dec_s2s_full(
                                 s2s_full_cache, date_to_s2s_idx,
