@@ -43,7 +43,7 @@ python $PROJECT/src/data_ops/processing/build_s2s_full_patch_cache.py \
     --dmc-dir      $PROJECT/data/dmc_data \
     --dc-dir       $PROJECT/data/dc_data \
     --norm-stats   $PROJECT/checkpoints/s2s_hotspot_cwfis_v2/norm_stats.npy \
-    --workers      16
+    --workers      8
 
 echo ""
 echo "=== DONE: $(date) ==="

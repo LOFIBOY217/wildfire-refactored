@@ -430,6 +430,10 @@ def build_cache(s2s_dir, out_file, reference_tif, fire_clim_path,
                         print(f"  {n_done}/{n_todo}  last={date_str}  "
                               f"({elapsed:.0f}s  ~{eta_min:.0f} min left)",
                               flush=True)
+                        # Flush dirty memmap pages to Lustre every 10 dates.
+                        # Without this, the kernel accumulates GB of dirty pages
+                        # in RAM faster than Lustre can drain them → OOM.
+                        cache.flush()
 
     cache.flush()
     del cache
