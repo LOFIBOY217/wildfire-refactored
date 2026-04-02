@@ -167,14 +167,16 @@ def _load_obs_grid(obs_dict, date_str, default_val, Hc, Wc):
 # ---------------------------------------------------------------------------
 def _process_one_date(args_tuple):
     """
-    Worker: for one issue date, compute FWI from S2S weather and build
-    the full-patch cache entry.
+    Worker: for one issue date, compute FWI from S2S weather and write
+    the result directly to the cache file at the correct byte offset.
 
-    Returns (date_str, result) where result is (n_patches, 32, feat_dim) float16,
-    or (date_str, None) on catastrophic error.
+    Returns (date_str, True) on success, (date_str, False) on error.
+    No large arrays are returned through IPC — this avoids the OOM caused
+    by Python's multiprocessing queue accumulating many 5.85 GB pickled arrays.
     """
     (date_str, s2s_dir,
-     patch_size, n_patches, nph, npw, H, W, Hc, Wc) = args_tuple
+     patch_size, n_patches, nph, npw, H, W, Hc, Wc,
+     out_file, date_idx, n_dates) = args_tuple
 
     global _fire_clim, _meteo_means, _meteo_stds
     global _ffmc_dict, _dmc_dict, _dc_dict
@@ -183,7 +185,7 @@ def _process_one_date(args_tuple):
     C = N_CHANNELS
     feat_dim = P * P * C  # 2048
 
-    result = np.zeros((n_patches, S2S_N_LEADS, feat_dim), dtype=np.float32)
+    result = np.zeros((n_patches, S2S_N_LEADS, feat_dim), dtype=np.float16)
 
     # ------------------------------------------------------------------
     # 1) Initialize FWI calculator from observed state
@@ -255,9 +257,22 @@ def _process_one_date(args_tuple):
         frame_r = frame_r.transpose(0, 2, 1, 3, 4)    # (nph, npw, P, P, C)
         patches = frame_r.reshape(n_patches, P * P * C)  # (n_patches, 2048)
 
-        result[:, li, :] = patches
+        result[:, li, :] = patches.astype(np.float16)
 
-    return date_str, result.astype(np.float16)
+    # Write directly to the cache file at the correct byte offset.
+    # Using raw file I/O avoids mapping the full 5.27 TB virtual address space
+    # and eliminates the large-array IPC transfer that caused OOM.
+    try:
+        bytes_per_date = n_patches * S2S_N_LEADS * feat_dim * 2  # float16 = 2 bytes
+        offset = date_idx * bytes_per_date
+        with open(out_file, 'r+b') as f:
+            f.seek(offset)
+            f.write(result.tobytes())
+    except Exception as e:
+        print(f"  [ERROR] Failed to write {date_str} (idx={date_idx}): {e}", flush=True)
+        return date_str, False
+
+    return date_str, True
 
 
 def _load_weather_for_lead(date_dir, lead, Hc, Wc):
@@ -373,16 +388,17 @@ def build_cache(s2s_dir, out_file, reference_tif, fire_clim_path,
                           shape=(n_dates, n_patches, S2S_N_LEADS, feat_dim))
 
     # ------------------------------------------------------------------
-    # Build work items
+    # Build work items — now include out_file + date_idx for direct writes
     # ------------------------------------------------------------------
+    date_to_idx = {d: i for i, d in enumerate(date_dirs)}
     work_items = [
         (date_str, s2s_dir,
-         patch_size, n_patches, nph, npw, H, W, Hc, Wc)
+         patch_size, n_patches, nph, npw, H, W, Hc, Wc,
+         out_file, date_to_idx[date_str], n_dates)
         for date_str in date_dirs
         if date_str not in done_set
     ]
     n_todo = len(work_items)
-    date_to_idx = {d: i for i, d in enumerate(date_dirs)}
 
     if n_todo == 0:
         print(f"\nAll {n_dates} dates already processed. Nothing to do.",
@@ -392,23 +408,33 @@ def build_cache(s2s_dir, out_file, reference_tif, fire_clim_path,
               f"(skipping {len(done_set)} already done)...", flush=True)
         t0 = time.time()
 
+        # Close the main-process cache mapping BEFORE forking workers.
+        # This prevents workers from inheriting the 5.27 TB virtual mapping,
+        # which would bloat page tables and cause OOM.
+        cache.flush()
+        del cache
+        cache = None
+
         if workers <= 1:
-            # Single-process mode
+            # Single-process mode — reopen cache for direct writes
+            cache = np.memmap(out_file, dtype='float16', mode='r+',
+                              shape=(n_dates, n_patches, S2S_N_LEADS, feat_dim))
             for n_done, item in enumerate(work_items):
-                date_str, patch_data = _process_one_date(item)
-                if patch_data is not None:
-                    idx = date_to_idx[date_str]
-                    cache[idx] = patch_data  # (n_patches, 32, 2048)
-                    if delete_after:
-                        _delete_date_dir(s2s_dir, date_str)
+                date_str, ok = _process_one_date(item)
+                if delete_after and ok:
+                    _delete_date_dir(s2s_dir, date_str)
                 if (n_done + 1) % 10 == 0 or n_done + 1 == n_todo:
                     elapsed = time.time() - t0
                     eta_min = elapsed / (n_done + 1) * (n_todo - n_done - 1) / 60
                     print(f"  {n_done+1}/{n_todo}  {date_str}  "
                           f"({elapsed:.0f}s  ~{eta_min:.0f} min left)",
                           flush=True)
+            cache.flush()
+            del cache
         else:
-            # Multi-process mode
+            # Multi-process mode.
+            # Workers write directly to the file via raw I/O — no large arrays
+            # are returned through IPC, eliminating the OOM root cause.
             with Pool(
                 processes=workers,
                 initializer=_worker_init,
@@ -416,13 +442,10 @@ def build_cache(s2s_dir, out_file, reference_tif, fire_clim_path,
                           ffmc_dir, dmc_dir, dc_dir),
             ) as pool:
                 n_done = 0
-                for date_str, patch_data in pool.imap_unordered(
+                for date_str, ok in pool.imap_unordered(
                         _process_one_date, work_items, chunksize=1):
-                    if patch_data is not None:
-                        idx = date_to_idx[date_str]
-                        cache[idx] = patch_data
-                        if delete_after:
-                            _delete_date_dir(s2s_dir, date_str)
+                    if delete_after and ok:
+                        _delete_date_dir(s2s_dir, date_str)
                     n_done += 1
                     if n_done % 10 == 0 or n_done == n_todo:
                         elapsed = time.time() - t0
@@ -430,13 +453,6 @@ def build_cache(s2s_dir, out_file, reference_tif, fire_clim_path,
                         print(f"  {n_done}/{n_todo}  last={date_str}  "
                               f"({elapsed:.0f}s  ~{eta_min:.0f} min left)",
                               flush=True)
-                        # Flush dirty memmap pages to Lustre every 10 dates.
-                        # Without this, the kernel accumulates GB of dirty pages
-                        # in RAM faster than Lustre can drain them → OOM.
-                        cache.flush()
-
-    cache.flush()
-    del cache
     elapsed_total = time.time() - t0 if n_todo > 0 else 0
     print(f"\nFlushed cache to {out_file}  "
           f"({os.path.getsize(out_file) / 1e9:.2f} GB)  "
