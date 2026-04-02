@@ -42,6 +42,16 @@ ts "=== PREFLIGHT OK ==="
 DATA_START=2018-05-01
 copy_meteo_caches $SCRATCH_CACHE $LOCAL_CACHE 3600 $DATA_START
 
+# Use LOCAL_CACHE if pf.dat already in SCRATCH_CACHE, else build in SCRATCH_CACHE
+PF_IN_SCRATCH=$(ls $SCRATCH_CACHE/meteo_p16_C8_T*_${DATA_START}_*_pf.dat 2>/dev/null | head -1)
+if [ -n "$PF_IN_SCRATCH" ]; then
+    CACHE_DIR="$LOCAL_CACHE"
+    ts "pf.dat found in SCRATCH_CACHE → using LOCAL_CACHE (STEP 6 skipped)"
+else
+    CACHE_DIR="$SCRATCH_CACHE"
+    ts "pf.dat not in SCRATCH_CACHE → building there (STEP 6 runs once, then persists)"
+fi
+
 ts "=== RESUMING TRAINING (random decoder) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
@@ -54,8 +64,19 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --lr 1e-4 \
   --lr_min 1e-6 \
   --log_interval 1000 \
-  --cache_dir $LOCAL_CACHE \
+  --cache_dir $CACHE_DIR \
   --skip_forecast \
   --resume
 
-ts "=== TRAINING FINISHED (exit code: $?) ==="
+TRAIN_EXIT=$?
+ts "=== TRAINING FINISHED (exit code: $TRAIN_EXIT) ==="
+
+# Copy pf.dat back to SCRATCH_CACHE so future resume jobs skip STEP 6
+PF_LOCAL=$(ls $LOCAL_CACHE/meteo_p16_C8_T*_${DATA_START}_*_pf.dat 2>/dev/null | head -1)
+PF_SCRATCH=$(ls $SCRATCH_CACHE/meteo_p16_C8_T*_${DATA_START}_*_pf.dat 2>/dev/null | head -1)
+if [ -n "$PF_LOCAL" ] && [ -z "$PF_SCRATCH" ]; then
+    ts "Copying pf.dat to SCRATCH_CACHE for future resume jobs (~274GB, background)..."
+    cp "$PF_LOCAL" "$SCRATCH_CACHE/" && ts "pf.dat cached to SCRATCH_CACHE OK" &
+fi
+
+exit $TRAIN_EXIT
