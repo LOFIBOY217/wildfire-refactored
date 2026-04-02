@@ -15,6 +15,12 @@
 # Evaluates Trillium job 389031 (random_decoder_reg_1gpu, 12 epochs, heavy reg)
 # Checkpoint migrated from Trillium to Narval on 2026-04-02
 
+# Ensure $SCRATCH is set (may be unset if submitted from non-login SSH session)
+export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
+
+# Ensure module command is available (may be missing in non-login shells)
+[[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
+
 module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1 eccodes/2.31.0
 
 mkdir -p /scratch/jiaqi217/logs
