@@ -26,24 +26,18 @@ export PYTHONUNBUFFERED=1
 
 source slurm/lib_copy_cache.sh
 
-# Copy venv to local SSD (saves ~3h preflight)
 copy_venv $SCRATCH/venv-wildfire
-# PYTHON is set by copy_venv (local SSD or Lustre fallback)
 
 ts "=== PREFLIGHT ==="
 ts "Node     : $(hostname)"
-ts "Python   : $(which python)"
 $PYTHON -c "import torch; print('torch:', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
-$PYTHON -c "import rasterio; print('rasterio:', rasterio.__version__)" || exit 1
-$PYTHON -c "import sklearn; print('sklearn:', sklearn.__version__)" || exit 1
 ts "=== PREFLIGHT OK ==="
 
-# Copy meteo + s2s caches to local SSD
 DATA_START=2018-05-01
 copy_meteo_caches $SCRATCH_CACHE $LOCAL_CACHE 3600 $DATA_START
 copy_s2s_cache $SCRATCH_CACHE $LOCAL_CACHE 1800
 
-ts "=== STARTING TRAINING (S2S legacy decoder v4 — light regularization) ==="
+ts "=== RESUMING TRAINING (s2s_legacy v4 — light regularization) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
   --run_name s2s_decoder_s2s_v4 \
@@ -61,6 +55,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --lead_end 45 \
   --log_interval 1000 \
   --cache_dir $LOCAL_CACHE \
-  --skip_forecast
+  --skip_forecast \
+  --resume
 
 ts "=== TRAINING FINISHED (exit code: $?) ==="
