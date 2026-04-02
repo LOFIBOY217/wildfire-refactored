@@ -41,7 +41,7 @@ ts "Node: $(hostname)"
 $PYTHON -c "import torch; print('torch:', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
 ts "=== PREFLIGHT OK ==="
 
-DATA_START=2018-05-01
+DATA_START=2018-01-01
 copy_meteo_caches $SCRATCH_CACHE $LOCAL_CACHE 3600 $DATA_START
 
 ts "=== FULL EVAL (random_decoder_reg_1gpu — Trillium ep1-12, all 1285 val windows) ==="

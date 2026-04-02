@@ -5,18 +5,21 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --mem=256G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_s2s_fp_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_s2s_fp_%j.err
 #SBATCH --account=def-inghaw
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
+# Ensure module command is available (may be missing in non-login shells)
+[[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
+
 module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1 eccodes/2.31.0
 
 mkdir -p /scratch/jiaqi217/logs
 
-SCRATCH=/scratch/jiaqi217
+export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 PROJECT=$SCRATCH/wildfire-refactored
 LOCAL_CACHE=$SLURM_TMPDIR/cache
 
@@ -25,9 +28,8 @@ export PYTHONPATH=$PROJECT:$PYTHONPATH
 export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Compiler/gcccore/proj/9.4.1/share/proj
 export PYTHONUNBUFFERED=1
 
-source $SCRATCH/venv-wildfire/bin/activate
-
 source slurm/lib_copy_cache.sh
+copy_venv $SCRATCH/venv-wildfire
 
 ts "=== PREFLIGHT ==="
 ts "Node     : $(hostname)"
@@ -37,7 +39,7 @@ $PYTHON -c "import rasterio; print('rasterio:', rasterio.__version__)" || exit 1
 ts "=== PREFLIGHT OK ==="
 
 # Copy meteo cache (encoder) to local SSD
-DATA_START=2018-05-01
+DATA_START=2018-01-01
 copy_meteo_caches $SCRATCH/meteo_cache $LOCAL_CACHE 3600 $DATA_START
 
 # Copy S2S full-patch cache to local SSD (5.27TB — skip if too large)
@@ -63,4 +65,6 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --cache_dir $LOCAL_CACHE \
   --skip_forecast
 
-ts "=== TRAINING FINISHED (exit code: $?) ==="
+TRAIN_EXIT=$?
+ts "=== TRAINING FINISHED (exit code: $TRAIN_EXIT) ==="
+exit $TRAIN_EXIT

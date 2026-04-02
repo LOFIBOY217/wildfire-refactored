@@ -37,7 +37,7 @@ $PYTHON -c "import rasterio; print('rasterio:', rasterio.__version__)" || exit 1
 ts "=== PREFLIGHT OK ==="
 
 # Copy caches to local SSD
-DATA_START=2018-05-01
+DATA_START=2018-01-01
 copy_meteo_caches $SCRATCH_CACHE $LOCAL_CACHE 3600 $DATA_START
 
 ts "=== STARTING EVALUATION (random decoder) ==="

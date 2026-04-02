@@ -1240,6 +1240,10 @@ def main():
                          "--decoder s2s, uses Oracle-format patches (dec_dim=2048) "
                          "instead of patch-mean format (dec_dim=9). "
                          "Build with: python -m src.data_ops.processing.build_s2s_full_patch_cache")
+    ap.add_argument("--dec_dim", type=int, default=None,
+                    help="Override decoder input dimension for ablation modes "
+                         "(oracle/random/zeros/climatology). Default: enc_dim=P²×C=2048. "
+                         "Use --dec_dim 9 to match s2s_legacy dimensionality for ablation.")
     ap.add_argument("--s2s_max_issue_lag", type=int, default=3,
                     help="For --decoder s2s, allow base dates to reuse the most recent "
                          "available S2S issue date up to this many days back. "
@@ -1631,6 +1635,9 @@ def main():
     #   s2s_legacy  → old 6-channel patch-mean (requires --s2s_cache)
     if args.decoder in ("oracle", "zeros", "random", "climatology"):
         dec_dim = enc_dim                # ablation modes keep same architecture
+        if args.dec_dim is not None:     # allow override for ablation dim studies
+            dec_dim = args.dec_dim
+            print(f"  [--dec_dim override] decoder input dim set to {dec_dim} (default={enc_dim})")
     elif args.decoder == "s2s":
         # ── Full-patch S2S cache (Oracle-format, pre-normalized) ──
         if not args.s2s_full_cache:

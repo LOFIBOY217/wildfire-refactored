@@ -19,8 +19,9 @@ artifacts/
 # Virtual envs
 .venv/
 venv/
-# OS
-.DS_Store
+
+# Personal notes (not for repo)
+notes/
 
 # Python
 __pycache__/

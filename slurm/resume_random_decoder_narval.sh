@@ -39,7 +39,7 @@ ts "Node     : $(hostname)"
 $PYTHON -c "import torch; print('torch:', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
 ts "=== PREFLIGHT OK ==="
 
-DATA_START=2018-05-01
+DATA_START=2018-01-01
 copy_meteo_caches $SCRATCH_CACHE $LOCAL_CACHE 3600 $DATA_START
 
 # Use LOCAL_CACHE if pf.dat already in SCRATCH_CACHE, else build in SCRATCH_CACHE
@@ -71,12 +71,21 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
 TRAIN_EXIT=$?
 ts "=== TRAINING FINISHED (exit code: $TRAIN_EXIT) ==="
 
-# Copy pf.dat back to SCRATCH_CACHE so future resume jobs skip STEP 6
+# Copy pf.dat back to SCRATCH_CACHE if LOCAL has a larger T than what's already there
+get_pf_T() { basename "$1" | grep -oP 'T\K[0-9]+(?=_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4})'; }
 PF_LOCAL=$(ls $LOCAL_CACHE/meteo_p16_C8_T*_${DATA_START}_*_pf.dat 2>/dev/null | head -1)
-PF_SCRATCH=$(ls $SCRATCH_CACHE/meteo_p16_C8_T*_${DATA_START}_*_pf.dat 2>/dev/null | head -1)
-if [ -n "$PF_LOCAL" ] && [ -z "$PF_SCRATCH" ]; then
-    ts "Copying pf.dat to SCRATCH_CACHE for future resume jobs (~274GB, background)..."
-    cp "$PF_LOCAL" "$SCRATCH_CACHE/" && ts "pf.dat cached to SCRATCH_CACHE OK" &
+if [ -n "$PF_LOCAL" ]; then
+    T_local=$(get_pf_T "$PF_LOCAL")
+    PF_SCRATCH_BEST=$(ls $SCRATCH_CACHE/meteo_p16_C8_T*_${DATA_START}_*_pf.dat 2>/dev/null \
+        | sort -t'T' -k2 -n | tail -1)
+    T_scratch=0
+    [ -n "$PF_SCRATCH_BEST" ] && T_scratch=$(get_pf_T "$PF_SCRATCH_BEST")
+    if [ -n "$T_local" ] && [ "$T_local" -gt "${T_scratch:-0}" ]; then
+        ts "Caching larger pf.dat (T=$T_local > T_scratch=$T_scratch) to SCRATCH_CACHE (~274GB, background)..."
+        cp "$PF_LOCAL" "$SCRATCH_CACHE/" && ts "pf.dat T=$T_local cached to SCRATCH_CACHE OK" &
+    else
+        ts "pf.dat copy skipped: T_local=$T_local <= T_scratch=$T_scratch already in SCRATCH_CACHE"
+    fi
 fi
 
 exit $TRAIN_EXIT
