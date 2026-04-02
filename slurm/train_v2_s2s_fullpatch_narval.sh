@@ -53,6 +53,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --decoder s2s \
   --s2s_full_cache $S2S_FP_CACHE \
   --pred_end 2025-10-31 \
+  --lead_end 45 \
   --s2s_max_issue_lag 3 \
   --num_workers 8 \
   --batch_size 8192 \
