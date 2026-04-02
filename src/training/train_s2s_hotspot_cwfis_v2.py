@@ -1535,22 +1535,37 @@ def main():
                       f"_{aligned_dates[0]}_{aligned_dates[-1]}"
                       f"_{H}x{W}.npy")
         cache_path = os.path.join(args.cache_dir, cache_key)
-        # Fuzzy match: if exact file not found, look for one with same
-        # data_start, same H×W, and T >= our T (can slice first T frames)
+        # Fuzzy match: if exact file not found, look for one with same (or earlier)
+        # data_start, same H×W, and T_cache >= T + offset (offset = date gap in days).
+        _fire_cache_offset = 0   # days to skip from start of cached fire_dilated
         if not os.path.exists(cache_path):
             import glob as _glob
-            _ds = str(aligned_dates[0])
+            import re as _re_fd
+            _ds_dt = aligned_dates[0]   # date object
+            _ds    = str(_ds_dt)
+            # First: exact data_start match (legacy behaviour)
             _fire_candidates = sorted(_glob.glob(os.path.join(
                 args.cache_dir, f"fire_dilated_r{r}_{_ds}_*_{H}x{W}.npy")))
             for _fc in _fire_candidates:
-                # Check file is large enough (T frames × H × W bytes)
                 _fc_size = os.path.getsize(_fc)
-                _min_size = T * H * W  # uint8, so 1 byte per element
-                if _fc_size >= _min_size:
-                    print(f"  [cache] Exact fire_dilated not found, "
-                          f"using compatible: {os.path.basename(_fc)}")
+                if _fc_size >= T * H * W:
+                    print(f"  [cache] Exact fire_dilated found: {os.path.basename(_fc)}")
                     cache_path = _fc
                     break
+            # Second: broader search — accept earlier data_start with enough frames
+            if not os.path.exists(cache_path):
+                for _fc in sorted(_glob.glob(os.path.join(
+                        args.cache_dir, f"fire_dilated_r{r}_*_{H}x{W}.npy"))):
+                    _m = _re_fd.search(r'fire_dilated_r\d+_(\d{4}-\d{2}-\d{2})_', os.path.basename(_fc))
+                    if _m:
+                        _fc_ds = date.fromisoformat(_m.group(1))
+                        _off   = (_ds_dt - _fc_ds).days
+                        if _off >= 0 and os.path.getsize(_fc) >= (T + _off) * H * W:
+                            _fire_cache_offset = _off
+                            cache_path = _fc
+                            print(f"  [cache] Compatible fire_dilated (data_start={_fc_ds}, "
+                                  f"offset={_off}d → aligned to {_ds}): {os.path.basename(_fc)}")
+                            break
     else:
         cache_path = None
 
@@ -1559,10 +1574,12 @@ def main():
         print(f"\n  Found cached dilated fire_stack — skipping rasterization: {cache_path}")
         t0_load = time.time()
         fire_stack = np.load(cache_path)
-        if fire_stack.shape[0] > T:
+        if _fire_cache_offset > 0 or fire_stack.shape[0] > T:
+            _fc_start = _fire_cache_offset
+            _fc_end   = _fire_cache_offset + T
             print(f"  [cache] fire_stack has {fire_stack.shape[0]} frames, "
-                  f"slicing to T={T}")
-            fire_stack = fire_stack[:T]
+                  f"slicing [{_fc_start}:{_fc_end}] → T={T}")
+            fire_stack = fire_stack[_fc_start:_fc_end]
         pos_rate_dil = fire_stack.mean()
         print(f"  Loaded in {time.time()-t0_load:.0f}s  positive_rate={pos_rate_dil:.4%}")
         run_meta["dilate_radius"]         = r
@@ -1786,28 +1803,45 @@ def main():
                       f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
         mmap_path  = os.path.join(args.cache_dir, mmap_key)
 
-        # Fuzzy match: if exact pf.dat not found, look for one with same
-        # data_start and T >= our T (can slice the first T timesteps).
-        _cache_T = T  # the T in the cache file (may differ from training T)
+        # Fuzzy match: look for compatible pf.dat.
+        # Priority 1 — exact data_start match, T >= T_needed
+        # Priority 2 — earlier data_start, T_cache >= T_needed + offset (date gap)
+        _cache_T      = T   # T in the cache file (may exceed training T)
+        _cache_offset = 0   # days to skip from start of cached pf.dat
         if not os.path.exists(mmap_path):
             import glob as _glob
+            import re as _re
             _data_start_str = str(aligned_dates[0])
-            _pf_candidates = sorted(_glob.glob(os.path.join(
-                args.cache_dir,
-                f"meteo_p{P}_C{N_CHANNELS}_T*_{_data_start_str}_*_pf.dat")))
-            for _pf_cand in _pf_candidates:
-                # Extract T from filename
-                import re as _re
+            _data_start_dt  = aligned_dates[0]   # date object
+            # Priority 1: exact data_start
+            for _pf_cand in sorted(_glob.glob(os.path.join(
+                    args.cache_dir,
+                    f"meteo_p{P}_C{N_CHANNELS}_T*_{_data_start_str}_*_pf.dat"))):
                 _m = _re.search(r'_T(\d+)_', os.path.basename(_pf_cand))
-                if _m:
-                    _cand_T = int(_m.group(1))
-                    if _cand_T >= T:
-                        print(f"  [cache] Exact pf.dat not found (T={T}), "
-                              f"using compatible cache (T={_cand_T}): "
-                              f"{os.path.basename(_pf_cand)}")
-                        mmap_path = _pf_cand
-                        _cache_T = _cand_T
-                        break
+                if _m and int(_m.group(1)) >= T:
+                    _cache_T  = int(_m.group(1))
+                    mmap_path = _pf_cand
+                    print(f"  [cache] Exact pf.dat (T={_cache_T}): {os.path.basename(_pf_cand)}")
+                    break
+            # Priority 2: earlier data_start — slice with offset
+            if not os.path.exists(mmap_path):
+                for _pf_cand in sorted(_glob.glob(os.path.join(
+                        args.cache_dir,
+                        f"meteo_p{P}_C{N_CHANNELS}_T*_*_pf.dat"))):
+                    _m = _re.search(r'_T(\d+)_(\d{4}-\d{2}-\d{2})_', os.path.basename(_pf_cand))
+                    if _m:
+                        _cand_T  = int(_m.group(1))
+                        _cand_ds = date.fromisoformat(_m.group(2))
+                        _off     = (_data_start_dt - _cand_ds).days
+                        if _off >= 0 and _cand_T >= T + _off:
+                            _cache_T      = _cand_T
+                            _cache_offset = _off
+                            mmap_path     = _pf_cand
+                            print(f"  [cache] Compatible pf.dat (T={_cand_T}, "
+                                  f"data_start={_cand_ds}, offset={_off}d → "
+                                  f"aligned to {_data_start_str}): "
+                                  f"{os.path.basename(_pf_cand)}")
+                            break
 
         # Stats: look for canonical, legacy, then glob (prefer same data_start)
         _canon_sp = os.path.join(args.cache_dir,
@@ -1834,12 +1868,17 @@ def main():
     if mmap_path and os.path.exists(mmap_path) and _stats_ok:
         # ── Fast path: load existing float16 patch-first cache ───────
         print(f"  Loading cached memmap (float16 patch-first): {mmap_path}")
-        if _cache_T > T:
-            # Cache has more timesteps than needed — load full, slice later
-            print(f"  [cache] Cache has T={_cache_T}, training needs T={T}, "
-                  f"loading full cache (will slice in Dataset)")
         meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
                                   shape=(n_patches, _cache_T, enc_dim))
+        if _cache_offset > 0:
+            # Cache starts earlier than our aligned_dates[0] — slice to correct window
+            meteo_patched = meteo_patched[:, _cache_offset:, :]
+            _cache_T -= _cache_offset
+            print(f"  [cache] Applied data_start offset={_cache_offset}d: "
+                  f"meteo_patched now T={_cache_T}")
+        if _cache_T > T:
+            print(f"  [cache] Cache T={_cache_T} > training T={T} "
+                  f"(will slice in Dataset)")
         _saved_stats  = np.load(stats_path)
         meteo_means   = _saved_stats[0]
         meteo_stds    = _saved_stats[1]
@@ -1960,16 +1999,43 @@ def main():
     print(f"  fire_patched: ({T}, {n_patches}, {out_dim})  ≈ {fire_gb:.1f} GB uint8")
     t0_fire = time.time()
 
-    fire_cache_path = None
+    fire_cache_path   = None
+    _fire_patch_offset = 0   # days offset if reusing a cache with earlier data_start
     if args.cache_dir:
         fire_cache_key  = (f"fire_patched_r{args.dilate_radius}"
                            f"_{aligned_dates[0]}_{aligned_dates[-1]}"
                            f"_{T}x{n_patches}x{out_dim}.dat")
         fire_cache_path = os.path.join(args.cache_dir, fire_cache_key)
+        # Broader fuzzy match: accept earlier data_start if T_cache >= T + offset
+        if not os.path.exists(fire_cache_path):
+            import glob as _glob
+            import re as _re_fp
+            _fp_ds_dt = aligned_dates[0]
+            for _fp_cand in sorted(_glob.glob(os.path.join(
+                    args.cache_dir,
+                    f"fire_patched_r{args.dilate_radius}_*_{n_patches}x{out_dim}.dat"))):
+                _m = _re_fp.search(
+                    r'fire_patched_r\d+_(\d{4}-\d{2}-\d{2})_', os.path.basename(_fp_cand))
+                if _m:
+                    _fp_ds   = date.fromisoformat(_m.group(1))
+                    _fp_off  = (_fp_ds_dt - _fp_ds).days
+                    _fp_size = os.path.getsize(_fp_cand)
+                    _fp_T    = _fp_size // (n_patches * out_dim)   # uint8 = 1 byte
+                    if _fp_off >= 0 and _fp_T >= T + _fp_off:
+                        _fire_patch_offset = _fp_off
+                        fire_cache_path    = _fp_cand
+                        print(f"  [cache] Compatible fire_patched (data_start={_fp_ds}, "
+                              f"offset={_fp_off}d → aligned to {_fp_ds_dt}): "
+                              f"{os.path.basename(_fp_cand)}")
+                        break
 
     if fire_cache_path and os.path.exists(fire_cache_path) and not args.overwrite:
+        _fp_total_T = os.path.getsize(fire_cache_path) // (n_patches * out_dim)
         fire_patched = np.memmap(fire_cache_path, dtype='uint8', mode='r',
-                                 shape=(T, n_patches, out_dim))
+                                 shape=(_fp_total_T, n_patches, out_dim))
+        if _fire_patch_offset > 0 or _fp_total_T > T:
+            fire_patched = fire_patched[_fire_patch_offset:_fire_patch_offset + T, :, :]
+            print(f"  [cache] fire_patched sliced [{_fire_patch_offset}:{_fire_patch_offset+T}] → T={T}")
         print(f"  Loaded cached fire_patched: {fire_cache_path}  ({time.time()-t0_fire:.0f}s)")
     else:
         if fire_cache_path:
