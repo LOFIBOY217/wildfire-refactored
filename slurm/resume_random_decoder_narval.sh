@@ -52,21 +52,22 @@ else
     ts "pf.dat not in SCRATCH_CACHE → building there (STEP 6 runs once, then persists)"
 fi
 
-ts "=== RESUMING TRAINING (random decoder) ==="
+ts "=== STARTING TRAINING (random decoder v2, pred_end=2025-10-31) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
-  --run_name s2s_decoder_random \
+  --run_name random_decoder_narval_v2 \
   --decoder random \
   --pred_end 2025-10-31 \
   --num_workers 16 \
   --batch_size 8192 \
-  --epochs 6 \
+  --epochs 8 \
   --lr 1e-4 \
   --lr_min 1e-6 \
+  --dropout 0.1 \
+  --weight_decay 0.01 \
   --log_interval 1000 \
   --cache_dir $CACHE_DIR \
-  --skip_forecast \
-  --resume
+  --skip_forecast
 
 TRAIN_EXIT=$?
 ts "=== TRAINING FINISHED (exit code: $TRAIN_EXIT) ==="
