@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=wf-oracle-v2
+#SBATCH --job-name=wf-oracle-v3
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=498G
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch/jiaqi217/logs/train_oracle_v2_%j.out
-#SBATCH --error=/scratch/jiaqi217/logs/train_oracle_v2_%j.err
+#SBATCH --output=/scratch/jiaqi217/logs/train_oracle_v3_%j.out
+#SBATCH --error=/scratch/jiaqi217/logs/train_oracle_v3_%j.err
 #SBATCH --account=def-inghaw
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
@@ -78,19 +78,19 @@ else
     fi
 fi
 
-ts "=== STARTING TRAINING (oracle v2 — pred_end=2024-10-31, fresh run, no resume) ==="
+ts "=== STARTING TRAINING (oracle v3 — no regularization, 16 epochs, fresh run) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --config configs/paths_narval.yaml \
-  --run_name oracle_narval_v2 \
+  --run_name oracle_narval_v3 \
   --decoder oracle \
-  --pred_end 2024-10-31 \
+  --pred_end 2025-10-31 \
   --num_workers 8 \
   --batch_size 8192 \
-  --epochs 8 \
+  --epochs 16 \
   --lr 1e-4 \
   --lr_min 1e-6 \
-  --dropout 0.1 \
-  --weight_decay 0.01 \
+  --dropout 0.0 \
+  --weight_decay 0.0 \
   --log_interval 1000 \
   --cache_dir $CACHE_DIR \
   --skip_forecast
