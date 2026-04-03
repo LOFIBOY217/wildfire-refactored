@@ -2115,25 +2115,27 @@ def main():
               f"({100*_val_total/max(len(all_val_window_dates),1):.1f}% usable)")
 
         # ── S2S cache internal missing-value diagnostic ─────────────
-        # Sample random (date, patch) pairs to estimate % of all-zero lead rows
-        _rng_diag = np.random.RandomState(42)
-        _n_sample_dates = min(200, s2s_cache.shape[0])
-        _n_sample_patches = min(50, s2s_cache.shape[1])
-        _diag_date_idxs = _rng_diag.choice(s2s_cache.shape[0], _n_sample_dates, replace=False)
-        _diag_patch_idxs = _rng_diag.choice(s2s_cache.shape[1], _n_sample_patches, replace=False)
-        _total_leads = 0
-        _missing_leads = 0
-        for _di in _diag_date_idxs:
-            for _pi in _diag_patch_idxs:
-                _row = s2s_cache[_di, _pi]  # (32, 6)
-                _allzero = np.all(_row == 0, axis=1)  # (32,) bool
-                _total_leads += _row.shape[0]
-                _missing_leads += int(_allzero.sum())
-        _miss_pct = 100.0 * _missing_leads / max(_total_leads, 1)
-        print(f"\n  S2S cache internal missing (sampled {_n_sample_dates} dates × "
-              f"{_n_sample_patches} patches):")
-        print(f"    all-zero lead-day rows: {_missing_leads}/{_total_leads} ({_miss_pct:.1f}%)")
-        print(f"    → these will get is_missing=1 + random N(0,1) weather channels")
+        # Only available for legacy patch-mean cache; full-patch cache has no all-zero sentinel
+        if s2s_cache is not None:
+            # Sample random (date, patch) pairs to estimate % of all-zero lead rows
+            _rng_diag = np.random.RandomState(42)
+            _n_sample_dates = min(200, s2s_cache.shape[0])
+            _n_sample_patches = min(50, s2s_cache.shape[1])
+            _diag_date_idxs = _rng_diag.choice(s2s_cache.shape[0], _n_sample_dates, replace=False)
+            _diag_patch_idxs = _rng_diag.choice(s2s_cache.shape[1], _n_sample_patches, replace=False)
+            _total_leads = 0
+            _missing_leads = 0
+            for _di in _diag_date_idxs:
+                for _pi in _diag_patch_idxs:
+                    _row = s2s_cache[_di, _pi]  # (32, 6)
+                    _allzero = np.all(_row == 0, axis=1)  # (32,) bool
+                    _total_leads += _row.shape[0]
+                    _missing_leads += int(_allzero.sum())
+            _miss_pct = 100.0 * _missing_leads / max(_total_leads, 1)
+            print(f"\n  S2S cache internal missing (sampled {_n_sample_dates} dates × "
+                  f"{_n_sample_patches} patches):")
+            print(f"    all-zero lead-day rows: {_missing_leads}/{_total_leads} ({_miss_pct:.1f}%)")
+            print(f"    → these will get is_missing=1 + random N(0,1) weather channels")
 
     # Do not filter train/val windows by S2S coverage here.
     # _make_dec_s2s already handles unmapped base dates by injecting
