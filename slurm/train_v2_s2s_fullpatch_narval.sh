@@ -55,7 +55,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --pred_end 2025-10-31 \
   --lead_end 45 \
   --s2s_max_issue_lag 3 \
-  --num_workers 8 \
+  --num_workers 0 \
   --batch_size 8192 \
   --epochs 8 \
   --lr 1e-4 \
