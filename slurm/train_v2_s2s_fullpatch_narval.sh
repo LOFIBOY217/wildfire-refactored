@@ -42,9 +42,18 @@ ts "=== PREFLIGHT OK ==="
 DATA_START=2018-01-01
 copy_meteo_caches $SCRATCH/meteo_cache $LOCAL_CACHE 3600 $DATA_START
 
-# Copy S2S full-patch cache to local SSD (5.27TB — skip if too large)
-S2S_FP_CACHE=$PROJECT/data/s2s_full_patch_cache.dat
-S2S_FP_DATES=$PROJECT/data/s2s_full_patch_cache.dat.dates.npy
+# Copy S2S full-patch cache to local SSD (~5.27 TB, fits in 14 TB SLURM_TMPDIR)
+S2S_FP_CACHE_SRC=$PROJECT/data/s2s_full_patch_cache.dat
+S2S_FP_DATES_SRC=$PROJECT/data/s2s_full_patch_cache.dat.dates.npy
+S2S_FP_CACHE=$SLURM_TMPDIR/s2s_full_patch_cache.dat
+S2S_FP_DATES=$SLURM_TMPDIR/s2s_full_patch_cache.dat.dates.npy
+
+ts "=== COPYING S2S full-patch cache to local SSD ==="
+df -h $SLURM_TMPDIR
+ts "  START copy s2s_full_patch_cache.dat (~5.27 TB)..."
+cp "$S2S_FP_CACHE_SRC" "$S2S_FP_CACHE" && ts "  s2s_full_patch_cache.dat copy DONE"
+cp "$S2S_FP_DATES_SRC" "$S2S_FP_DATES" && ts "  dates.npy copy DONE"
+ts "=== S2S full-patch cache ready on local SSD ==="
 
 ts "=== STARTING TRAINING (S2S full-patch decoder, dec_dim=2048) ==="
 $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
@@ -55,7 +64,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --pred_end 2025-10-31 \
   --lead_end 45 \
   --s2s_max_issue_lag 3 \
-  --num_workers 0 \
+  --num_workers 8 \
   --batch_size 8192 \
   --epochs 8 \
   --lr 1e-4 \
