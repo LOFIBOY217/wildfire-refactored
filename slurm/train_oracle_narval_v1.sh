@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
-#SBATCH --mem=256G
+#SBATCH --mem=498G
 #SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/train_oracle_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_oracle_%j.err
@@ -91,7 +91,7 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --run_name oracle_narval_v1 \
   --decoder oracle \
   --pred_end 2025-10-31 \
-  --num_workers 16 \
+  --num_workers 8 \
   --batch_size 8192 \
   --epochs 8 \
   --lr 1e-4 \
@@ -100,7 +100,8 @@ $PYTHON src/training/train_s2s_hotspot_cwfis_v2.py \
   --weight_decay 0.01 \
   --log_interval 1000 \
   --cache_dir $CACHE_DIR \
-  --skip_forecast
+  --skip_forecast \
+  --resume
 
 TRAIN_EXIT=$?
 ts "=== TRAINING FINISHED (exit code: $TRAIN_EXIT) ==="
