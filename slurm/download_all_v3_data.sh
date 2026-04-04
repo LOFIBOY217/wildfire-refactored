@@ -21,6 +21,7 @@ if [ -z "${SCRATCH:-}" ]; then
 fi
 
 cd $SCRATCH/wildfire-refactored
+module load eccodes/2.31.0 proj/9.4.1 2>/dev/null || true
 source $SCRATCH/venv-wildfire/bin/activate
 
 export EARTHDATA_USERNAME=jiaqihuang

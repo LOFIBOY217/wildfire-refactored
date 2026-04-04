@@ -73,12 +73,12 @@ def _download_and_process_day(client, date_str, tif_dir, grib_tmp_dir,
         return date_str, True, "skip"
 
     date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-    grib_path = grib_tmp_dir / f"swvl2_{date_str_compact}.grib"
+    nc_path = grib_tmp_dir / f"swvl2_{date_str_compact}.nc"
 
-    # Download single day GRIB (~3 MB)
+    # Download single day as NetCDF (~5 MB) — avoids cfgrib/eccodes dependency
     req = {
         "product_type": "reanalysis",
-        "format": "grib",
+        "format": "netcdf",
         "variable": "volumetric_soil_water_layer_2",
         "year": date_obj.strftime("%Y"),
         "month": date_obj.strftime("%m"),
@@ -88,43 +88,56 @@ def _download_and_process_day(client, date_str, tif_dir, grib_tmp_dir,
     }
 
     try:
-        client.retrieve("reanalysis-era5-single-levels", req, str(grib_path))
+        client.retrieve("reanalysis-era5-single-levels", req, str(nc_path))
     except Exception as e:
         if verbose:
             print(f"  [ERROR] {date_str}: {e}", file=sys.stderr)
         return date_str, False, str(e)
 
-    if not grib_path.exists() or grib_path.stat().st_size == 0:
-        return date_str, False, "empty grib"
+    if not nc_path.exists() or nc_path.stat().st_size == 0:
+        return date_str, False, "empty nc"
 
-    # Read GRIB and compute daily mean
+    # Read NetCDF and compute daily mean (no cfgrib needed)
     try:
-        import xarray as xr
-        ds = xr.open_dataset(str(grib_path), engine="cfgrib",
-                             backend_kwargs={"indexpath": ""})
-        var_name = None
-        for name in ["swvl2", "SWVL2"]:
-            if name in ds.data_vars:
-                var_name = name
-                break
-        if var_name is None:
-            var_name = list(ds.data_vars)[0]
+        import netCDF4 as nc4
+        with nc4.Dataset(str(nc_path), "r") as ds:
+            # Variable name: 'swvl2' in CDS NetCDF output
+            var_name = None
+            for name in ["swvl2", "SWVL2", "volumetric_soil_water_layer_2"]:
+                if name in ds.variables:
+                    var_name = name
+                    break
+            if var_name is None:
+                # Use first non-coordinate variable
+                coords = {"time", "latitude", "longitude", "lat", "lon"}
+                for name in ds.variables:
+                    if name not in coords:
+                        var_name = name
+                        break
+            if var_name is None:
+                nc_path.unlink()
+                return date_str, False, "no data var found"
 
-        # Daily mean: average over 24 hours
-        frame = ds[var_name].values.mean(axis=0).astype(np.float32)
-        lats = ds.latitude.values
-        lons = ds.longitude.values
-        ds.close()
+            # Shape: (24, nlat, nlon) — compute daily mean
+            data = ds[var_name][:].data.astype(np.float32)
+            frame = np.nanmean(data, axis=0)
+
+            # Get lat/lon
+            lat_name = "latitude" if "latitude" in ds.variables else "lat"
+            lon_name = "longitude" if "longitude" in ds.variables else "lon"
+            lats = ds[lat_name][:].data.astype(np.float64)
+            lons = ds[lon_name][:].data.astype(np.float64)
+
     except Exception as e:
         if verbose:
             print(f"  [ERROR] {date_str} convert: {e}", file=sys.stderr)
-        if grib_path.exists():
-            grib_path.unlink()
+        if nc_path.exists():
+            nc_path.unlink()
         return date_str, False, str(e)
 
-    # Cleanup GRIB immediately
-    if grib_path.exists():
-        grib_path.unlink()
+    # Cleanup NC immediately
+    if nc_path.exists():
+        nc_path.unlink()
 
     # Handle NaN
     frame = np.where(np.isfinite(frame), frame, np.nan)
