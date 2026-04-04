@@ -25,6 +25,8 @@ paths:
   evi_dir:             "/scratch/jiaqi217/wildfire-refactored/data/evi_data"
   terrain_dir:         "/scratch/jiaqi217/wildfire-refactored/data/terrain"
   burn_scars_dir:      "/scratch/jiaqi217/wildfire-refactored/data/burn_scars"
+  deep_soil_dir:       "/scratch/jiaqi217/wildfire-refactored/data/era5_deep_soil"
+  population_tif:      "/scratch/jiaqi217/wildfire-refactored/data/population_density.tif"
   climate_indices_csv: "/scratch/jiaqi217/wildfire-refactored/data/climate_indices/climate_indices.csv"
   ciffc_csv:           "/scratch/jiaqi217/wildfire-refactored/data/ciffc/ciffc_logistic_20230505_20250821.csv"
   hotspot_csv:         "/scratch/jiaqi217/wildfire-refactored/data/hotspot/hotspot_2018_2025.csv"

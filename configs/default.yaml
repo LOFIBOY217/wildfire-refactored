@@ -28,6 +28,8 @@ paths:
   evi_dir:             "data/evi_data"           # MODIS MOD13A2 EVI
   terrain_dir:         "data/terrain"            # SRTM-derived slope.tif + aspect.tif (static)
   burn_scars_dir:      "data/burn_scars"         # NBAC years-since-burn rasters (annual)
+  deep_soil_dir:       "data/era5_deep_soil"     # ERA5 swvl2 (7-28cm depth) daily TIFs
+  population_tif:      "data/population_density.tif"  # WorldPop 2020 log1p(pop/km^2)
   climate_indices_csv: "data/climate_indices/climate_indices.csv"  # ENSO/PDO/NAO/AO monthly
   ciffc_csv: "data/ciffc/ciffc_logistic_20230505_20250821.csv"
   hotspot_csv: "data/hotspot/hotspot_2018_2025.csv"
