@@ -159,11 +159,17 @@ def check_deep_soil_raw(cfg, start, end):
         return False
 
     # Check date coverage
+    # Filename: era5_swvl2_YYYY_MM_DD.grib — extract_date_from_filename
+    # expects 8 continuous digits, so parse manually.
+    import re as _re
     dates_found = set()
     for g in gribs:
-        d = extract_date_from_filename(os.path.basename(g))
-        if d:
-            dates_found.add(d)
+        m = _re.search(r'(\d{4})_(\d{2})_(\d{2})\.grib$', os.path.basename(g))
+        if m:
+            try:
+                dates_found.add(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+            except ValueError:
+                pass
 
     expected_dates = set()
     cur = start
