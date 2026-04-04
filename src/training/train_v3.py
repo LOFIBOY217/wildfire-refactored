@@ -134,9 +134,10 @@ V3_CHANNEL_DEFS = {
     "precip_def": {"type": "computed","required": False},
     "slope":      {"type": "static",  "required": False},
     "burn_age":   {"type": "annual",  "required": False},
+    "burn_count": {"type": "annual",  "required": False},
 }
 
-DEFAULT_CHANNELS = "FWI,2t,fire_clim,lightning,NDVI,population,deep_soil,precip_def,slope,burn_age"
+DEFAULT_CHANNELS = "FWI,2t,fire_clim,lightning,NDVI,population,deep_soil,precip_def,slope,burn_age,burn_count"
 
 
 # ------------------------------------------------------------------ #
@@ -651,7 +652,7 @@ def main():
     # NDVI index
     ndvi_index = _build_ndvi_index(ndvi_dir) if "NDVI" in CHANNEL_NAMES else []
 
-    # Burn scars index (annual)
+    # Burn scars index (annual): years_since_burn + burn_count
     burn_scar_dict = {}
     if "burn_age" in CHANNEL_NAMES:
         for p in sorted(glob.glob(os.path.join(burn_scars_dir, "years_since_burn_*.tif"))):
@@ -659,6 +660,16 @@ def main():
             try:
                 year = int(bn.replace("years_since_burn_", "").replace(".tif", ""))
                 burn_scar_dict[year] = p
+            except ValueError:
+                pass
+
+    burn_count_dict = {}
+    if "burn_count" in CHANNEL_NAMES:
+        for p in sorted(glob.glob(os.path.join(burn_scars_dir, "burn_count_*.tif"))):
+            bn = os.path.basename(p)
+            try:
+                year = int(bn.replace("burn_count_", "").replace(".tif", ""))
+                burn_count_dict[year] = p
             except ValueError:
                 pass
 
@@ -906,10 +917,16 @@ def main():
             meteo_tf = np.zeros((T, n_patches, enc_dim), dtype=np.float16)
 
         # Pre-load burn scar arrays by year (raw years-since-burn, encoding applied later)
-        burn_scar_raw = {}  # year → (H, W) uint16 raw years-since-burn
+        burn_scar_raw = {}  # year → (H, W) raw years-since-burn
         for year, path in burn_scar_dict.items():
             arr = _load_static_channel(path, H, W, f"burn_{year}")
             burn_scar_raw[year] = np.maximum(arr, 0)
+
+        # Pre-load burn count arrays by year
+        burn_count_arrays = {}  # year → (H, W) uint8 count of fires
+        for year, path in burn_count_dict.items():
+            arr = _load_static_channel(path, H, W, f"bcount_{year}")
+            burn_count_arrays[year] = np.maximum(arr, 0)
 
         def _encode_burn_age(raw_years, encoding):
             """Encode years-since-burn array based on --burn_age_encoding."""
@@ -997,6 +1014,15 @@ def main():
                         raw = burn_scar_raw[nearest]
                     if raw is not None:
                         frame[..., ch_idx] = _encode_burn_age(raw, args.burn_age_encoding)
+
+                elif ch_name == "burn_count":
+                    year = cur_date.year
+                    if year in burn_count_arrays:
+                        # log1p to compress range (0-10+ fires → 0-2.4)
+                        frame[..., ch_idx] = np.log1p(burn_count_arrays[year])
+                    elif burn_count_arrays:
+                        nearest = min(burn_count_arrays.keys(), key=lambda y: abs(y - year))
+                        frame[..., ch_idx] = np.log1p(burn_count_arrays[nearest])
 
             # Normalize and patchify
             frame -= meteo_means

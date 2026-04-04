@@ -132,24 +132,43 @@ def main():
         "nodata": NODATA_YEARS, "compress": "lzw",
     }
 
+    # Also prepare a burn_count profile (uint8, max 255 fires)
+    count_profile = dict(profile)
+    count_profile["dtype"] = "uint8"
+    count_profile["nodata"] = 0
+
     written = 0
     for target_year in range(args.start_year, args.end_year + 1):
         out_path = burn_dir / f"years_since_burn_{target_year}.tif"
-        if out_path.exists() and not args.overwrite:
+        count_path = burn_dir / f"burn_count_{target_year}.tif"
+
+        need_years = not out_path.exists() or args.overwrite
+        need_count = not count_path.exists() or args.overwrite
+
+        if not need_years and not need_count:
             continue
 
         years_since = np.full((FWI_HEIGHT, FWI_WIDTH), NODATA_YEARS, dtype=np.uint16)
+        burn_count = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.uint8)
+
         for burn_year in sorted(burn_masks.keys(), reverse=True):
             if burn_year > target_year:
                 continue
             mask = burn_masks[burn_year]
             burned = mask > 0
+            # years_since_burn: minimum (most recent fire)
             years_since[burned] = np.minimum(
                 years_since[burned], target_year - burn_year
             )
+            # burn_count: how many times this pixel burned up to target_year
+            burn_count[burned] += 1
 
-        with rasterio.open(out_path, "w", **profile) as dst:
-            dst.write(years_since, 1)
+        if need_years:
+            with rasterio.open(out_path, "w", **profile) as dst:
+                dst.write(years_since, 1)
+        if need_count:
+            with rasterio.open(count_path, "w", **count_profile) as dst:
+                dst.write(burn_count, 1)
         written += 1
 
     print(f"\n[COMPLETE] {written} years-since-burn TIFs written to {burn_dir}")
