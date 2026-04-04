@@ -80,11 +80,40 @@ def _extract_modis_date(hdf_path: Path) -> date | None:
     return None
 
 
+def _get_modis_tile_bounds(hdf_path: Path):
+    """Extract tile bounds from MODIS HDF4 metadata (sinusoidal projection).
+    Returns (left, bottom, right, top) in sinusoidal meters."""
+    from pyhdf.SD import SD, SDC
+    hdf = SD(str(hdf_path), SDC.READ)
+    meta = hdf.attributes().get("StructMetadata.0", "")
+    hdf.end()
+
+    # Parse UpperLeftPointMtrs and LowerRightMtrs from metadata
+    import re
+    ul = re.search(r"UpperLeftPointMtrs=\(([-\d.]+),([-\d.]+)\)", meta)
+    lr = re.search(r"LowerRightMtrs=\(([-\d.]+),([-\d.]+)\)", meta)
+    if not ul or not lr:
+        return None
+    left, top = float(ul.group(1)), float(ul.group(2))
+    right, bottom = float(lr.group(1)), float(lr.group(2))
+    return (left, bottom, right, top)
+
+
+# MODIS sinusoidal projection WKT
+MODIS_SIN_CRS = CRS.from_proj4(
+    "+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +R=6371007.181 +units=m +no_defs"
+)
+
+
 def _process_composite(hdf_files: list[Path]):
-    """Mosaic tiles and resample one composite to FWI grid.
+    """Reproject each tile individually to FWI grid, then nanmean.
     Returns (ndvi_fwi, evi_fwi) as (H, W) float32 arrays."""
-    ndvi_tiles = []
-    evi_tiles = []
+    dst_crs = CRS.from_string(FWI_CRS)
+
+    # Accumulate reprojected tiles on FWI grid
+    ndvi_sum = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
+    evi_sum = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
+    count = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
 
     for hdf_path in hdf_files:
         try:
@@ -100,36 +129,44 @@ def _process_composite(hdf_files: list[Path]):
 
         ndvi_raw = np.where(np.isfinite(ndvi_raw), ndvi_raw * NDVI_SCALE, np.nan)
         evi_raw = np.where(np.isfinite(evi_raw), evi_raw * EVI_SCALE, np.nan)
+        ndvi_raw = np.clip(ndvi_raw, -1.0, 1.0)
+        evi_raw = np.clip(evi_raw, -1.0, 1.0)
 
-        ndvi_tiles.append(np.clip(ndvi_raw, -1.0, 1.0))
-        evi_tiles.append(np.clip(evi_raw, -1.0, 1.0))
+        # Get tile bounds in sinusoidal CRS
+        bounds = _get_modis_tile_bounds(hdf_path)
+        if bounds is None:
+            continue
+        left, bottom, right, top = bounds
+        h, w = ndvi_raw.shape
+        src_tf = from_bounds(left, bottom, right, top, w, h)
 
-    if not ndvi_tiles:
-        return (np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32),
-                np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32))
+        # Reproject this tile to FWI grid
+        ndvi_fwi_tile = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
+        evi_fwi_tile = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
 
-    # Simple mean mosaic (overlapping tile areas averaged)
-    ndvi_stack = np.stack(ndvi_tiles)
-    evi_stack = np.stack(evi_tiles)
-    ndvi_mean = np.nanmean(ndvi_stack, axis=0)
-    evi_mean = np.nanmean(evi_stack, axis=0)
+        reproject(ndvi_raw, ndvi_fwi_tile,
+                  src_transform=src_tf, src_crs=MODIS_SIN_CRS,
+                  dst_transform=FWI_TRANSFORM, dst_crs=dst_crs,
+                  resampling=Resampling.bilinear,
+                  src_nodata=np.nan, dst_nodata=np.nan)
+        reproject(evi_raw, evi_fwi_tile,
+                  src_transform=src_tf, src_crs=MODIS_SIN_CRS,
+                  dst_transform=FWI_TRANSFORM, dst_crs=dst_crs,
+                  resampling=Resampling.bilinear,
+                  src_nodata=np.nan, dst_nodata=np.nan)
 
-    # Approximate transform for MODIS sinusoidal tiles
-    # Use WGS84 Canada bbox as approximation
-    h, w = ndvi_mean.shape
-    src_tf = from_bounds(*CANADA_BBOX_WGS84, w, h)
-    src_crs = CRS.from_epsg(4326)
+        # Accumulate (running mean for overlapping areas)
+        valid = np.isfinite(ndvi_fwi_tile)
+        ndvi_sum[valid] += ndvi_fwi_tile[valid]
+        evi_sum[valid] += evi_fwi_tile[valid]
+        count[valid] += 1
 
-    ndvi_fwi = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
-    evi_fwi = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
+        # Free memory
+        del ndvi_raw, evi_raw, ndvi_fwi_tile, evi_fwi_tile
 
-    reproject(ndvi_mean, ndvi_fwi, src_transform=src_tf, src_crs=src_crs,
-              dst_transform=FWI_TRANSFORM, dst_crs=CRS.from_string(FWI_CRS),
-              resampling=Resampling.bilinear, src_nodata=np.nan, dst_nodata=np.nan)
-    reproject(evi_mean, evi_fwi, src_transform=src_tf, src_crs=src_crs,
-              dst_transform=FWI_TRANSFORM, dst_crs=CRS.from_string(FWI_CRS),
-              resampling=Resampling.bilinear, src_nodata=np.nan, dst_nodata=np.nan)
-
+    # Compute mean
+    ndvi_fwi = np.where(count > 0, ndvi_sum / count, np.nan).astype(np.float32)
+    evi_fwi = np.where(count > 0, evi_sum / count, np.nan).astype(np.float32)
     return ndvi_fwi, evi_fwi
 
 
