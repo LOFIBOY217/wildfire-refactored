@@ -351,6 +351,7 @@ class S2SHotspotDatasetMixed(Dataset):
             torch.from_numpy(x_enc),
             torch.from_numpy(x_dec),
             torch.from_numpy(y),
+            torch.tensor(patch_i, dtype=torch.long),   # spatial patch index
         )
 
 
@@ -417,6 +418,7 @@ class S2SHotspotDatasetUnfiltered(Dataset):
             torch.from_numpy(x_enc),
             torch.from_numpy(x_dec),
             torch.from_numpy(y),
+            torch.tensor(patch_i, dtype=torch.long),   # spatial patch index
         )
 
 
@@ -674,7 +676,7 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         val_win_dates=None, patch_size=16,
                         s2s_means=None, s2s_stds=None,
                         date_to_s2s_lag=None, s2s_max_lag=3,
-                        s2s_full_cache=None):
+                        s2s_full_cache=None, use_patch_embed=False):
     """
     Compute ranking metrics on a random sample of validation windows.
 
@@ -766,9 +768,11 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                     xb_dec = torch.from_numpy(
                         np.stack(dec_list, axis=0)   # (chunk, dec_days, dec_dim)
                     ).to(device)
+                _chunk_patch_ids = (torch.arange(cs, ce, device=device)
+                                    if use_patch_embed else None)
                 with torch.autocast(device_type=device.type, dtype=torch.float16,
                                     enabled=(device.type == "cuda")):
-                    logits = model(xb_enc, xb_dec)  # (chunk, dec_days, P²)
+                    logits = model(xb_enc, xb_dec, _chunk_patch_ids)  # (chunk, dec_days, P²)
                 prob_chunks.append(torch.sigmoid(logits.float()).cpu().numpy())
 
             probs  = np.concatenate(prob_chunks, axis=0)  # (n_patches, dec_days, P²)
@@ -1253,6 +1257,19 @@ def main():
     ap.add_argument("--log_interval", type=int, default=500,
                     help="Print intra-epoch progress every N batches (default=500). "
                          "Set to 0 to disable mid-epoch output.")
+
+    # Architecture enhancements
+    ap.add_argument("--use_patch_embed", action="store_true",
+                    help="Add a learnable spatial patch embedding (nn.Embedding) to the "
+                         "transformer. Each of the 23998 patches gets a d_model-dim vector "
+                         "that is learned from data, allowing the model to capture "
+                         "location-specific fire patterns beyond what fire_clim provides. "
+                         "Adds ~6M parameters.")
+    ap.add_argument("--mlp_dec_embed", action="store_true",
+                    help="Use a 2-layer MLP for the decoder embedding instead of a single "
+                         "Linear layer. Provides better compression of large oracle/S2S "
+                         "inputs (e.g. 2048→1024→256) vs the default 2048→256 linear. "
+                         "Helps preserve oracle signal structure.")
 
     args = ap.parse_args()
     torch.manual_seed(args.seed)
@@ -2514,6 +2531,8 @@ def main():
                 dropout=_ckpt_dropout,
                 encoder_days=in_days,
                 decoder_days=decoder_days,
+                n_patches=(n_patches if getattr(args, "use_patch_embed", False) else 0),
+                mlp_dec_embed=getattr(args, "mlp_dec_embed", False),
             ).to(device)
             model_eval.load_state_dict(ckpt["model_state"])
             m = _compute_val_lift_k(
@@ -2527,6 +2546,7 @@ def main():
                 s2s_means=s2s_means, s2s_stds=s2s_stds,
                 date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
                 s2s_full_cache=s2s_full_cache,
+                use_patch_embed=getattr(args, "use_patch_embed", False),
             )
             print(f"    Lift@{args.val_lift_k}={m['lift_k']:.2f}x  "
                   f"Prec={m['precision_k']:.4f}  Recall={m['recall_k']:.4f}  "
@@ -2572,6 +2592,8 @@ def main():
         dropout=args.dropout,
         encoder_days=in_days,
         decoder_days=decoder_days,
+        n_patches=(n_patches if getattr(args, "use_patch_embed", False) else 0),
+        mlp_dec_embed=getattr(args, "mlp_dec_embed", False),
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -2651,16 +2673,17 @@ def main():
         _gnorm_max    = 0.0
         _gnorm_count  = 0
 
-        for batch_idx, (xb_enc, xb_dec, yb) in enumerate(train_dl):
+        for batch_idx, (xb_enc, xb_dec, yb, patch_ids) in enumerate(train_dl):
             # Cast float16→float32 on GPU (2× faster transfer than CPU cast)
             xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
             xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
             yb     = yb.to(device, non_blocking=True)
             if args.label_smoothing > 0:
                 yb = yb * (1.0 - args.label_smoothing) + 0.5 * args.label_smoothing
+            _patch_ids = patch_ids.to(device) if args.use_patch_embed else None
             with torch.autocast(device_type=device.type, dtype=torch.float16,
                                  enabled=amp_enabled):
-                logits = model(xb_enc, xb_dec)
+                logits = model(xb_enc, xb_dec, _patch_ids)
                 loss   = criterion(logits, yb)
             if not torch.isfinite(loss):
                 optimizer.zero_grad()
@@ -2755,6 +2778,7 @@ def main():
                     s2s_means=s2s_means, s2s_stds=s2s_stds,
                     date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
                     s2s_full_cache=s2s_full_cache,
+                    use_patch_embed=getattr(args, "use_patch_embed", False),
                 )
                 val_lift_k = _m["lift_k"]
                 val_prec_k = _m["precision_k"]

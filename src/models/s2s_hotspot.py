@@ -65,6 +65,12 @@ class S2SHotspotTransformer(nn.Module):
         encoder_days:         Length of encoder input sequence (default 7).
         decoder_days:         Length of decoder input/output sequence (default 33
                               for lead 14–46).
+        n_patches:            Number of spatial patches (for learnable patch
+                              embedding). 0 = disabled (default).
+        mlp_dec_embed:        If True, use a 2-layer MLP for the decoder
+                              embedding instead of a single Linear layer.
+                              Provides better compression of 2048-dim oracle
+                              features into d_model. Default: False.
     """
 
     def __init__(
@@ -80,6 +86,8 @@ class S2SHotspotTransformer(nn.Module):
         dropout: float = 0.1,
         encoder_days: int = 7,
         decoder_days: int = 33,
+        n_patches: int = 0,
+        mlp_dec_embed: bool = False,
     ):
         super().__init__()
 
@@ -89,8 +97,28 @@ class S2SHotspotTransformer(nn.Module):
 
         # Separate linear projections for encoder (history) and decoder (forecast)
         self.enc_embed = nn.Linear(patch_dim_enc, d_model)
-        self.dec_embed = nn.Linear(patch_dim_dec, d_model)
+        if mlp_dec_embed and patch_dim_dec > d_model:
+            # 2-layer MLP for decoder: better preserves structure when compressing
+            # large oracle/S2S inputs (e.g. 2048-dim full patch → d_model).
+            hidden_dec = max(d_model * 2, patch_dim_dec // 2)
+            self.dec_embed = nn.Sequential(
+                nn.Linear(patch_dim_dec, hidden_dec),
+                nn.GELU(),
+                nn.Linear(hidden_dec, d_model),
+            )
+        else:
+            self.dec_embed = nn.Linear(patch_dim_dec, d_model)
         self.embed_drop = nn.Dropout(dropout)
+
+        # Learnable spatial patch embedding (geographic location encoding).
+        # Maps patch index → d_model vector, added to both enc and dec after
+        # the temporal projection. Allows the model to learn location-specific
+        # fire-behavior patterns beyond what fire_clim (a single scalar) captures.
+        if n_patches > 0:
+            self.patch_embed = nn.Embedding(n_patches, d_model)
+            nn.init.normal_(self.patch_embed.weight, std=0.01)
+        else:
+            self.patch_embed = None
 
         # Shared sinusoidal positional encoding
         self.pos_enc = PositionalEncoding(
@@ -115,6 +143,7 @@ class S2SHotspotTransformer(nn.Module):
         self,
         encoder_input: torch.Tensor,
         decoder_input: torch.Tensor,
+        patch_ids: torch.Tensor = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -122,6 +151,9 @@ class S2SHotspotTransformer(nn.Module):
                            Historical weather patches (FWI + 2t + 2d).
             decoder_input: (B, decoder_days, patch_dim_dec)
                            Future weather patches (ERA5 oracle or ECMWF S2S).
+            patch_ids:     (B,) integer patch indices, used to look up spatial
+                           patch embeddings. Optional; if None or patch_embed is
+                           disabled, no spatial embedding is added.
 
         Returns:
             logits: (B, decoder_days, patch_dim_out)
@@ -129,6 +161,12 @@ class S2SHotspotTransformer(nn.Module):
         """
         enc = self.pos_enc(self.embed_drop(self.enc_embed(encoder_input)))  # (B, enc_days, d_model)
         dec = self.pos_enc(self.embed_drop(self.dec_embed(decoder_input)))  # (B, dec_days, d_model)
+
+        # Add learnable spatial embedding (same for all time steps in enc & dec)
+        if self.patch_embed is not None and patch_ids is not None:
+            spatial = self.patch_embed(patch_ids).unsqueeze(1)  # (B, 1, d_model)
+            enc = enc + spatial
+            dec = dec + spatial
 
         memory = self.transformer.encoder(enc)              # (B, enc_days, d_model)
         output = self.transformer.decoder(dec, memory)      # (B, dec_days, d_model)
