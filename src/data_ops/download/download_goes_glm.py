@@ -109,18 +109,22 @@ def _list_day_files(s3, bucket: str, d: date) -> list[str]:
 # NetCDF reading (single granule → flash lat/lon arrays)
 # ------------------------------------------------------------------ #
 
-def _read_granule_flashes(s3, path: str):
+def _read_granule_standalone(path: str):
     """
-    Open one GLM-L2-LCFA NetCDF4 file on S3 and return (flash_lat, flash_lon).
-    Returns None on any error.
-    """
-    try:
-        import netCDF4 as nc4
-    except ImportError:
-        raise ImportError("netCDF4 is required: pip install netCDF4")
+    Read one GLM granule from S3 and return (lat, lon) arrays.
 
-    import tempfile as _tf
+    Standalone function (no shared state) — safe for ProcessPoolExecutor.
+    Each call creates its own s3fs + netCDF4 instances so there is no
+    shared C library state between processes.
+
+    Returns (lat, lon) numpy arrays, or None on error.
+    """
     try:
+        import s3fs
+        import netCDF4 as nc4
+        import tempfile as _tf
+
+        s3 = s3fs.S3FileSystem(anon=True)
         with s3.open(path, "rb") as fobj:
             raw = fobj.read()
 
@@ -139,6 +143,31 @@ def _read_granule_flashes(s3, path: str):
         return None
 
 
+def _bin_flash_results(results, grid_shape):
+    """Bin (lat, lon) arrays into the accumulation grid. Returns count grid."""
+    local_grid = np.zeros(grid_shape, dtype=np.float32)
+    ok = 0
+    for result in results:
+        if result is None:
+            continue
+        lat_arr, lon_arr = result
+        mask = (
+            (lat_arr >= ACC_LAT_MIN) & (lat_arr < ACC_LAT_MAX) &
+            (lon_arr >= ACC_LON_MIN) & (lon_arr < ACC_LON_MAX)
+        )
+        lat_f = lat_arr[mask]
+        lon_f = lon_arr[mask]
+        if len(lat_f) == 0:
+            continue
+        row = ((ACC_LAT_MAX - lat_f) / ACC_DEG).astype(np.int32)
+        col = ((lon_f - ACC_LON_MIN) / ACC_DEG).astype(np.int32)
+        row = np.clip(row, 0, ACC_NLAT - 1)
+        col = np.clip(col, 0, ACC_NLON - 1)
+        np.add.at(local_grid, (row, col), 1)
+        ok += 1
+    return local_grid, ok
+
+
 # ------------------------------------------------------------------ #
 # Per-day accumulation
 # ------------------------------------------------------------------ #
@@ -148,7 +177,12 @@ def _accumulate_day(s3, d: date, max_workers: int = 4,
     """
     Download all GLM granules for one day, accumulate flash counts
     on the 0.1° grid. Returns (ACC_NLAT, ACC_NLON) float32.
+
+    Uses ProcessPoolExecutor (not threads) because netCDF4's C library
+    is not thread-safe. Each process gets its own s3fs + nc4 instances.
     """
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
     count_grid = np.zeros((ACC_NLAT, ACC_NLON), dtype=np.float32)
 
     for bucket, sat_name, first_date in GOES_SATELLITES:
@@ -162,36 +196,19 @@ def _accumulate_day(s3, d: date, max_workers: int = 4,
         if verbose:
             print(f"      [{sat_name}] {len(files)} granules")
 
-        local_grid = np.zeros_like(count_grid)
-        ok = 0
+        # Process in batches with ProcessPoolExecutor
+        BATCH = 200
+        all_results = []
+        for bi in range(0, len(files), BATCH):
+            batch_files = files[bi:bi + BATCH]
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                futures = [pool.submit(_read_granule_standalone, f) for f in batch_files]
+                for fut in as_completed(futures):
+                    all_results.append(fut.result())
 
-        # Process sequentially — netCDF4 C library is NOT thread-safe,
-        # ThreadPoolExecutor causes segfaults with concurrent Dataset opens.
-        for fi, fpath in enumerate(files):
-            result = _read_granule_flashes(s3, fpath)
-            if result is None:
-                continue
-            lat_arr, lon_arr = result
-
-            mask = (
-                (lat_arr >= ACC_LAT_MIN) & (lat_arr < ACC_LAT_MAX) &
-                (lon_arr >= ACC_LON_MIN) & (lon_arr < ACC_LON_MAX)
-            )
-            lat_f = lat_arr[mask]
-            lon_f = lon_arr[mask]
-
-            if len(lat_f) == 0:
-                continue
-
-            row = ((ACC_LAT_MAX - lat_f) / ACC_DEG).astype(np.int32)
-            col = ((lon_f - ACC_LON_MIN) / ACC_DEG).astype(np.int32)
-            row = np.clip(row, 0, ACC_NLAT - 1)
-            col = np.clip(col, 0, ACC_NLON - 1)
-
-            np.add.at(local_grid, (row, col), 1)
-            ok += 1
-
+        local_grid, ok = _bin_flash_results(all_results, (ACC_NLAT, ACC_NLON))
         count_grid += local_grid
+
         if verbose:
             print(f"      [{sat_name}] {ok} granules OK  "
                   f"→ {int(local_grid.sum()):,} flashes")
