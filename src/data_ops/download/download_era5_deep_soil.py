@@ -250,7 +250,10 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config) if hasattr(args, "config") and args.config else {}
-    tif_dir = Path(get_path(cfg, "deep_soil_dir", fallback="data/era5_deep_soil"))
+    try:
+        tif_dir = Path(get_path(cfg, "deep_soil_dir"))
+    except (KeyError, TypeError):
+        tif_dir = Path("data/era5_deep_soil")
     grib_dir = tif_dir / "grib"
     grib_dir.mkdir(parents=True, exist_ok=True)
     tif_dir.mkdir(parents=True, exist_ok=True)

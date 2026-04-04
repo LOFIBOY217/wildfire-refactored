@@ -183,9 +183,13 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config) if hasattr(args, "config") and args.config else {}
-    out_path = Path(args.output) if args.output else Path(
-        get_path(cfg, "population_tif", fallback="data/population_density.tif")
-    )
+    if args.output:
+        out_path = Path(args.output)
+    else:
+        try:
+            out_path = Path(get_path(cfg, "population_tif"))
+        except (KeyError, TypeError):
+            out_path = Path("data/population_density.tif")
 
     if out_path.exists():
         print(f"[SKIP] Output already exists: {out_path}")
