@@ -87,38 +87,102 @@ def main():
     raw_dir = burn_dir.parent / "burn_scars_raw"
     burn_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Rasterize each year's shapefile
+    # Step 1: Rasterize each year's burn mask
     burn_masks = {}  # year → (H, W) uint8
     cache_dir = burn_dir / "_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Need burn history from 1985 onward for years-since-burn calculation
     download_start = 1985
 
     print(f"Processing NBAC burn scars {download_start}–{args.end_year}")
 
-    for year in range(download_start, args.end_year + 1):
-        cache_path = cache_dir / f"nbac_mask_{year}.npy"
-        if cache_path.exists() and not args.overwrite:
-            burn_masks[year] = np.load(cache_path)
-            continue
+    # Check for merged shapefile first (CWFIS format: single zip with all years)
+    merged_zips = sorted(raw_dir.glob("NBAC_*_shp.zip"))
+    if merged_zips:
+        merged_zip = merged_zips[-1]  # use most recent
+        print(f"  Found merged shapefile: {merged_zip.name}")
 
-        zip_path = raw_dir / f"nbac_{year}.zip"
-        if not zip_path.exists():
-            continue
+        import geopandas as gpd
+        import tempfile
 
-        try:
-            mask = _rasterize_burn_year(zip_path, year)
-        except Exception as e:
-            print(f"  [{year}] Skipping (error: {e})")
-            continue
+        # Check which years still need processing
+        years_needed = []
+        for year in range(download_start, args.end_year + 1):
+            cache_path = cache_dir / f"nbac_mask_{year}.npy"
+            if cache_path.exists() and not args.overwrite:
+                burn_masks[year] = np.load(cache_path)
+            else:
+                years_needed.append(year)
 
-        if mask is None:
-            continue
+        if years_needed:
+            print(f"  Reading shapefile ({merged_zip.stat().st_size / 1e9:.1f} GB)...")
+            with tempfile.TemporaryDirectory() as tmp:
+                with zipfile.ZipFile(merged_zip) as zf:
+                    zf.extractall(tmp)
+                shp_files = list(Path(tmp).rglob("*.shp"))
+                if not shp_files:
+                    print("[ERROR] No .shp found in merged zip", file=sys.stderr)
+                    sys.exit(1)
+                gdf = gpd.read_file(shp_files[0])
 
-        burn_masks[year] = mask
-        np.save(cache_path, mask)
-        print(f"  [{year}] {mask.sum():,} burned pixels")
+            # Detect year column
+            year_col = None
+            for col in ["YEAR", "Year", "year", "FIRE_YEAR", "fire_year"]:
+                if col in gdf.columns:
+                    year_col = col
+                    break
+            if year_col is None:
+                print(f"[ERROR] No year column found. Columns: {list(gdf.columns)}",
+                      file=sys.stderr)
+                sys.exit(1)
+
+            gdf[year_col] = gdf[year_col].astype(int)
+            gdf = gdf.to_crs(FWI_CRS)
+            print(f"  Loaded {len(gdf):,} polygons, year column={year_col}, "
+                  f"range {gdf[year_col].min()}-{gdf[year_col].max()}")
+
+            for year in years_needed:
+                cache_path = cache_dir / f"nbac_mask_{year}.npy"
+                year_gdf = gdf[gdf[year_col] == year]
+                if year_gdf.empty:
+                    continue
+                shapes = [(geom, 1) for geom in year_gdf.geometry if geom is not None]
+                if not shapes:
+                    continue
+                mask = rasterize(
+                    shapes, out_shape=(FWI_HEIGHT, FWI_WIDTH),
+                    transform=FWI_TRANSFORM, fill=0, dtype="uint8",
+                    all_touched=True,
+                )
+                burn_masks[year] = mask
+                np.save(cache_path, mask)
+                print(f"  [{year}] {mask.sum():,} burned pixels")
+
+            del gdf  # free memory
+    else:
+        # Fallback: per-year zip files (original NFIS format)
+        for year in range(download_start, args.end_year + 1):
+            cache_path = cache_dir / f"nbac_mask_{year}.npy"
+            if cache_path.exists() and not args.overwrite:
+                burn_masks[year] = np.load(cache_path)
+                continue
+
+            zip_path = raw_dir / f"nbac_{year}.zip"
+            if not zip_path.exists():
+                continue
+
+            try:
+                mask = _rasterize_burn_year(zip_path, year)
+            except Exception as e:
+                print(f"  [{year}] Skipping (error: {e})")
+                continue
+
+            if mask is None:
+                continue
+
+            burn_masks[year] = mask
+            np.save(cache_path, mask)
+            print(f"  [{year}] {mask.sum():,} burned pixels")
 
     if not burn_masks:
         print("[ERROR] No burn masks processed. Download zips first.", file=sys.stderr)
