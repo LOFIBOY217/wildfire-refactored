@@ -467,6 +467,16 @@ def main():
                     help="Rolling window days for precip deficit (default: 30).")
     ap.add_argument("--deep_soil_dir", type=str, default=None)
     ap.add_argument("--population_tif", type=str, default=None)
+    ap.add_argument("--burn_age_encoding", type=str, default="log1p",
+                    choices=["log1p", "bucket"],
+                    help="How to encode burn_age channel:\n"
+                         "  log1p  — log1p(years), continuous (default)\n"
+                         "  bucket — categorical buckets reflecting reburn ecology:\n"
+                         "           0-2yr=0.25 (just burned, low fuel)\n"
+                         "           3-10yr=0.50 (recovering shrubs)\n"
+                         "           11-20yr=0.75 (dense regrowth)\n"
+                         "           20+yr/never=1.0 (mature forest, high fuel)\n"
+                         "  TODO: multi mode (3 sub-channels) for future work")
 
     # V3: loss function
     ap.add_argument("--loss_fn", type=str, default="focal",
@@ -895,11 +905,30 @@ def main():
         else:
             meteo_tf = np.zeros((T, n_patches, enc_dim), dtype=np.float16)
 
-        # Pre-load burn scar arrays by year
-        burn_scar_arrays = {}
+        # Pre-load burn scar arrays by year (raw years-since-burn, encoding applied later)
+        burn_scar_raw = {}  # year → (H, W) uint16 raw years-since-burn
         for year, path in burn_scar_dict.items():
             arr = _load_static_channel(path, H, W, f"burn_{year}")
-            burn_scar_arrays[year] = np.log1p(np.maximum(arr, 0))
+            burn_scar_raw[year] = np.maximum(arr, 0)
+
+        def _encode_burn_age(raw_years, encoding):
+            """Encode years-since-burn array based on --burn_age_encoding."""
+            if encoding == "log1p":
+                return np.log1p(raw_years).astype(np.float32)
+            elif encoding == "bucket":
+                # Categorical buckets reflecting reburn ecology:
+                # 0-2yr (just burned, low fuel) → 0.25
+                # 3-10yr (recovering, moderate) → 0.50
+                # 11-20yr (dense regrowth, high) → 0.75
+                # 20+yr (mature, very high fuel) → 1.00
+                out = np.full_like(raw_years, 1.0, dtype=np.float32)
+                out[raw_years <= 2] = 0.25
+                out[(raw_years > 2) & (raw_years <= 10)] = 0.50
+                out[(raw_years > 10) & (raw_years <= 20)] = 0.75
+                # 9999 (never burned) → 1.0 (treat like mature forest)
+                return out
+            else:  # "multi" — caller handles separately
+                return np.log1p(raw_years).astype(np.float32)
 
         # NDVI interpolation cache
         ndvi_cache = {}
@@ -960,12 +989,14 @@ def main():
 
                 elif ch_name == "burn_age":
                     year = cur_date.year
-                    if year in burn_scar_arrays:
-                        frame[..., ch_idx] = burn_scar_arrays[year]
-                    elif burn_scar_arrays:
-                        # Use nearest available year
-                        nearest = min(burn_scar_arrays.keys(), key=lambda y: abs(y - year))
-                        frame[..., ch_idx] = burn_scar_arrays[nearest]
+                    raw = None
+                    if year in burn_scar_raw:
+                        raw = burn_scar_raw[year]
+                    elif burn_scar_raw:
+                        nearest = min(burn_scar_raw.keys(), key=lambda y: abs(y - year))
+                        raw = burn_scar_raw[nearest]
+                    if raw is not None:
+                        frame[..., ch_idx] = _encode_burn_age(raw, args.burn_age_encoding)
 
             # Normalize and patchify
             frame -= meteo_means
