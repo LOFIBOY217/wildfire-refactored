@@ -47,7 +47,8 @@ def _download_nbac_zip(year: int) -> bytes | None:
         for attempt in range(3):
             try:
                 resp = requests.get(url, timeout=60)
-                if resp.status_code == 200 and len(resp.content) > 100:
+                if (resp.status_code == 200 and len(resp.content) > 1000
+                        and resp.content[:2] == b"PK"):  # valid zip header
                     print(f"    [OK] {url}  ({len(resp.content)/1e6:.1f} MB)")
                     return resp.content
                 break  # 404 or empty → try next template
