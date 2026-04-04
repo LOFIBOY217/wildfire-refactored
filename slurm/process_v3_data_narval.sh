@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-v3-proc
 #SBATCH --time=8:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/process_v3_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/process_v3_%j.err
@@ -41,12 +41,12 @@ python3 -u -m src.data_ops.processing.process_srtm_slope \
     --config configs/paths_narval.yaml 2>&1
 echo "SRTM exit: $?"
 
-# 3. NDVI processing for 2023 (only year with HDF4 downloaded so far)
+# 3. NDVI processing for all years (2018-2024)
 echo ""
-echo "=== [3/4] NDVI Processing (2023) ==="
+echo "=== [3/4] NDVI Processing (2018-2024) ==="
 python3 -u -m src.data_ops.processing.process_modis_ndvi \
     --config configs/paths_narval.yaml \
-    --start_year 2023 --end_year 2023 --overwrite 2>&1
+    --start_year 2018 --end_year 2024 --overwrite 2>&1
 echo "NDVI exit: $?"
 
 # 4. GLM lightning reproject (if any raw TIFs exist)
