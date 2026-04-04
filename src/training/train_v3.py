@@ -139,6 +139,9 @@ V3_CHANNEL_DEFS = {
 
 DEFAULT_CHANNELS = "FWI,2t,fire_clim,lightning,NDVI,population,deep_soil,precip_def,slope,burn_age,burn_count"
 
+# Static channels to inject into decoder context (spatial info the decoder needs)
+DECODER_CTX_CHANNELS = {"fire_clim", "population", "slope", "burn_age", "burn_count"}
+
 
 # ------------------------------------------------------------------ #
 # Static channel loader
@@ -160,6 +163,99 @@ def _load_static_channel(tif_path, expected_h, expected_w, name="static"):
           f"max={arr.max():.3f}  mean(nz)={arr[arr>0].mean():.3f}" if nonzero else
           f"  {name}: {arr.shape}  ALL ZERO")
     return arr
+
+
+# ------------------------------------------------------------------ #
+# Decoder context augmentation
+# ------------------------------------------------------------------ #
+
+def _build_decoder_ctx_static(meteo_patched, channel_names, P2):
+    """
+    Extract static channels from meteo_patched and return per-patch context.
+
+    Args:
+        meteo_patched: (n_patches, T, enc_dim) — only need T=0 slice
+        channel_names: list of channel name strings
+        P2: pixels per patch (P*P = 256)
+
+    Returns:
+        static_ctx: (n_patches, n_static * P2) float16
+        static_channel_indices: list of int (which channels are static)
+    """
+    indices = [i for i, name in enumerate(channel_names)
+               if name in DECODER_CTX_CHANNELS]
+    if not indices:
+        return None, []
+
+    # Extract from first timestep (static channels are same across all T)
+    # meteo_patched layout: each timestep is [ch0_p0..p255, ch1_p0..p255, ...]
+    # Channel k occupies positions [k*P2 : (k+1)*P2]
+    parts = []
+    for ch_idx in indices:
+        # (n_patches, P2) — one static map per patch
+        ch_data = meteo_patched[:, 0, ch_idx * P2: (ch_idx + 1) * P2]
+        parts.append(ch_data)
+
+    # (n_patches, n_static * P2)
+    static_ctx = np.concatenate(parts, axis=1)
+    return static_ctx, indices
+
+
+def _build_lead_time_encoding(dec_days, lead_start, base_doy=None, device=None):
+    """
+    Build lead time + seasonal encoding for decoder.
+
+    Returns (dec_days, 4) tensor:
+      [:, 0] = sin(2π * lead_day / 60)   — lead time cycle (~60 day period)
+      [:, 1] = cos(2π * lead_day / 60)
+      [:, 2] = sin(2π * doy / 365)       — season cycle
+      [:, 3] = cos(2π * doy / 365)
+    """
+    import math
+    leads = torch.arange(lead_start, lead_start + dec_days, dtype=torch.float32)
+    lead_enc = torch.stack([
+        torch.sin(2 * math.pi * leads / 60),
+        torch.cos(2 * math.pi * leads / 60),
+    ], dim=-1)  # (dec_days, 2)
+
+    if base_doy is not None:
+        doys = torch.arange(base_doy + lead_start,
+                            base_doy + lead_start + dec_days,
+                            dtype=torch.float32)
+    else:
+        doys = leads + 180  # rough summer default
+    season_enc = torch.stack([
+        torch.sin(2 * math.pi * doys / 365),
+        torch.cos(2 * math.pi * doys / 365),
+    ], dim=-1)  # (dec_days, 2)
+
+    enc = torch.cat([lead_enc, season_enc], dim=-1)  # (dec_days, 4)
+    if device is not None:
+        enc = enc.to(device)
+    return enc
+
+
+def _augment_decoder(xb_dec, static_ctx_tensor, lead_time_enc):
+    """
+    Concatenate static spatial context + lead time encoding to decoder input.
+
+    Args:
+        xb_dec: (B, dec_days, dec_dim_base)
+        static_ctx_tensor: (B, ctx_dim) — static features per patch
+        lead_time_enc: (dec_days, 4) — lead time + season encoding
+
+    Returns:
+        (B, dec_days, dec_dim_base + ctx_dim + 4)
+    """
+    B, D, _ = xb_dec.shape
+
+    # Expand static context: (B, ctx_dim) → (B, dec_days, ctx_dim)
+    ctx_expanded = static_ctx_tensor.unsqueeze(1).expand(B, D, -1)
+
+    # Expand lead time: (dec_days, 4) → (B, dec_days, 4)
+    lt_expanded = lead_time_enc.unsqueeze(0).expand(B, -1, -1)
+
+    return torch.cat([xb_dec, ctx_expanded, lt_expanded], dim=-1)
 
 
 # ------------------------------------------------------------------ #
@@ -492,6 +588,16 @@ def main():
     # V3: hard negative mining
     ap.add_argument("--hard_neg_fraction", type=float, default=0.5,
                     help="Fraction of negatives sampled proportional to fire_clim (0=uniform).")
+
+    # V3: decoder context augmentation
+    ap.add_argument("--decoder_ctx", action="store_true",
+                    help="Augment decoder input with static spatial context + lead time.\n"
+                         "Appends to every decoder timestep:\n"
+                         "  - Static channels from encoder (fire_clim, population, slope,\n"
+                         "    burn_age, burn_count) — tells decoder WHERE it's predicting\n"
+                         "  - Lead time sin/cos encoding — tells decoder WHEN (day 14 vs 46)\n"
+                         "  - Day-of-year sin/cos — tells decoder WHAT SEASON\n"
+                         "Increases dec_dim by n_static*P² + 4.")
 
     # V3: evaluation
     ap.add_argument("--cluster_eval", action="store_true",
@@ -878,16 +984,26 @@ def main():
     enc_dim = P * P * N_CHANNELS
 
     if args.decoder in ("oracle", "zeros", "random", "climatology"):
-        dec_dim = enc_dim
+        dec_dim_base = enc_dim
         if args.dec_dim is not None:
-            dec_dim = args.dec_dim
+            dec_dim_base = args.dec_dim
     elif args.decoder == "s2s_legacy":
-        dec_dim = S2S_DEC_DIM
+        dec_dim_base = S2S_DEC_DIM
     elif args.decoder == "s2s":
-        dec_dim = enc_dim
+        dec_dim_base = enc_dim
     else:
-        dec_dim = enc_dim
+        dec_dim_base = enc_dim
     out_dim = P * P
+
+    # Decoder context augmentation: static channels + lead time encoding
+    n_ctx_channels = 0
+    ctx_extra_dim = 0
+    if args.decoder_ctx:
+        n_ctx_channels = sum(1 for name in CHANNEL_NAMES if name in DECODER_CTX_CHANNELS)
+        ctx_extra_dim = n_ctx_channels * out_dim + 4  # static patches + lead/season sin/cos
+        print(f"  [decoder_ctx] {n_ctx_channels} static channels + 4 lead/season dims "
+              f"= +{ctx_extra_dim} to dec_dim")
+    dec_dim = dec_dim_base + ctx_extra_dim
 
     meteo_mmap_gb = T * n_patches * enc_dim * 2 / 1e9
     print(f"\n[STEP 6] Streaming meteo_patched → float16 memmap")
@@ -1354,6 +1470,19 @@ def main():
             print(f"  Resumed: epoch {start_epoch}, best_lift={best_val_lift_k:.2f}")
             del _ckpt
 
+    # Pre-compute decoder context if enabled
+    _dec_ctx_np = None      # (n_patches, n_static * P²) float16 or None
+    _lead_time_enc = None   # (dec_days, 4) tensor or None
+    if args.decoder_ctx:
+        _dec_ctx_np, _ctx_indices = _build_decoder_ctx_static(
+            meteo_patched, CHANNEL_NAMES, out_dim)
+        if _dec_ctx_np is not None:
+            print(f"  [decoder_ctx] Built static context: {_dec_ctx_np.shape} "
+                  f"(channels: {[CHANNEL_NAMES[i] for i in _ctx_indices]})")
+        _lead_time_enc = _build_lead_time_encoding(
+            decoder_days, lead_start, device=device)
+        print(f"  [decoder_ctx] Lead time encoding: {_lead_time_enc.shape}")
+
     n_batches = len(train_dl)
     train_started = time.time()
 
@@ -1375,6 +1504,14 @@ def main():
             yb = yb.to(device, non_blocking=True)
             if args.label_smoothing > 0:
                 yb = yb * (1 - args.label_smoothing) + 0.5 * args.label_smoothing
+
+            # Augment decoder with static context + lead time
+            if args.decoder_ctx and _dec_ctx_np is not None:
+                _batch_pids = patch_ids.numpy()
+                _ctx_batch = torch.from_numpy(
+                    _dec_ctx_np[_batch_pids].astype(np.float32)
+                ).to(device)
+                xb_dec = _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
 
             _pids = patch_ids.to(device) if args.use_patch_embed else None
             with torch.autocast(device_type=device.type, dtype=torch.float16,
