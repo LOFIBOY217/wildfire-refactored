@@ -57,10 +57,10 @@ FWI_BOUNDS = (-2378164.0, -707617.0, 3039835.0, 3854382.0)
 # Canada bounding box (WGS84)
 CANADA_BBOX_WGS84 = (-141.0, 41.0, -52.0, 84.0)  # (W, S, E, N)
 
-# WorldPop data URL
+# WorldPop data URL — Canada-only (38 MB) vs global mosaic (2.4 GB)
 WORLDPOP_URL = (
-    "https://data.worldpop.org/GIS/Population/Global_2000_2020_1km/"
-    "2020/0_Mosaicked/ppp_2020_1km_Aggregated.tif"
+    "https://data.worldpop.org/GIS/Population_Density/"
+    "Global_2000_2020_1km/2020/CAN/can_pd_2020_1km.tif"
 )
 
 
