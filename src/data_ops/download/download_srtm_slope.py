@@ -1,41 +1,30 @@
 #!/usr/bin/env python3
 """
-Download SRTM 1 Arc-Second DEM tiles for Canada, then compute slope and aspect.
+Download SRTM GL1 (1 arc-second, ~30m) DEM tiles covering Canada.
 
-The FWI system assumes flat terrain. Slope strongly affects fire spread rate:
-  - Fire spreads faster uphill (roughly doubles per 10° of slope)
-  - Aspect (N/S/E/W facing) affects fuel dryness via solar exposure
+Download only — saves raw .hgt files to disk.
+Processing (merge, reproject, slope/aspect computation) is done separately
+by processing/process_srtm_slope.py.
 
-Output (static, only needs to run once):
-    {terrain_dir}/slope.tif   — degrees [0, 90]
-    {terrain_dir}/aspect.tif  — degrees [0, 360), 0=North, clockwise
+Source: NASA EarthData SRTMGL1 v003
+Output: {terrain_raw_dir}/*.hgt  (raw SRTM tiles)
 
-Data source: SRTM GL1 (1 arc-second, ~30 m), NASA EarthData — free, requires account.
-    https://lpdaac.usgs.gov/products/srtmgl1v003/
-
-Prerequisites:
-    pip install earthaccess
-    # Log in once: earthaccess.login(strategy="interactive")
-    # Or set env vars: EARTHDATA_USERNAME, EARTHDATA_PASSWORD
+NOTE: SRTM only covers up to 60°N. Northern Canada (Yukon, NWT, Nunavut)
+      will have no data. Consider CDEM for full coverage.
 
 Usage:
     python -m src.data_ops.download.download_srtm_slope
-    python -m src.data_ops.download.download_srtm_slope --config configs/paths_windows.yaml
-    python -m src.data_ops.download.download_srtm_slope --overwrite
+    python -m src.data_ops.download.download_srtm_slope --config configs/paths_narval.yaml
+
+Prerequisites:
+    pip install earthaccess
+    Set env vars: EARTHDATA_USERNAME, EARTHDATA_PASSWORD
 """
 
 import argparse
-import os
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
-
-import numpy as np
-import rasterio
-from rasterio.merge import merge
-from rasterio.transform import from_bounds
-from rasterio.warp import reproject, Resampling, calculate_default_transform
 
 try:
     from src.config import load_config, get_path, add_config_argument
@@ -47,285 +36,74 @@ except ModuleNotFoundError:
     from src.config import load_config, get_path, add_config_argument
 
 
-# ------------------------------------------------------------------ #
-# FWI grid reference (EPSG:3978, 2709×2281)
-# ------------------------------------------------------------------ #
-
-FWI_CRS    = "EPSG:3978"
-FWI_WIDTH  = 2709
-FWI_HEIGHT = 2281
-FWI_BOUNDS = (-2378164.0, -707617.0, 3039835.0, 3854382.0)  # (left, bottom, right, top)
-
-# Canada bounding box in WGS84 (for tile selection)
-CANADA_BBOX = {"N": 84, "S": 41, "W": -142, "E": -52}
+CANADA_BBOX = {"W": -141, "S": 41, "E": -52, "N": 60}  # SRTM max 60°N
 
 
-# ------------------------------------------------------------------ #
-# Slope / aspect computation (pure numpy, no external DEM tool needed)
-# ------------------------------------------------------------------ #
+def main():
+    parser = argparse.ArgumentParser(
+        description="Download SRTM GL1 DEM tiles for Canada (download only)"
+    )
+    add_config_argument(parser)
+    parser.add_argument("--batch_size", type=int, default=50)
+    parser.add_argument("--overwrite", action="store_true")
+    args = parser.parse_args()
 
-def _compute_slope_aspect(dem: np.ndarray, cell_size_m: float) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Compute slope (degrees) and aspect (degrees, 0=N, CW) from a DEM array.
-
-    Uses the standard 3×3 Horn (1981) finite-difference method (same as ArcGIS/GDAL).
-
-    Args:
-        dem:        2-D float32 array of elevation in metres. NaN for nodata.
-        cell_size_m: approximate horizontal resolution in metres (used for both x and y).
-
-    Returns:
-        slope:  same shape as dem, degrees [0, 90]. NaN where dem is NaN.
-        aspect: same shape as dem, degrees [0, 360). NaN where dem is NaN.
-    """
-    # Pad with edge values to handle borders
-    pad = np.pad(dem, 1, mode="edge")
-
-    # Horn's method neighbours
-    # a b c
-    # d e f
-    # g h i
-    a = pad[:-2, :-2]; b = pad[:-2, 1:-1]; c = pad[:-2, 2:]
-    d = pad[1:-1, :-2];                    f = pad[1:-1, 2:]
-    g = pad[2:,  :-2]; h = pad[2:,  1:-1]; i = pad[2:,  2:]
-
-    dzdx = ((c + 2*f + i) - (a + 2*d + g)) / (8.0 * cell_size_m)
-    dzdy = ((g + 2*h + i) - (a + 2*b + c)) / (8.0 * cell_size_m)
-
-    rise = np.sqrt(dzdx**2 + dzdy**2)
-    slope_rad = np.arctan(rise)
-    slope_deg = np.degrees(slope_rad)
-
-    # Aspect: 0 = North, clockwise
-    aspect_rad = np.arctan2(-dzdy, dzdx)           # standard math angle
-    aspect_deg = 90.0 - np.degrees(aspect_rad)     # convert to compass bearing
-    aspect_deg[aspect_deg < 0] += 360.0
-    aspect_deg[aspect_deg >= 360.0] -= 360.0
-
-    # Propagate NaN from DEM
-    nan_mask   = ~np.isfinite(dem)
-    flat_mask  = (rise == 0)
-    slope_deg[nan_mask] = np.nan
-    aspect_deg[nan_mask] = np.nan
-    aspect_deg[flat_mask & ~nan_mask] = -1.0   # flat convention: -1
-
-    return slope_deg.astype(np.float32), aspect_deg.astype(np.float32)
-
-
-# ------------------------------------------------------------------ #
-# SRTM tile download via earthaccess
-# ------------------------------------------------------------------ #
-
-def _download_srtm_tiles(tmp_dir: Path) -> list[Path]:
-    """
-    Search and download all SRTM GL1 tiles covering Canada using earthaccess.
-    Returns list of local .hgt or .tif file paths.
-    """
     try:
         import earthaccess
     except ImportError:
-        raise ImportError(
-            "earthaccess is required: pip install earthaccess\n"
-            "Then authenticate once: python -c \"import earthaccess; earthaccess.login()\""
-        )
+        print("earthaccess required: pip install earthaccess", file=sys.stderr)
+        sys.exit(1)
 
-    print("  Authenticating with NASA Earthdata…")
-    earthaccess.login(strategy="environment")   # uses EARTHDATA_USERNAME / EARTHDATA_PASSWORD
+    cfg = load_config(args.config)
+    terrain_dir = Path(get_path(cfg, "terrain_dir"))
+    raw_dir = terrain_dir.parent / "terrain_raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
 
-    print("  Searching SRTMGL1v003 tiles for Canada bounding box…")
+    # Check if already downloaded
+    existing = list(raw_dir.glob("*.hgt"))
+    if len(existing) > 100 and not args.overwrite:
+        print(f"[SKIP] {len(existing)} .hgt files already in {raw_dir}")
+        return
+
+    print("=" * 70)
+    print("SRTM GL1 DEM — Download Only (raw .hgt tiles)")
+    print("=" * 70)
+    print(f"  Output : {raw_dir}")
+    print(f"  NOTE: SRTM covers ≤60°N only. Northern Canada will be missing.")
+    print(f"  NOTE: Run processing/process_srtm_slope.py after download")
+    print("=" * 70)
+
+    print("\n  Authenticating with NASA Earthdata…")
+    earthaccess.login(strategy="environment")
+
+    print("  Searching SRTMGL1v003 tiles…")
     results = earthaccess.search_data(
-        short_name  = "SRTMGL1",
-        version     = "003",
-        bounding_box = (
-            CANADA_BBOX["W"], CANADA_BBOX["S"],
-            CANADA_BBOX["E"], CANADA_BBOX["N"],
-        ),
+        short_name="SRTMGL1",
+        version="003",
+        bounding_box=(CANADA_BBOX["W"], CANADA_BBOX["S"],
+                      CANADA_BBOX["E"], CANADA_BBOX["N"]),
     )
     print(f"  Found {len(results)} tiles")
 
     if not results:
-        raise RuntimeError("No SRTM tiles found for Canada bounding box.")
+        print("[ERROR] No SRTM tiles found", file=sys.stderr)
+        sys.exit(1)
 
-    # Download in batches to avoid OOM on login nodes (~16 GB RAM)
-    BATCH = 50
-    print(f"  Downloading {len(results)} tiles in batches of {BATCH} to {tmp_dir} …")
-    downloaded = []
-    for bi in range(0, len(results), BATCH):
-        batch = results[bi:bi + BATCH]
-        dl = earthaccess.download(batch, local_path=str(tmp_dir))
-        downloaded.extend(dl)
-        print(f"    batch {bi//BATCH+1}/{(len(results)+BATCH-1)//BATCH}: "
-              f"{len(batch)} tiles")
+    # Download in batches
+    batch = args.batch_size
+    for bi in range(0, len(results), batch):
+        chunk = results[bi:bi + batch]
+        print(f"  Downloading batch {bi//batch+1}/"
+              f"{(len(results)+batch-1)//batch}: {len(chunk)} tiles…")
+        earthaccess.download(chunk, local_path=str(raw_dir))
 
-    # Unzip .hgt.zip files if present
-    hgt_files = []
-    for f in downloaded:
-        p = Path(f)
-        if p.suffix == ".zip":
-            with zipfile.ZipFile(p) as zf:
-                zf.extractall(tmp_dir)
-            extracted = list(tmp_dir.glob("*.hgt")) + list(tmp_dir.glob("*.tif"))
-            hgt_files.extend(extracted)
-        elif p.suffix in (".hgt", ".tif"):
-            hgt_files.append(p)
+    # Unzip if needed
+    for zp in raw_dir.glob("*.zip"):
+        with zipfile.ZipFile(zp) as zf:
+            zf.extractall(raw_dir)
 
-    print(f"  Extracted {len(hgt_files)} DEM files")
-    return hgt_files
-
-
-# ------------------------------------------------------------------ #
-# Main processing
-# ------------------------------------------------------------------ #
-
-def _fwi_transform():
-    """Return the affine transform for the FWI grid."""
-    left, bottom, right, top = FWI_BOUNDS
-    from rasterio.transform import from_bounds as _fb
-    return _fb(left, bottom, right, top, FWI_WIDTH, FWI_HEIGHT)
-
-
-def build_slope_aspect(terrain_dir: Path, overwrite: bool = False) -> None:
-    slope_path  = terrain_dir / "slope.tif"
-    aspect_path = terrain_dir / "aspect.tif"
-    terrain_dir.mkdir(parents=True, exist_ok=True)
-
-    if slope_path.exists() and aspect_path.exists() and not overwrite:
-        print(f"  [SKIP] slope.tif and aspect.tif already exist in {terrain_dir}")
-        print("         Use --overwrite to recompute.")
-        return
-
-    # ── Step 1: Download SRTM tiles ───────────────────────────────────
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir   = Path(tmp)
-        hgt_files = _download_srtm_tiles(tmp_dir)
-
-        if not hgt_files:
-            raise RuntimeError("No DEM files were extracted from SRTM download.")
-
-        # ── Step 2: Merge tiles in batches to avoid OOM ────────────────
-        print(f"\n  Merging {len(hgt_files)} DEM tiles in batches…")
-        MERGE_BATCH = 100
-        mosaic_arr = None
-        mosaic_transform = None
-        mosaic_crs = None
-        for bi in range(0, len(hgt_files), MERGE_BATCH):
-            batch = hgt_files[bi:bi + MERGE_BATCH]
-            open_files = [rasterio.open(f) for f in batch]
-            chunk_mosaic, chunk_tf = merge(open_files)
-            chunk_arr = chunk_mosaic[0].astype(np.float32)
-            chunk_arr[chunk_arr <= -32000] = np.nan
-            if mosaic_crs is None:
-                mosaic_crs = open_files[0].crs
-            for src in open_files:
-                src.close()
-            del chunk_mosaic
-
-            if mosaic_arr is None:
-                mosaic_arr = chunk_arr
-                mosaic_transform = chunk_tf
-            else:
-                # Expand: take non-NaN from chunk where mosaic is NaN
-                # Only works if tiles cover different areas (SRTM tiles don't overlap)
-                # For simplicity, re-merge the accumulated result with the chunk
-                import tempfile as _tf2
-                with _tf2.NamedTemporaryFile(suffix=".tif", delete=True) as t1, \
-                     _tf2.NamedTemporaryFile(suffix=".tif", delete=True) as t2:
-                    _write_tmp = lambda path, arr, tf, crs: rasterio.open(
-                        path, "w", driver="GTiff", dtype="float32",
-                        width=arr.shape[1], height=arr.shape[0], count=1,
-                        crs=crs, transform=tf, nodata=np.nan,
-                    ).__enter__()
-                    # Write both to temp files and merge
-                    for tmp_f, arr, tf in [(t1.name, mosaic_arr, mosaic_transform),
-                                           (t2.name, chunk_arr, chunk_tf)]:
-                        with rasterio.open(
-                            tmp_f, "w", driver="GTiff", dtype="float32",
-                            width=arr.shape[1], height=arr.shape[0], count=1,
-                            crs=mosaic_crs, transform=tf, nodata=np.nan,
-                        ) as dst:
-                            dst.write(arr, 1)
-                    srcs = [rasterio.open(t1.name), rasterio.open(t2.name)]
-                    combined, combined_tf = merge(srcs)
-                    for s in srcs:
-                        s.close()
-                    mosaic_arr = combined[0].astype(np.float32)
-                    mosaic_transform = combined_tf
-                    del combined
-            del chunk_arr
-            print(f"    batch {bi//MERGE_BATCH+1}/{(len(hgt_files)+MERGE_BATCH-1)//MERGE_BATCH}: "
-                  f"mosaic shape={mosaic_arr.shape}")
-
-        print(f"  Mosaic shape: {mosaic_arr.shape}  CRS: {mosaic_crs}")
-
-        # ── Step 3: Reproject mosaic to FWI grid (EPSG:3978) ─────────
-        print(f"  Reprojecting to FWI grid ({FWI_CRS}, {FWI_WIDTH}×{FWI_HEIGHT})…")
-        fwi_transform = _fwi_transform()
-        dem_fwi = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
-
-        reproject(
-            source           = mosaic_arr,
-            destination      = dem_fwi,
-            src_transform    = mosaic_transform,
-            src_crs          = mosaic_crs,
-            dst_transform    = fwi_transform,
-            dst_crs          = FWI_CRS,
-            resampling       = Resampling.bilinear,
-            src_nodata       = np.nan,
-            dst_nodata       = np.nan,
-        )
-
-        # ── Step 4: Compute slope and aspect ─────────────────────────
-        # FWI grid cell size ≈ (3039835 - (-2378164)) / 2709 ≈ 2000 m (Lambert conformal)
-        cell_size_m = (FWI_BOUNDS[2] - FWI_BOUNDS[0]) / FWI_WIDTH
-        print(f"  Computing slope & aspect (cell_size ≈ {cell_size_m:.0f} m)…")
-        slope, aspect = _compute_slope_aspect(dem_fwi, cell_size_m)
-
-    # ── Step 5: Write output TIFs ─────────────────────────────────────
-    profile = {
-        "driver":    "GTiff",
-        "dtype":     "float32",
-        "width":     FWI_WIDTH,
-        "height":    FWI_HEIGHT,
-        "count":     1,
-        "crs":       FWI_CRS,
-        "transform": _fwi_transform(),
-        "nodata":    np.nan,
-        "compress":  "lzw",
-    }
-
-    with rasterio.open(slope_path, "w", **profile) as dst:
-        dst.write(slope, 1)
-    print(f"  Saved: {slope_path}   "
-          f"(mean slope: {np.nanmean(slope):.1f}°  max: {np.nanmax(slope):.1f}°)")
-
-    with rasterio.open(aspect_path, "w", **profile) as dst:
-        dst.write(aspect, 1)
-    print(f"  Saved: {aspect_path}")
-
-
-# ------------------------------------------------------------------ #
-# Entry point
-# ------------------------------------------------------------------ #
-
-def main():
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    add_config_argument(parser)
-    parser.add_argument(
-        "--overwrite", action="store_true",
-        help="Redownload and recompute even if output files already exist.",
-    )
-    args = parser.parse_args()
-    cfg  = load_config(args.config)
-
-    terrain_dir = Path(get_path(cfg, "terrain_dir"))
-    print("SRTM Slope / Aspect builder")
-    print(f"  Output dir: {terrain_dir}")
-    print()
-    build_slope_aspect(terrain_dir, overwrite=args.overwrite)
-    print("\nDone.  terrain/slope.tif and terrain/aspect.tif are ready.")
+    hgt_count = len(list(raw_dir.glob("*.hgt")))
+    print(f"\n[COMPLETE] {hgt_count} .hgt files in {raw_dir}")
 
 
 if __name__ == "__main__":
