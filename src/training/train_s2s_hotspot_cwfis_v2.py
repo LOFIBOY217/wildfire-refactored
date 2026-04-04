@@ -676,7 +676,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         val_win_dates=None, patch_size=16,
                         s2s_means=None, s2s_stds=None,
                         date_to_s2s_lag=None, s2s_max_lag=3,
-                        s2s_full_cache=None, use_patch_embed=False):
+                        s2s_full_cache=None, use_patch_embed=False,
+                        random_encoder=False):
     """
     Compute ranking metrics on a random sample of validation windows.
 
@@ -728,6 +729,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         meteo_patched[cs:ce, hs:he, :].astype(np.float32)
                     )
                 ).to(device)
+                if random_encoder:
+                    xb_enc = torch.randn_like(xb_enc)
                 if decoder_mode == "oracle":
                     xb_dec = torch.from_numpy(
                         np.ascontiguousarray(
@@ -1270,6 +1273,13 @@ def main():
                          "Linear layer. Provides better compression of large oracle/S2S "
                          "inputs (e.g. 2048→1024→256) vs the default 2048→256 linear. "
                          "Helps preserve oracle signal structure.")
+    ap.add_argument("--random_encoder", action="store_true",
+                    help="Replace encoder input with i.i.d. N(0,1) random noise. "
+                         "Use together with --decoder random to create the 'null input baseline': "
+                         "both enc and dec = random noise. Tests whether the model can perform "
+                         "above chance with zero real input (input randomization test / sanity check). "
+                         "If Lift stays ~8x with all-random input, the model has memorized the "
+                         "spatial fire distribution into its weights rather than using inputs.")
 
     args = ap.parse_args()
     torch.manual_seed(args.seed)
@@ -2547,6 +2557,7 @@ def main():
                 date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
                 s2s_full_cache=s2s_full_cache,
                 use_patch_embed=getattr(args, "use_patch_embed", False),
+                random_encoder=getattr(args, "random_encoder", False),
             )
             print(f"    Lift@{args.val_lift_k}={m['lift_k']:.2f}x  "
                   f"Prec={m['precision_k']:.4f}  Recall={m['recall_k']:.4f}  "
@@ -2677,6 +2688,9 @@ def main():
             # Cast float16→float32 on GPU (2× faster transfer than CPU cast)
             xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
             xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
+            # Null-input baseline: replace encoder with random noise (--random_encoder)
+            if getattr(args, "random_encoder", False):
+                xb_enc = torch.randn_like(xb_enc)
             yb     = yb.to(device, non_blocking=True)
             if args.label_smoothing > 0:
                 yb = yb * (1.0 - args.label_smoothing) + 0.5 * args.label_smoothing
@@ -2779,6 +2793,7 @@ def main():
                     date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
                     s2s_full_cache=s2s_full_cache,
                     use_patch_embed=getattr(args, "use_patch_embed", False),
+                    random_encoder=getattr(args, "random_encoder", False),
                 )
                 val_lift_k = _m["lift_k"]
                 val_prec_k = _m["precision_k"]
