@@ -208,7 +208,11 @@ def build_years_since_burn(
             print(f"  [{year}] Skipping (no data)")
             continue
 
-        mask = _rasterize_burn_year(zip_bytes, year)
+        try:
+            mask = _rasterize_burn_year(zip_bytes, year)
+        except Exception as e:
+            print(f"  [{year}] Skipping (error: {e})")
+            continue
         if mask is None:
             continue
 

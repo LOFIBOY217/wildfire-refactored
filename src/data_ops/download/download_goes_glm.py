@@ -151,25 +151,32 @@ def _read_granule_flashes(s3, path: str) -> tuple[np.ndarray, np.ndarray] | None
     """
     Open one GLM-L2-LCFA NetCDF4 file on S3 and return (flash_lat, flash_lon).
     Returns None on any error (corrupt file, empty, etc.).
+
+    Uses a temp file instead of in-memory NetCDF4 to avoid Bus errors on
+    some systems (netCDF4 memory= mode can be unstable).
     """
     try:
         import netCDF4 as nc4
     except ImportError:
         raise ImportError("netCDF4 is required: pip install netCDF4")
 
+    import tempfile as _tf
     try:
         with s3.open(path, "rb") as fobj:
             raw = fobj.read()          # typically 500 KB – 2 MB
 
-        with nc4.Dataset("inmemory.nc", memory=raw) as ds:
-            # GLM variables: flash_lat, flash_lon (degrees), flash_count
-            if "flash_lat" not in ds.variables or "flash_lon" not in ds.variables:
-                return None
-            lat = ds["flash_lat"][:].data.astype(np.float32)
-            lon = ds["flash_lon"][:].data.astype(np.float32)
-            if len(lat) == 0:
-                return None
-            return lat, lon
+        # Write to temp file (avoids nc4 memory= bus errors)
+        with _tf.NamedTemporaryFile(suffix=".nc", delete=True) as tmp:
+            tmp.write(raw)
+            tmp.flush()
+            with nc4.Dataset(tmp.name, "r") as ds:
+                if "flash_lat" not in ds.variables or "flash_lon" not in ds.variables:
+                    return None
+                lat = ds["flash_lat"][:].data.astype(np.float32)
+                lon = ds["flash_lon"][:].data.astype(np.float32)
+                if len(lat) == 0:
+                    return None
+                return lat, lon
 
     except Exception:
         return None

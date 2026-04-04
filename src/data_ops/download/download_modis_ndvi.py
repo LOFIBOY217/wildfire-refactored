@@ -344,8 +344,14 @@ def download_modis_ndvi(
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            print(f"  [{year}] Downloading {len(results)} granules…")
-            downloaded = earthaccess.download(results, local_path=str(tmp_dir))
+            # Download in batches to avoid OOM on login nodes (~16 GB RAM)
+            BATCH = 50
+            print(f"  [{year}] Downloading {len(results)} granules in batches of {BATCH}…")
+            for bi in range(0, len(results), BATCH):
+                batch = results[bi:bi + BATCH]
+                earthaccess.download(batch, local_path=str(tmp_dir))
+                print(f"    batch {bi//BATCH+1}/{(len(results)+BATCH-1)//BATCH}: "
+                      f"{len(batch)} files")
             hdf_files  = sorted(tmp_dir.glob("*.hdf"))
             print(f"  [{year}] Downloaded {len(hdf_files)} HDF4 files")
 

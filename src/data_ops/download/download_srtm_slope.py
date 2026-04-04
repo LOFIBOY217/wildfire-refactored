@@ -146,8 +146,16 @@ def _download_srtm_tiles(tmp_dir: Path) -> list[Path]:
     if not results:
         raise RuntimeError("No SRTM tiles found for Canada bounding box.")
 
-    print(f"  Downloading {len(results)} tiles to {tmp_dir} …")
-    downloaded = earthaccess.download(results, local_path=str(tmp_dir))
+    # Download in batches to avoid OOM on login nodes (~16 GB RAM)
+    BATCH = 50
+    print(f"  Downloading {len(results)} tiles in batches of {BATCH} to {tmp_dir} …")
+    downloaded = []
+    for bi in range(0, len(results), BATCH):
+        batch = results[bi:bi + BATCH]
+        dl = earthaccess.download(batch, local_path=str(tmp_dir))
+        downloaded.extend(dl)
+        print(f"    batch {bi//BATCH+1}/{(len(results)+BATCH-1)//BATCH}: "
+              f"{len(batch)} tiles")
 
     # Unzip .hgt.zip files if present
     hgt_files = []
@@ -194,18 +202,58 @@ def build_slope_aspect(terrain_dir: Path, overwrite: bool = False) -> None:
         if not hgt_files:
             raise RuntimeError("No DEM files were extracted from SRTM download.")
 
-        # ── Step 2: Merge all tiles into one mosaic ───────────────────
-        print(f"\n  Merging {len(hgt_files)} DEM tiles…")
-        open_files = [rasterio.open(f) for f in hgt_files]
-        mosaic, mosaic_transform = merge(open_files)
-        mosaic_crs = open_files[0].crs
-        mosaic_arr = mosaic[0].astype(np.float32)
+        # ── Step 2: Merge tiles in batches to avoid OOM ────────────────
+        print(f"\n  Merging {len(hgt_files)} DEM tiles in batches…")
+        MERGE_BATCH = 100
+        mosaic_arr = None
+        mosaic_transform = None
+        mosaic_crs = None
+        for bi in range(0, len(hgt_files), MERGE_BATCH):
+            batch = hgt_files[bi:bi + MERGE_BATCH]
+            open_files = [rasterio.open(f) for f in batch]
+            chunk_mosaic, chunk_tf = merge(open_files)
+            chunk_arr = chunk_mosaic[0].astype(np.float32)
+            chunk_arr[chunk_arr <= -32000] = np.nan
+            if mosaic_crs is None:
+                mosaic_crs = open_files[0].crs
+            for src in open_files:
+                src.close()
+            del chunk_mosaic
 
-        # Replace SRTM nodata (−32768) with NaN
-        mosaic_arr[mosaic_arr <= -32000] = np.nan
-
-        for src in open_files:
-            src.close()
+            if mosaic_arr is None:
+                mosaic_arr = chunk_arr
+                mosaic_transform = chunk_tf
+            else:
+                # Expand: take non-NaN from chunk where mosaic is NaN
+                # Only works if tiles cover different areas (SRTM tiles don't overlap)
+                # For simplicity, re-merge the accumulated result with the chunk
+                import tempfile as _tf2
+                with _tf2.NamedTemporaryFile(suffix=".tif", delete=True) as t1, \
+                     _tf2.NamedTemporaryFile(suffix=".tif", delete=True) as t2:
+                    _write_tmp = lambda path, arr, tf, crs: rasterio.open(
+                        path, "w", driver="GTiff", dtype="float32",
+                        width=arr.shape[1], height=arr.shape[0], count=1,
+                        crs=crs, transform=tf, nodata=np.nan,
+                    ).__enter__()
+                    # Write both to temp files and merge
+                    for tmp_f, arr, tf in [(t1.name, mosaic_arr, mosaic_transform),
+                                           (t2.name, chunk_arr, chunk_tf)]:
+                        with rasterio.open(
+                            tmp_f, "w", driver="GTiff", dtype="float32",
+                            width=arr.shape[1], height=arr.shape[0], count=1,
+                            crs=mosaic_crs, transform=tf, nodata=np.nan,
+                        ) as dst:
+                            dst.write(arr, 1)
+                    srcs = [rasterio.open(t1.name), rasterio.open(t2.name)]
+                    combined, combined_tf = merge(srcs)
+                    for s in srcs:
+                        s.close()
+                    mosaic_arr = combined[0].astype(np.float32)
+                    mosaic_transform = combined_tf
+                    del combined
+            del chunk_arr
+            print(f"    batch {bi//MERGE_BATCH+1}/{(len(hgt_files)+MERGE_BATCH-1)//MERGE_BATCH}: "
+                  f"mosaic shape={mosaic_arr.shape}")
 
         print(f"  Mosaic shape: {mosaic_arr.shape}  CRS: {mosaic_crs}")
 
