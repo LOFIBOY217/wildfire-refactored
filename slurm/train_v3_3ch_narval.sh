@@ -17,7 +17,7 @@ if [ -z "${SCRATCH:-}" ]; then
     export SCRATCH=/scratch/jiaqi217
 fi
 
-module load gcc/12.3 python/3.11.5 2>/dev/null || true
+module load gcc/12.3 python/3.11.5 proj/9.4.1 2>/dev/null || true
 
 VENV="$SCRATCH/venv-wildfire"
 if [ -d "$VENV" ]; then
