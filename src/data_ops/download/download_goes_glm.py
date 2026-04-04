@@ -28,7 +28,6 @@ Prerequisites:
 """
 
 import argparse
-import concurrent.futures
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -166,36 +165,31 @@ def _accumulate_day(s3, d: date, max_workers: int = 4,
         local_grid = np.zeros_like(count_grid)
         ok = 0
 
-        # Process in batches of 200 to limit memory (4000+ futures at once = OOM)
-        BATCH = 200
-        for bi in range(0, len(files), BATCH):
-            batch_files = files[bi:bi + BATCH]
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(_read_granule_flashes, s3, f): f
-                           for f in batch_files}
-                for fut in concurrent.futures.as_completed(futures):
-                    result = fut.result()
-                    if result is None:
-                        continue
-                    lat_arr, lon_arr = result
+        # Process sequentially — netCDF4 C library is NOT thread-safe,
+        # ThreadPoolExecutor causes segfaults with concurrent Dataset opens.
+        for fi, fpath in enumerate(files):
+            result = _read_granule_flashes(s3, fpath)
+            if result is None:
+                continue
+            lat_arr, lon_arr = result
 
-                    mask = (
-                        (lat_arr >= ACC_LAT_MIN) & (lat_arr < ACC_LAT_MAX) &
-                        (lon_arr >= ACC_LON_MIN) & (lon_arr < ACC_LON_MAX)
-                    )
-                    lat_f = lat_arr[mask]
-                    lon_f = lon_arr[mask]
+            mask = (
+                (lat_arr >= ACC_LAT_MIN) & (lat_arr < ACC_LAT_MAX) &
+                (lon_arr >= ACC_LON_MIN) & (lon_arr < ACC_LON_MAX)
+            )
+            lat_f = lat_arr[mask]
+            lon_f = lon_arr[mask]
 
-                    if len(lat_f) == 0:
-                        continue
+            if len(lat_f) == 0:
+                continue
 
-                    row = ((ACC_LAT_MAX - lat_f) / ACC_DEG).astype(np.int32)
-                    col = ((lon_f - ACC_LON_MIN) / ACC_DEG).astype(np.int32)
-                    row = np.clip(row, 0, ACC_NLAT - 1)
-                    col = np.clip(col, 0, ACC_NLON - 1)
+            row = ((ACC_LAT_MAX - lat_f) / ACC_DEG).astype(np.int32)
+            col = ((lon_f - ACC_LON_MIN) / ACC_DEG).astype(np.int32)
+            row = np.clip(row, 0, ACC_NLAT - 1)
+            col = np.clip(col, 0, ACC_NLON - 1)
 
-                    np.add.at(local_grid, (row, col), 1)
-                    ok += 1
+            np.add.at(local_grid, (row, col), 1)
+            ok += 1
 
         count_grid += local_grid
         if verbose:
