@@ -2750,7 +2750,7 @@ def main():
             val_loss    = 0.0
             val_samples = 0
             with torch.no_grad():
-                for _val_bi, (xb_enc, xb_dec, yb) in enumerate(val_dl):
+                for _val_bi, (xb_enc, xb_dec, yb, _val_pids) in enumerate(val_dl):
                     if args.val_max_batches > 0 and _val_bi >= args.val_max_batches:
                         break
                     xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
