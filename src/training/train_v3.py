@@ -343,11 +343,10 @@ def _sample_hard_negatives(neg_flat, fire_clim_per_patch, n_patches,
     patch_ids = neg_flat % n_patches
     weights = fire_clim_per_patch[patch_ids].astype(np.float64)
     weights = np.maximum(weights, 0.0)  # ensure non-negative
-    w_sum = weights.sum()
-    if w_sum > 0:
-        weights /= w_sum
-    else:
-        weights = np.ones_like(weights) / len(weights)
+    # Add small floor so zero-clim patches can still be sampled
+    # (avoids "Fewer non-zero entries in p than size" error)
+    weights += 1e-8
+    weights /= weights.sum()
 
     # Sample hard negatives (weighted by fire climatology)
     hard_idx = rng.choice(len(neg_flat), size=n_hard, replace=False, p=weights)
