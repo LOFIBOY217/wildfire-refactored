@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-v3-3ch
 #SBATCH --gpus-per-node=1
-#SBATCH --time=17:00:00
+#SBATCH --time=24:00:00
 #SBATCH --mem=128G
 #SBATCH --output=/scratch/jiaqi217/logs/train_v3_3ch_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/train_v3_3ch_%j.err
