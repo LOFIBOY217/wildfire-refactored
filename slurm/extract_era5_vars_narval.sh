@@ -22,7 +22,7 @@ if [ -z "${SCRATCH:-}" ]; then
 fi
 
 module load StdEnv/2023 gcc/12.3 python/3.11.5 proj/9.4.1 eccodes/2.31.0
-export LD_LIBRARY_PATH=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Compiler/gcc12/eccodes/2.31.0/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Compiler/gcc12/eccodes/2.31.0/lib64:${LD_LIBRARY_PATH:-}
 source $SCRATCH/venv-wildfire/bin/activate
 cd $SCRATCH/wildfire-refactored
 
