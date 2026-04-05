@@ -99,16 +99,15 @@ def _get_modis_tile_bounds(hdf_path: Path):
     return (left, bottom, right, top)
 
 
-# MODIS sinusoidal projection WKT
-MODIS_SIN_CRS = CRS.from_proj4(
-    "+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +R=6371007.181 +units=m +no_defs"
-)
-
-
 def _process_composite(hdf_files: list[Path]):
     """Reproject each tile individually to FWI grid, then nanmean.
     Returns (ndvi_fwi, evi_fwi) as (H, W) float32 arrays."""
     dst_crs = CRS.from_string(FWI_CRS)
+    # Create sinusoidal CRS inside function (not module-level) to ensure
+    # PROJ_DATA is available when CRS is initialized
+    sin_crs = CRS.from_proj4(
+        "+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +R=6371007.181 +units=m +no_defs"
+    )
 
     # Accumulate reprojected tiles on FWI grid
     ndvi_sum = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
@@ -145,12 +144,12 @@ def _process_composite(hdf_files: list[Path]):
         evi_fwi_tile = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
 
         reproject(ndvi_raw, ndvi_fwi_tile,
-                  src_transform=src_tf, src_crs=MODIS_SIN_CRS,
+                  src_transform=src_tf, src_crs=sin_crs,
                   dst_transform=FWI_TRANSFORM, dst_crs=dst_crs,
                   resampling=Resampling.bilinear,
                   src_nodata=np.nan, dst_nodata=np.nan)
         reproject(evi_raw, evi_fwi_tile,
-                  src_transform=src_tf, src_crs=MODIS_SIN_CRS,
+                  src_transform=src_tf, src_crs=sin_crs,
                   dst_transform=FWI_TRANSFORM, dst_crs=dst_crs,
                   resampling=Resampling.bilinear,
                   src_nodata=np.nan, dst_nodata=np.nan)
