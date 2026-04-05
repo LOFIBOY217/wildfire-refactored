@@ -44,19 +44,19 @@ BASE_URL = "https://ftp.maps.canada.ca/pub/nrcan_rncan/elevation/cdem_mnec/"
 
 
 def _list_subdirs(url, session):
-    """Parse HTML directory listing for subdirectory links."""
-    resp = session.get(url, timeout=60)
+    """Parse HTML directory listing for NTS sheet subdirectories (001/, 002/, ...)."""
+    resp = session.get(url, timeout=120)
     resp.raise_for_status()
-    # Match href="cdem_dem_*/" patterns in directory listing
-    return re.findall(r'href="(cdem_dem_[^"]+/)"', resp.text)
+    # NTS sheet directories are numeric: 001/, 002/, ..., 120/
+    return re.findall(r'href="(\d{3}/)"', resp.text)
 
 
-def _find_tif_in_dir(url, session):
-    """Find .tif files in a CDEM subdirectory."""
-    resp = session.get(url, timeout=60)
+def _find_zips_in_dir(url, session):
+    """Find .zip files in a CDEM NTS sheet subdirectory."""
+    resp = session.get(url, timeout=120)
     resp.raise_for_status()
-    tifs = re.findall(r'href="([^"]+\.tif)"', resp.text)
-    return [url + t for t in tifs]
+    zips = re.findall(r'href="([^"]+\.zip)"', resp.text)
+    return [url + z for z in zips]
 
 
 def _download_file(url, out_path, session):
@@ -92,9 +92,9 @@ def main():
     raw_dir = terrain_dir.parent / "cdem_raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    existing = list(raw_dir.glob("*.tif"))
+    existing = list(raw_dir.glob("*.zip"))
     if len(existing) > 100 and not args.overwrite:
-        print(f"[SKIP] {len(existing)} .tif files already in {raw_dir}")
+        print(f"[SKIP] {len(existing)} .zip files already in {raw_dir}")
         return
 
     print("=" * 70)
@@ -119,22 +119,22 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
-    # Step 2: find .tif files in each subdirectory
-    print("  Scanning for .tif files...")
+    # Step 2: find .zip files in each subdirectory
+    print("  Scanning for .zip files...")
     all_urls = []
     for i, sd in enumerate(subdirs):
         try:
-            tifs = _find_tif_in_dir(BASE_URL + sd, session)
-            all_urls.extend(tifs)
+            zips = _find_zips_in_dir(BASE_URL + sd, session)
+            all_urls.extend(zips)
         except Exception as e:
             print(f"  [WARN] {sd}: {e}")
-        if (i + 1) % 50 == 0:
-            print(f"    scanned {i+1}/{len(subdirs)} dirs, {len(all_urls)} tiles so far")
+        if (i + 1) % 20 == 0:
+            print(f"    scanned {i+1}/{len(subdirs)} dirs, {len(all_urls)} zips so far")
 
-    print(f"  Total tiles to download: {len(all_urls)}")
+    print(f"  Total zip files to download: {len(all_urls)}")
 
     if not all_urls:
-        print("[ERROR] No .tif files found in CDEM directories", file=sys.stderr)
+        print("[ERROR] No .zip files found in CDEM directories", file=sys.stderr)
         sys.exit(1)
 
     # Step 3: download in parallel
@@ -156,15 +156,30 @@ def main():
             else:
                 failed += 1
             total = done + skipped + failed
-            if total % 50 == 0:
+            if total % 20 == 0:
                 print(f"  Progress: {total}/{len(all_urls)}  "
                       f"(new={done} skip={skipped} fail={failed})")
 
-    tif_count = len(list(raw_dir.glob("*.tif")))
+    # Step 4: unzip all downloaded files to extract .tif
+    print(f"\n  Extracting .tif from zip files...")
+    import zipfile
+    tif_extracted = 0
+    for zp in raw_dir.glob("*.zip"):
+        try:
+            with zipfile.ZipFile(zp) as zf:
+                for name in zf.namelist():
+                    if name.endswith(".tif"):
+                        zf.extract(name, raw_dir)
+                        tif_extracted += 1
+        except Exception as e:
+            print(f"  [WARN] {zp.name}: {e}")
+
+    tif_count = len(list(raw_dir.glob("**/*.tif")))
     print(f"\n[COMPLETE] {tif_count} .tif files in {raw_dir}")
     print(f"  Downloaded: {done}  Skipped: {skipped}  Failed: {failed}")
+    print(f"  Extracted: {tif_extracted} TIFs from zips")
     if failed > 0:
-        print("  [WARN] Some tiles failed — re-run to retry")
+        print("  [WARN] Some files failed — re-run to retry")
 
 
 if __name__ == "__main__":

@@ -85,7 +85,7 @@ def main():
         print(f"[SKIP] slope_cdem.tif and aspect_cdem.tif already exist")
         return
 
-    tif_files = sorted(raw_dir.glob("*.tif"))
+    tif_files = sorted(raw_dir.glob("**/*.tif"))
     if not tif_files:
         print(f"[ERROR] No .tif files in {raw_dir}", file=sys.stderr)
         print("  Run download_cdem.py first", file=sys.stderr)
