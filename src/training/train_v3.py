@@ -135,9 +135,12 @@ V3_CHANNEL_DEFS = {
     "slope":      {"type": "static",  "required": False},
     "burn_age":   {"type": "annual",  "required": False},
     "burn_count": {"type": "annual",  "required": False},
+    "u10":        {"type": "daily",   "required": False},
+    "v10":        {"type": "daily",   "required": False},
+    "CAPE":       {"type": "daily",   "required": False},
 }
 
-DEFAULT_CHANNELS = "FWI,2t,fire_clim,lightning,NDVI,population,deep_soil,precip_def,slope,burn_age,burn_count"
+DEFAULT_CHANNELS = "FWI,2t,fire_clim,lightning,NDVI,population,deep_soil,precip_def,slope,burn_age,burn_count,u10,v10,CAPE"
 
 # Static channels to inject into decoder context (spatial info the decoder needs)
 DECODER_CTX_CHANNELS = {"fire_clim", "population", "slope", "burn_age", "burn_count"}
@@ -755,6 +758,14 @@ def main():
     deep_soil_dict = _build_flat_file_dict(deep_soil_dir, "deep_soil") if "deep_soil" in CHANNEL_NAMES else {}
     precip_dict = _build_flat_file_dict(precip_dir, "tp") if "precip_def" in CHANNEL_NAMES else {}
 
+    # Wind and CAPE (from ERA5 extraction — era5_to_daily.py output)
+    u10_dir = paths_cfg.get("wind_u_dir", "data/era5_u10")
+    v10_dir = paths_cfg.get("wind_v_dir", "data/era5_v10")
+    cape_dir = paths_cfg.get("cape_dir", "data/era5_cape")
+    u10_dict = _build_flat_file_dict(u10_dir, "u10") if "u10" in CHANNEL_NAMES else {}
+    v10_dict = _build_flat_file_dict(v10_dir, "v10") if "v10" in CHANNEL_NAMES else {}
+    cape_dict = _build_flat_file_dict(cape_dir, "cape") if "CAPE" in CHANNEL_NAMES else {}
+
     # NDVI index
     ndvi_index = _build_ndvi_index(ndvi_dir) if "NDVI" in CHANNEL_NAMES else []
 
@@ -790,6 +801,12 @@ def main():
         print(f"  Precip (for deficit): {len(precip_dict):,}")
     if burn_scar_dict:
         print(f"  Burn scars: years {sorted(burn_scar_dict.keys())}")
+    if u10_dict:
+        print(f"  u10 (wind): {len(u10_dict):,}")
+    if v10_dict:
+        print(f"  v10 (wind): {len(v10_dict):,}")
+    if cape_dict:
+        print(f"  CAPE: {len(cape_dict):,}")
 
     # ----------------------------------------------------------------
     # STEP 2  Align dates (require FWI + 2t)
@@ -886,6 +903,12 @@ def main():
                     _paths = [lightning_dict[d] for d in aligned_dates[:train_end_idx] if d in lightning_dict]
                 elif ch_name == "deep_soil" and deep_soil_dict:
                     _paths = [deep_soil_dict[d] for d in aligned_dates[:train_end_idx] if d in deep_soil_dict]
+                elif ch_name == "u10" and u10_dict:
+                    _paths = [u10_dict[d] for d in aligned_dates[:train_end_idx] if d in u10_dict]
+                elif ch_name == "v10" and v10_dict:
+                    _paths = [v10_dict[d] for d in aligned_dates[:train_end_idx] if d in v10_dict]
+                elif ch_name == "CAPE" and cape_dict:
+                    _paths = [cape_dict[d] for d in aligned_dates[:train_end_idx] if d in cape_dict]
                 else:
                     _paths = []
                 if _paths:
@@ -1108,6 +1131,24 @@ def main():
                         arr = _read_tif_safe(deep_soil_dict[cur_date], None)
                         if arr is not None:
                             frame[..., ch_idx] = np.nan_to_num(arr, nan=float(fills[ch_idx]))
+
+                elif ch_name == "u10":
+                    if cur_date in u10_dict:
+                        arr = _read_tif_safe(u10_dict[cur_date], None)
+                        if arr is not None:
+                            frame[..., ch_idx] = np.nan_to_num(arr, nan=0.0)
+
+                elif ch_name == "v10":
+                    if cur_date in v10_dict:
+                        arr = _read_tif_safe(v10_dict[cur_date], None)
+                        if arr is not None:
+                            frame[..., ch_idx] = np.nan_to_num(arr, nan=0.0)
+
+                elif ch_name == "CAPE":
+                    if cur_date in cape_dict:
+                        arr = _read_tif_safe(cape_dict[cur_date], None)
+                        if arr is not None:
+                            frame[..., ch_idx] = np.nan_to_num(arr, nan=0.0)
 
                 elif ch_name == "precip_def":
                     # Accumulate precipitation for rolling deficit
