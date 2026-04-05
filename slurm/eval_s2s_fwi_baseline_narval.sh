@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=wf-s2s-fwi
-#SBATCH --time=8:00:00
+#SBATCH --time=3-00:00:00
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/s2s_fwi_baseline_%j.log

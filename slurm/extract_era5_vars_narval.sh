@@ -66,7 +66,7 @@ for var in u10 v10 tp cape; do
     python3 -u -m src.data_ops.processing.resample_to_fwi_grid \
         --input-dir data/era5_daily \
         --output-dir "$outdir" \
-        --prefix "$var" \
+        --variable "$var" \
         --config configs/paths_narval.yaml 2>&1 || {
         echo "  [WARN] resample_to_fwi_grid failed for $var, trying manual reproject"
         # Fallback: manual reproject with rasterio

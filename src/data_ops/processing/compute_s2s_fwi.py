@@ -294,7 +294,7 @@ def main():
                     dst.write(np.nan_to_num(arr, nan=0.0)[np.newaxis])
 
         n_success += 1
-        if (di + 1) % 50 == 0 or di == len(issue_dates) - 1:
+        if (di + 1) % 10 == 0 or di == len(issue_dates) - 1:
             elapsed = time.time() - t0
             print(f"  [{di+1}/{len(issue_dates)}] success={n_success} "
                   f"skip={n_skip} ({elapsed:.0f}s)")
