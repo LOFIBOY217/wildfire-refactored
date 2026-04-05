@@ -62,6 +62,11 @@ VARIABLE_MAP = {
     'tcw': 'tcw',     # total column water
     'swvl1': 'sm20',  # soil moisture layer 1 (approximate sm20)
     'stl1': 'st20',   # soil temperature layer 1 (approximate st20)
+    # V3 additional channels (already in GRIB, never extracted before)
+    'u10': 'u10',     # 10m u-component of wind (fire spread speed)
+    'v10': 'v10',     # 10m v-component of wind (fire spread direction)
+    'tp': 'tp',       # total precipitation (for precip deficit)
+    'cape': 'cape',   # convective available potential energy (lightning proxy)
 }
 
 # ERA5 stores these variables in Kelvin; convert to Celsius on output
