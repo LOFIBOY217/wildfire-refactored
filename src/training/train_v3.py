@@ -1275,9 +1275,12 @@ def main():
 
     pos_pairs = []
     for win_i, (hs, he, ts, te) in enumerate(train_wins):
-        for patch_i in range(n_patches):
-            if fire_patched[ts:te, patch_i, :].max() > 0:
-                pos_pairs.append((win_i, patch_i))
+        # Vectorized: read entire window at once, max over (time, pixels) per patch
+        # fire_patched shape: (T, n_patches, P²), read [ts:te] slice = (dec_days, n_patches, P²)
+        win_fire = np.array(fire_patched[ts:te, :, :])   # load to RAM once
+        has_fire = win_fire.max(axis=(0, 2)) > 0          # (n_patches,) bool
+        for patch_i in np.where(has_fire)[0]:
+            pos_pairs.append((win_i, int(patch_i)))
         if win_i % 200 == 0 or win_i == len(train_wins) - 1:
             print(f"  scanned {win_i+1}/{len(train_wins)} windows  "
                   f"pos: {len(pos_pairs):,}  ({time.time()-t0_filter:.0f}s)")

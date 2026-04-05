@@ -2,18 +2,13 @@
 """
 Process raw SRTM .hgt tiles → slope.tif and aspect.tif on the FWI grid.
 
+Strategy: reproject each tile directly to FWI grid (2km), accumulate,
+then compute slope/aspect on the reprojected DEM. Avoids merging all
+tiles at 30m resolution (which needs >256GB RAM).
+
 Input:  {terrain_raw_dir}/*.hgt  (from download_srtm_slope.py)
 Output: {terrain_dir}/slope.tif   (EPSG:3978, 2709×2281, degrees [0,90])
         {terrain_dir}/aspect.tif  (EPSG:3978, 2709×2281, degrees [0,360))
-
-Processing:
-  1. Merge .hgt tiles in batches (avoid OOM)
-  2. Reproject DEM mosaic to FWI grid
-  3. Compute slope and aspect using Horn's (1981) method
-
-Usage:
-    python -m src.data_ops.processing.process_srtm_slope
-    python -m src.data_ops.processing.process_srtm_slope --config configs/paths_narval.yaml
 """
 
 import argparse
@@ -23,7 +18,6 @@ from pathlib import Path
 import numpy as np
 import rasterio
 from rasterio.crs import CRS
-from rasterio.merge import merge
 from rasterio.transform import from_bounds
 from rasterio.warp import reproject, Resampling
 
@@ -44,39 +38,29 @@ FWI_BOUNDS = (-2378164.0, -707617.0, 3039835.0, 3854382.0)
 
 
 def _compute_slope_aspect(dem, cell_size_m):
-    """Horn's (1981) 3x3 finite-difference method for slope and aspect."""
-    dzdx = (
-        (np.roll(dem, -1, axis=1) - np.roll(dem, 1, axis=1))
-    ) / (2 * cell_size_m)
-    dzdy = (
-        (np.roll(dem, -1, axis=0) - np.roll(dem, 1, axis=0))
-    ) / (2 * cell_size_m)
-
+    """Horn's (1981) 3x3 finite-difference method."""
+    dzdx = (np.roll(dem, -1, axis=1) - np.roll(dem, 1, axis=1)) / (2 * cell_size_m)
+    dzdy = (np.roll(dem, -1, axis=0) - np.roll(dem, 1, axis=0)) / (2 * cell_size_m)
     rise = np.sqrt(dzdx**2 + dzdy**2)
     slope_deg = np.degrees(np.arctan(rise))
-
     aspect_rad = np.arctan2(-dzdy, dzdx)
     aspect_deg = 90.0 - np.degrees(aspect_rad)
     aspect_deg[aspect_deg < 0] += 360.0
     aspect_deg[aspect_deg >= 360.0] -= 360.0
-
     nan_mask = ~np.isfinite(dem)
     flat_mask = rise < 1e-8
     slope_deg[nan_mask] = np.nan
     aspect_deg[nan_mask] = np.nan
     aspect_deg[flat_mask & ~nan_mask] = -1.0
-
     return slope_deg.astype(np.float32), aspect_deg.astype(np.float32)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Process SRTM .hgt tiles → slope.tif + aspect.tif on FWI grid"
+        description="Process SRTM .hgt tiles → slope.tif + aspect.tif (tile-by-tile reproject)"
     )
     add_config_argument(parser)
     parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--merge_batch", type=int, default=100,
-                        help="Tiles per merge batch (default: 100)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -88,74 +72,53 @@ def main():
     aspect_path = terrain_dir / "aspect.tif"
 
     if slope_path.exists() and aspect_path.exists() and not args.overwrite:
-        print(f"[SKIP] slope.tif and aspect.tif already exist in {terrain_dir}")
+        print(f"[SKIP] slope.tif and aspect.tif already exist")
         return
 
     hgt_files = sorted(raw_dir.glob("*.hgt"))
     if not hgt_files:
-        print(f"[ERROR] No .hgt files in {raw_dir}. Run download_srtm_slope.py first.",
-              file=sys.stderr)
+        print(f"[ERROR] No .hgt files in {raw_dir}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Processing {len(hgt_files)} SRTM tiles → slope + aspect")
+    print(f"Processing {len(hgt_files)} SRTM tiles → FWI grid DEM (tile-by-tile)")
 
-    # Step 1: Merge tiles in batches
-    print(f"  Merging tiles (batch={args.merge_batch})…")
-    batch = args.merge_batch
-    mosaic_arr = None
-    mosaic_tf = None
-    mosaic_crs = None
-
-    for bi in range(0, len(hgt_files), batch):
-        chunk = hgt_files[bi:bi + batch]
-        srcs = [rasterio.open(f) for f in chunk]
-        chunk_data, chunk_tf = merge(srcs)
-        if mosaic_crs is None:
-            mosaic_crs = srcs[0].crs
-        for s in srcs:
-            s.close()
-
-        chunk_arr = chunk_data[0].astype(np.float32)
-        chunk_arr[chunk_arr <= -32000] = np.nan
-
-        if mosaic_arr is None:
-            mosaic_arr = chunk_arr
-            mosaic_tf = chunk_tf
-        else:
-            # For non-overlapping tiles, merge via temp files
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix=".tif") as t1, \
-                 tempfile.NamedTemporaryFile(suffix=".tif") as t2:
-                for path, arr, tf in [(t1.name, mosaic_arr, mosaic_tf),
-                                      (t2.name, chunk_arr, chunk_tf)]:
-                    with rasterio.open(path, "w", driver="GTiff", dtype="float32",
-                                       width=arr.shape[1], height=arr.shape[0],
-                                       count=1, crs=mosaic_crs, transform=tf,
-                                       nodata=np.nan) as dst:
-                        dst.write(arr, 1)
-                s1, s2 = rasterio.open(t1.name), rasterio.open(t2.name)
-                combined, combined_tf = merge([s1, s2])
-                s1.close()
-                s2.close()
-                mosaic_arr = combined[0].astype(np.float32)
-                mosaic_tf = combined_tf
-
-        print(f"    batch {bi//batch+1}: mosaic {mosaic_arr.shape}")
-        del chunk_data, chunk_arr
-
-    # Step 2: Reproject to FWI grid
-    print("  Reprojecting to FWI grid…")
     dst_tf = from_bounds(*FWI_BOUNDS, FWI_WIDTH, FWI_HEIGHT)
     dst_crs = CRS.from_string(FWI_CRS)
-    dem_fwi = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
-    reproject(mosaic_arr, dem_fwi,
-              src_transform=mosaic_tf, src_crs=mosaic_crs,
-              dst_transform=dst_tf, dst_crs=dst_crs,
-              resampling=Resampling.bilinear,
-              src_nodata=np.nan, dst_nodata=np.nan)
-    del mosaic_arr
 
-    # Step 3: Compute slope and aspect
+    # Accumulate DEM on FWI grid: sum + count for nanmean
+    dem_sum = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
+    dem_count = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
+
+    for i, hgt_path in enumerate(hgt_files):
+        try:
+            with rasterio.open(hgt_path) as src:
+                data = src.read(1).astype(np.float32)
+                data[data <= -32000] = np.nan
+
+                tile_fwi = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
+                reproject(
+                    source=data, destination=tile_fwi,
+                    src_transform=src.transform, src_crs=src.crs,
+                    dst_transform=dst_tf, dst_crs=dst_crs,
+                    resampling=Resampling.bilinear,
+                    src_nodata=np.nan, dst_nodata=np.nan,
+                )
+
+                valid = np.isfinite(tile_fwi)
+                dem_sum[valid] += tile_fwi[valid]
+                dem_count[valid] += 1
+        except Exception as e:
+            print(f"  [{i}] {hgt_path.name}: error {e}")
+            continue
+
+        if (i + 1) % 200 == 0 or i == len(hgt_files) - 1:
+            coverage = (dem_count > 0).sum() / dem_count.size * 100
+            print(f"  [{i+1}/{len(hgt_files)}] coverage: {coverage:.1f}%")
+
+    # Mean DEM
+    dem_fwi = np.where(dem_count > 0, dem_sum / dem_count, np.nan).astype(np.float32)
+
+    # Compute slope and aspect
     cell_size_m = abs(FWI_BOUNDS[2] - FWI_BOUNDS[0]) / FWI_WIDTH
     print(f"  Computing slope & aspect (cell_size ≈ {cell_size_m:.0f} m)…")
     slope, aspect = _compute_slope_aspect(dem_fwi, cell_size_m)
@@ -172,7 +135,8 @@ def main():
     with rasterio.open(aspect_path, "w", **profile) as dst:
         dst.write(aspect, 1)
 
-    print(f"  Saved: {slope_path} (mean={np.nanmean(slope):.1f}° max={np.nanmax(slope):.1f}°)")
+    nan_pct = 100 * np.isnan(slope).sum() / slope.size
+    print(f"  Saved: {slope_path} (mean={np.nanmean(slope):.1f}° NaN={nan_pct:.0f}%)")
     print(f"  Saved: {aspect_path}")
     print("[COMPLETE]")
 
