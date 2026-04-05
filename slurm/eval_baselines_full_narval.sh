@@ -5,6 +5,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/baseline_full_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/baseline_full_%j.err
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # ----------------------------------------------------------------
 # Full evaluation of Climatology + FWI Oracle baselines

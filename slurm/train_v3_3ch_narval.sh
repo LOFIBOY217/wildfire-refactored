@@ -5,6 +5,8 @@
 #SBATCH --mem=128G
 #SBATCH --output=/scratch/jiaqi217/logs/train_v3_3ch_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/train_v3_3ch_%j.err
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # ----------------------------------------------------------------
 # V3 Training: 3-channel baseline (FWI + 2t + fire_clim)
