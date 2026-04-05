@@ -30,13 +30,16 @@ echo "  Node: $(hostname)  Time: $(date)"
 echo "============================================="
 
 # Step 1: Compute S2S FWI from forecast weather
+# _ext.tif (wind/precip) only available from 2022-01-03 onwards.
+# Skip earlier dates to avoid useless skips.
 echo ""
-echo "=== Step 1: Compute FWI from S2S forecasts ==="
+echo "=== Step 1: Compute FWI from S2S forecasts (2022+) ==="
 python3 -u -m src.data_ops.processing.compute_s2s_fwi \
     --config configs/paths_narval.yaml \
     --s2s_dir data/s2s_processed \
     --output_dir data/s2s_fwi \
-    --lead_start 14 --lead_end 45 2>&1
+    --lead_start 14 --lead_end 45 \
+    --start_date 2022-01-01 2>&1
 echo "compute_s2s_fwi exit: $?"
 
 # Step 2: Evaluate as baseline

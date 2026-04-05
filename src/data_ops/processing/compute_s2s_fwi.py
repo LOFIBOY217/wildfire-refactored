@@ -199,6 +199,8 @@ def main():
                         help="Skip extended params (wind/precip), use defaults")
     parser.add_argument("--issue_dates", nargs="*", default=None,
                         help="Specific issue dates to process (YYYY-MM-DD)")
+    parser.add_argument("--start_date", default=None,
+                        help="Skip issue dates before this (YYYY-MM-DD)")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -224,6 +226,9 @@ def main():
                 issue_dates.append(_parse_date(entry))
             except Exception:
                 continue
+    if args.start_date:
+        cutoff = _parse_date(args.start_date)
+        issue_dates = [d for d in issue_dates if d >= cutoff]
     print(f"S2S issue dates: {len(issue_dates)}")
 
     # Reference TIF for writing output
