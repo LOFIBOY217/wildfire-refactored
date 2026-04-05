@@ -103,10 +103,16 @@ def _process_composite(hdf_files: list[Path]):
     """Reproject each tile individually to FWI grid, then nanmean.
     Returns (ndvi_fwi, evi_fwi) as (H, W) float32 arrays."""
     dst_crs = CRS.from_string(FWI_CRS)
-    # Create sinusoidal CRS inside function (not module-level) to ensure
-    # PROJ_DATA is available when CRS is initialized
-    sin_crs = CRS.from_proj4(
-        "+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +R=6371007.181 +units=m +no_defs"
+    # MODIS sinusoidal CRS defined via WKT (avoids PROJ_DATA dependency)
+    sin_crs = CRS.from_wkt(
+        'PROJCS["unnamed",GEOGCS["unnamed",'
+        'DATUM["unnamed",SPHEROID["unnamed",6371007.181,0]],'
+        'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],'
+        'PROJECTION["Sinusoidal"],'
+        'PARAMETER["longitude_of_center",0],'
+        'PARAMETER["false_easting",0],'
+        'PARAMETER["false_northing",0],'
+        'UNIT["metre",1]]'
     )
 
     # Accumulate reprojected tiles on FWI grid
