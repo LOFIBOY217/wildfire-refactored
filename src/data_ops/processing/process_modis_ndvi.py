@@ -99,77 +99,88 @@ def _get_modis_tile_bounds(hdf_path: Path):
     return (left, bottom, right, top)
 
 
+def _open_hdf4_subdataset(hdf_path, sds_name):
+    """Open a MODIS HDF4 subdataset via rasterio (reads CRS/transform natively).
+    Returns (data, src_crs, src_transform) or (None, None, None) on failure."""
+    import rasterio as _rio
+    try:
+        with _rio.open(str(hdf_path)) as main:
+            subdatasets = main.subdatasets
+        target = None
+        for sd in subdatasets:
+            if sds_name in sd:
+                target = sd
+                break
+        if target is None:
+            return None, None, None
+        with _rio.open(target) as sub:
+            data = sub.read(1).astype(np.float32)
+            return data, sub.crs, sub.transform
+    except Exception:
+        return None, None, None
+
+
 def _process_composite(hdf_files: list[Path]):
-    """Reproject each tile individually to FWI grid, then nanmean.
+    """Reproject each tile individually to FWI grid using rasterio-native
+    CRS/transform (no manual sinusoidal CRS construction needed).
     Returns (ndvi_fwi, evi_fwi) as (H, W) float32 arrays."""
     dst_crs = CRS.from_string(FWI_CRS)
-    # MODIS sinusoidal CRS defined via WKT (avoids PROJ_DATA dependency)
-    sin_crs = CRS.from_wkt(
-        'PROJCS["unnamed",GEOGCS["unnamed",'
-        'DATUM["unnamed",SPHEROID["unnamed",6371007.181,0]],'
-        'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],'
-        'PROJECTION["Sinusoidal"],'
-        'PARAMETER["longitude_of_center",0],'
-        'PARAMETER["false_easting",0],'
-        'PARAMETER["false_northing",0],'
-        'UNIT["metre",1]]'
-    )
 
-    # Accumulate reprojected tiles on FWI grid
     ndvi_sum = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
     evi_sum = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
     count = np.zeros((FWI_HEIGHT, FWI_WIDTH), dtype=np.float64)
 
     for hdf_path in hdf_files:
-        try:
-            ndvi_raw = _read_hdf4_sds(hdf_path, "1 km 16 days NDVI")
-            evi_raw = _read_hdf4_sds(hdf_path, "1 km 16 days EVI")
-            qa_raw = _read_hdf4_sds(hdf_path, "1 km 16 days pixel reliability")
-        except Exception:
+        # Read NDVI via rasterio (gets CRS + transform automatically)
+        ndvi_raw, src_crs, src_tf = _open_hdf4_subdataset(
+            hdf_path, "16 days NDVI")
+        if ndvi_raw is None:
             continue
 
-        bad = (qa_raw > MAX_PIXEL_RELIABILITY) | (~np.isfinite(qa_raw))
-        ndvi_raw[bad] = np.nan
-        evi_raw[bad] = np.nan
+        evi_raw, _, _ = _open_hdf4_subdataset(hdf_path, "16 days EVI")
+        qa_raw, _, _ = _open_hdf4_subdataset(hdf_path, "pixel reliability")
 
+        # Mask fill values and bad QA
+        ndvi_raw[ndvi_raw <= -2000] = np.nan
+        if evi_raw is not None:
+            evi_raw[evi_raw <= -2000] = np.nan
+        if qa_raw is not None:
+            bad = (qa_raw > MAX_PIXEL_RELIABILITY) | (qa_raw < 0)
+            ndvi_raw[bad] = np.nan
+            if evi_raw is not None:
+                evi_raw[bad] = np.nan
+
+        # Scale
         ndvi_raw = np.where(np.isfinite(ndvi_raw), ndvi_raw * NDVI_SCALE, np.nan)
-        evi_raw = np.where(np.isfinite(evi_raw), evi_raw * EVI_SCALE, np.nan)
         ndvi_raw = np.clip(ndvi_raw, -1.0, 1.0)
-        evi_raw = np.clip(evi_raw, -1.0, 1.0)
+        if evi_raw is not None:
+            evi_raw = np.where(np.isfinite(evi_raw), evi_raw * EVI_SCALE, np.nan)
+            evi_raw = np.clip(evi_raw, -1.0, 1.0)
+        else:
+            evi_raw = ndvi_raw.copy()
 
-        # Get tile bounds in sinusoidal CRS
-        bounds = _get_modis_tile_bounds(hdf_path)
-        if bounds is None:
-            continue
-        left, bottom, right, top = bounds
-        h, w = ndvi_raw.shape
-        src_tf = from_bounds(left, bottom, right, top, w, h)
-
-        # Reproject this tile to FWI grid
+        # Reproject to FWI grid (CRS from rasterio, no manual sinusoidal def)
         ndvi_fwi_tile = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
         evi_fwi_tile = np.full((FWI_HEIGHT, FWI_WIDTH), np.nan, dtype=np.float32)
 
         reproject(ndvi_raw, ndvi_fwi_tile,
-                  src_transform=src_tf, src_crs=sin_crs,
+                  src_transform=src_tf, src_crs=src_crs,
                   dst_transform=FWI_TRANSFORM, dst_crs=dst_crs,
                   resampling=Resampling.bilinear,
                   src_nodata=np.nan, dst_nodata=np.nan)
         reproject(evi_raw, evi_fwi_tile,
-                  src_transform=src_tf, src_crs=sin_crs,
+                  src_transform=src_tf, src_crs=src_crs,
                   dst_transform=FWI_TRANSFORM, dst_crs=dst_crs,
                   resampling=Resampling.bilinear,
                   src_nodata=np.nan, dst_nodata=np.nan)
 
-        # Accumulate (running mean for overlapping areas)
         valid = np.isfinite(ndvi_fwi_tile)
         ndvi_sum[valid] += ndvi_fwi_tile[valid]
         evi_sum[valid] += evi_fwi_tile[valid]
         count[valid] += 1
 
-        # Free memory
         del ndvi_raw, evi_raw, ndvi_fwi_tile, evi_fwi_tile
 
-    # Compute mean
     ndvi_fwi = np.where(count > 0, ndvi_sum / count, np.nan).astype(np.float32)
     evi_fwi = np.where(count > 0, evi_sum / count, np.nan).astype(np.float32)
     return ndvi_fwi, evi_fwi
