@@ -13,22 +13,21 @@ print(f"Testing: {hdf_path}")
 
 # Method 1: rasterio subdataset
 with rasterio.open(hdf_path) as src:
+    subdatasets = src.subdatasets
     print(f"\nMain dataset:")
-    print(f"  subdatasets: {src.subdatasets[:5]}")
+    print(f"  subdatasets: {len(subdatasets)}")
+    for sd in subdatasets[:5]:
+        print(f"    {sd}")
 
 # Find NDVI subdataset
 ndvi_ds = None
-for sd in src.subdatasets:
-    if "NDVI" in sd and "1 km" in sd:
+for sd in subdatasets:
+    if "NDVI" in sd and "16 days NDVI" in sd:
         ndvi_ds = sd
         break
-    # Also try without space
-    if "NDVI" in sd:
-        ndvi_ds = sd
 
 if ndvi_ds is None:
     print("No NDVI subdataset found!")
-    print(f"All subdatasets: {src.subdatasets}")
     exit(1)
 
 print(f"\nOpening subdataset: {ndvi_ds}")
