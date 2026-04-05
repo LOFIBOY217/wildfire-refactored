@@ -14,6 +14,8 @@
 set -euo pipefail
 if [ -z "${SCRATCH:-}" ]; then export SCRATCH=/scratch/jiaqi217; fi
 module load StdEnv/2023 gcc/12.3 python/3.11.5 proj/9.4.1 2>/dev/null || true
+# Ensure pyproj can find PROJ data
+export PROJ_DATA=${EBROOTPROJ:-/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/proj/9.4.1}/share/proj
 source $SCRATCH/venv-wildfire/bin/activate
 cd $SCRATCH/wildfire-refactored
 
