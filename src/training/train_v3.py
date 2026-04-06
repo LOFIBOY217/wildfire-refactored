@@ -471,24 +471,28 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
 
     result = dict(pixel_metrics)
 
-    # Cluster-level metrics (optional, more expensive)
+    # Cluster-level metrics: per-window cluster eval → mean ± std
     if cluster_eval and hw is not None and grid is not None:
         P = patch_size
-        Hc, Wc = hw
-        result["cluster_lift_k"] = 0.0
-        result["cluster_precision_k"] = 0.0
-        result["n_clusters"] = 0
+        _dec_dim_cl = dec_dim or meteo_patched.shape[2]
+        _n_cl_wins = len(val_wins) if full_val else n_sample_wins
 
-        # Quick cluster eval on a single sampled window
-        rng = np.random.default_rng(0)
-        if len(val_wins) > 0:
-            win_idx = rng.choice(len(val_wins))
-            hs, he, ts, te = val_wins[win_idx]
+        rng_cl = np.random.default_rng(0)
+        if len(val_wins) > _n_cl_wins:
+            _cl_idx = rng_cl.choice(len(val_wins), size=_n_cl_wins, replace=False)
+            _cl_wins = [val_wins[i] for i in sorted(_cl_idx)]
+            _cl_dates = ([val_win_dates[i] for i in sorted(_cl_idx)]
+                         if val_win_dates is not None else [None] * _n_cl_wins)
+        else:
+            _cl_wins = val_wins
+            _cl_dates = (val_win_dates if val_win_dates is not None
+                         else [None] * len(val_wins))
 
-            # Get predictions for this window
-            model.eval()
-            prob_chunks = []
-            with torch.no_grad():
+        cl_lifts, cl_precs, cl_recalls, cl_nclusters = [], [], [], []
+        model.eval()
+        with torch.no_grad():
+            for wi, (hs, he, ts, te) in enumerate(_cl_wins):
+                prob_chunks = []
                 for cs in range(0, n_patches, chunk):
                     ce = min(cs + chunk, n_patches)
                     xb_enc = torch.from_numpy(
@@ -496,6 +500,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                             meteo_patched[cs:ce, hs:he, :].astype(np.float32)
                         )
                     ).to(device)
+                    if random_encoder:
+                        xb_enc = torch.randn_like(xb_enc)
                     if decoder_mode == "oracle":
                         xb_dec = torch.from_numpy(
                             np.ascontiguousarray(
@@ -505,7 +511,7 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                     else:
                         enc_np = meteo_patched[cs:ce, hs:he, :].astype(np.float32)
                         dec_list = [
-                            _make_dec_ablation(decoder_mode, enc_np[i], te - ts, dec_dim or meteo_patched.shape[2])
+                            _make_dec_ablation(decoder_mode, enc_np[i], te - ts, _dec_dim_cl)
                             for i in range(ce - cs)
                         ]
                         xb_dec = torch.from_numpy(
@@ -516,25 +522,41 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                         logits = model(xb_enc, xb_dec)
                     prob_chunks.append(torch.sigmoid(logits.float()).cpu().numpy())
 
-            probs = np.concatenate(prob_chunks, axis=0)  # (n_patches, dec_days, P*P)
-            labels = fire_patched[ts:te, :, :]  # (dec_days, n_patches, P*P)
+                probs = np.concatenate(prob_chunks, axis=0)   # (n_patches, dec_days, P²)
+                labels = fire_patched[ts:te, :, :]            # (dec_days, n_patches, P²)
 
-            # Aggregate across lead days
-            prob_agg = probs.max(axis=1)   # (n_patches, P*P)  max risk over window
-            label_agg = labels.max(axis=0)  # (n_patches, P*P)
+                prob_agg = probs.max(axis=1)                  # (n_patches, P²)
+                label_agg = labels.max(axis=0)                # (n_patches, P²)
 
-            # Depatchify to 2D
-            prob_2d = depatchify(
-                prob_agg[:, np.newaxis, :], grid, P, hw, num_channels=1
-            )[0]
-            label_2d = depatchify(
-                label_agg[:, np.newaxis, :].astype(np.float32), grid, P, hw, num_channels=1
-            )[0].astype(np.uint8)
+                # Depatchify to 2D for cluster detection
+                prob_2d = depatchify(
+                    prob_agg[:, np.newaxis, :], grid, P, hw, num_channels=1
+                )[0]
+                label_2d = depatchify(
+                    label_agg[:, np.newaxis, :].astype(np.float32), grid, P, hw, num_channels=1
+                )[0].astype(np.uint8)
 
-            cm = _compute_cluster_lift_k(prob_2d, label_2d, k, cluster_min_size)
-            result["cluster_lift_k"] = cm["lift_k"]
-            result["cluster_precision_k"] = cm["precision_k"]
-            result["n_clusters"] = cm["n_clusters"]
+                cm = _compute_cluster_lift_k(prob_2d, label_2d, k, cluster_min_size)
+                if cm["n_clusters"] > 0:
+                    cl_lifts.append(cm["lift_k"])
+                    cl_precs.append(cm["precision_k"])
+                    cl_recalls.append(cm["recall_k"])
+                    cl_nclusters.append(cm["n_clusters"])
+
+        if cl_lifts:
+            result["cluster_lift_k"] = float(np.mean(cl_lifts))
+            result["cluster_lift_k_std"] = float(np.std(cl_lifts))
+            result["cluster_precision_k"] = float(np.mean(cl_precs))
+            result["cluster_recall_k"] = float(np.mean(cl_recalls))
+            result["n_clusters"] = float(np.mean(cl_nclusters))
+            result["cluster_n_windows"] = len(cl_lifts)
+        else:
+            result["cluster_lift_k"] = 0.0
+            result["cluster_lift_k_std"] = 0.0
+            result["cluster_precision_k"] = 0.0
+            result["cluster_recall_k"] = 0.0
+            result["n_clusters"] = 0
+            result["cluster_n_windows"] = 0
 
     # Per-lead-day metrics (optional)
     if per_lead_eval:
@@ -1711,8 +1733,14 @@ def main():
             val_brier = _m.get("brier", 0.0)
             cluster_str = ""
             if args.cluster_eval and "cluster_lift_k" in _m:
-                cluster_str = (f"  cluster: Lift={_m['cluster_lift_k']:.2f}x  "
-                               f"n_clusters={_m.get('n_clusters', 0)}")
+                _cl_std = _m.get('cluster_lift_k_std', 0.0)
+                _cl_nw = _m.get('cluster_n_windows', 0)
+                cluster_str = (
+                    f"cluster: Lift={_m['cluster_lift_k']:.2f}±{_cl_std:.2f}x  "
+                    f"Recall={_m.get('cluster_recall_k', 0):.3f}  "
+                    f"avg_clusters={_m.get('n_clusters', 0):.0f}  "
+                    f"({_cl_nw} wins)"
+                )
             if args.per_lead_eval and "per_lead_lift" in _m:
                 _pl = _m["per_lead_lift"]
                 _pp = _m["per_lead_precision"]
