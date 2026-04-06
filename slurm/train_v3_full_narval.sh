@@ -77,7 +77,7 @@ python3 -u -m src.training.train_v3 \
     --run_name v3_full \
     --data_start 2018-05-01 \
     --pred_start 2022-05-01 \
-    --pred_end 2024-10-31 \
+    --pred_end 2025-10-31 \
     --channels "$CHANNELS" \
     --decoder random \
     --loss_fn focal \
