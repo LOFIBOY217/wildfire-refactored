@@ -375,9 +375,13 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
     """
     Compute Lift@K with fire-cluster de-duplication.
 
-    Instead of counting each fire pixel independently, merge adjacent fire
-    pixels into clusters.  Each cluster gets a single prediction score
-    (max probability over its pixels).  Background pixels remain individual.
+    Fire pixels are merged into clusters (8-connectivity).  Background pixels
+    are aggregated into equal-sized tiles so that fire clusters and background
+    tiles are comparable items in the ranking pool.
+
+    Each fire cluster: score = max(prob over cluster pixels), label = 1
+    Each background tile: score = max(prob over tile pixels), label = 0
+    Tile size = median fire cluster size (so items are comparable).
 
     Args:
         all_probs_2d: (H, W) float32 — predicted probabilities
@@ -386,18 +390,16 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
         min_cluster_size: ignore clusters smaller than this
 
     Returns:
-        dict with lift_k, precision_k, n_clusters, etc.
+        dict with lift_k, precision_k, recall_k, n_clusters, etc.
     """
-    # Label connected components (8-connectivity)
     structure = np.ones((3, 3), dtype=bool)
     cluster_map, n_clusters_raw = ndimage_label(all_labels_2d, structure=structure)
 
-    # Compute per-cluster prediction score = max prob over cluster pixels
     cluster_scores = []
     cluster_sizes = []
     for c_id in range(1, n_clusters_raw + 1):
         mask = cluster_map == c_id
-        size = mask.sum()
+        size = int(mask.sum())
         if size < min_cluster_size:
             continue
         score = float(all_probs_2d[mask].max())
@@ -406,21 +408,37 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
 
     n_clusters = len(cluster_scores)
     if n_clusters == 0:
-        return {"lift_k": 0.0, "precision_k": 0.0, "n_clusters": 0,
-                "n_clusters_raw": n_clusters_raw}
+        return {"lift_k": 0.0, "precision_k": 0.0, "recall_k": 0.0,
+                "n_clusters": 0, "n_clusters_raw": n_clusters_raw,
+                "baseline": 0.0, "n_items": 0}
 
-    # Background scores: all non-fire pixels
-    bg_mask = all_labels_2d == 0
-    bg_probs = all_probs_2d[bg_mask]
+    # Aggregate background into tiles of comparable size to fire clusters
+    median_size = max(int(np.median(cluster_sizes)), 1)
+    bg_probs = all_probs_2d[all_labels_2d == 0]
+    # Tile background: take max prob within each tile (same as fire clusters)
+    n_bg = len(bg_probs)
+    n_tiles = n_bg // median_size
+    if n_tiles > 0:
+        # Shuffle to avoid spatial bias in tile construction
+        rng = np.random.default_rng(42)
+        bg_shuffled = bg_probs.copy()
+        rng.shuffle(bg_shuffled)
+        # Trim to exact multiple of median_size, then reshape and take max
+        trimmed = bg_shuffled[:n_tiles * median_size].reshape(n_tiles, median_size)
+        bg_tile_scores = trimmed.max(axis=1)
+    else:
+        bg_tile_scores = bg_probs  # too few bg pixels, keep individual
 
-    # Combine: each cluster = 1 item (label=1), each bg pixel = 1 item (label=0)
-    all_scores = np.concatenate([np.array(cluster_scores), bg_probs])
-    all_labels = np.concatenate([np.ones(n_clusters), np.zeros(len(bg_probs))])
+    # Combine: fire clusters (label=1) + background tiles (label=0)
+    all_scores = np.concatenate([np.array(cluster_scores, dtype=np.float32),
+                                 bg_tile_scores.astype(np.float32)])
+    all_labels_arr = np.concatenate([np.ones(n_clusters, dtype=np.float32),
+                                     np.zeros(len(bg_tile_scores), dtype=np.float32)])
 
     n_total = len(all_scores)
     k_eff = min(k, n_total)
     top_idx = np.argpartition(all_scores, -k_eff)[-k_eff:]
-    tp = float(all_labels[top_idx].sum())
+    tp = float(all_labels_arr[top_idx].sum())
     baseline = n_clusters / n_total
 
     precision_k = tp / k_eff
@@ -434,6 +452,8 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
         "n_clusters": n_clusters,
         "n_clusters_raw": n_clusters_raw,
         "baseline": baseline,
+        "n_items": n_total,
+        "median_cluster_size": median_size,
     }
 
 
