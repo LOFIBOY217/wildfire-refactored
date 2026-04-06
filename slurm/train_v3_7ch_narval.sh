@@ -1,27 +1,25 @@
 #!/bin/bash
-#SBATCH --job-name=wf-v3-7ch
+#SBATCH --job-name=wf-v3-9ch
 #SBATCH --gpus-per-node=1
 #SBATCH --time=3-00:00:00
 #SBATCH --mem=128G
-#SBATCH --output=/scratch/jiaqi217/logs/train_v3_7ch_%j.log
-#SBATCH --error=/scratch/jiaqi217/logs/train_v3_7ch_%j.err
+#SBATCH --output=/scratch/jiaqi217/logs/train_v3_9ch_%j.log
+#SBATCH --error=/scratch/jiaqi217/logs/train_v3_9ch_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # ----------------------------------------------------------------
-# V3 7-channel training: FWI + 2t + fire_clim + population +
-#   deep_soil + slope + burn_age
+# V3 9-channel training (Plan C):
+#   FWI + 2t + fire_clim + 2d + tcw + sm20 + population + slope + burn_age
 #
-# Compared to V3 3ch (FWI,2t,fire_clim → Lift@5000=3.90x @ep3):
-# - Adds 4 static/slow channels: population, slope, burn_age, deep_soil
-# - deep_soil covers 2018-01-01 to 2024-12-30 (2025 data downloading)
-# - pred_end limited to 2024-12-30 until 2025 deep_soil arrives
+# Signal layers:
+# - Weather dryness (3): 2t (temp), 2d (dewpoint→VPD), tcw (atmo moisture)
+# - Soil dryness (1): sm20 (0-20cm soil moisture)
+# - Spatial prior (3): fire_clim, population, slope
+# - Fuel state (1): burn_age (years since last burn)
+# - Fire index (1): FWI (composite)
 #
-# Missing channels (added later when data ready):
-# - precip_def: tp processing in progress
-# - NDVI: not downloaded yet
-# - lightning: GOES coverage insufficient for Canada
-# - u10/v10/CAPE: ERA5 extended not processed yet
+# All channels have complete data 2018→2025 on Narval.
 # ----------------------------------------------------------------
 
 set -euo pipefail
@@ -42,22 +40,22 @@ fi
 
 cd "$SCRATCH/wildfire-refactored"
 
-CACHE_DIR="$SCRATCH/meteo_cache/v3_7ch"
+CACHE_DIR="$SCRATCH/meteo_cache/v3_9ch"
 mkdir -p "$CACHE_DIR"
 
 echo "============================================="
-echo "  V3 7-Channel Training"
-echo "  channels: FWI,2t,fire_clim,population,deep_soil,slope,burn_age"
+echo "  V3 9-Channel Training (Plan C)"
+echo "  channels: FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
 echo "  Node: $(hostname)  Time: $(date)"
 echo "============================================="
 
 python3 -u -m src.training.train_v3 \
     --config configs/paths_narval.yaml \
-    --run_name v3_7ch \
+    --run_name v3_9ch \
     --data_start 2018-05-01 \
     --pred_start 2022-05-01 \
-    --pred_end 2024-12-30 \
-    --channels "FWI,2t,fire_clim,population,deep_soil,slope,burn_age" \
+    --pred_end 2025-10-31 \
+    --channels "FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age" \
     --decoder random \
     --loss_fn focal \
     --focal_alpha 0.25 \

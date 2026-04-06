@@ -127,6 +127,10 @@ V3_CHANNEL_DEFS = {
     "FWI":        {"type": "daily",   "required": True},
     "2t":         {"type": "daily",   "required": True},
     "fire_clim":  {"type": "static",  "required": True},
+    "2d":         {"type": "daily",   "required": False},
+    "tcw":        {"type": "daily",   "required": False},
+    "sm20":       {"type": "daily",   "required": False},
+    "st20":       {"type": "daily",   "required": False},
     "lightning":  {"type": "daily",   "required": False},
     "NDVI":       {"type": "interp",  "required": False},
     "population": {"type": "static",  "required": False},
@@ -447,8 +451,9 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                            s2s_full_cache=None, use_patch_embed=False,
                            random_encoder=False,
                            cluster_eval=False, cluster_min_size=1,
-                           hw=None, grid=None, full_val=False):
-    """V3 validation: standard pixel-level metrics + optional cluster-level."""
+                           hw=None, grid=None, full_val=False,
+                           per_lead_eval=False):
+    """V3 validation: standard pixel-level metrics + optional cluster/per-lead."""
     # Pixel-level metrics via V2 function
     _n_wins = len(val_wins) if full_val else n_sample_wins
     pixel_metrics = _compute_val_lift_k(
@@ -530,6 +535,99 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
             result["cluster_lift_k"] = cm["lift_k"]
             result["cluster_precision_k"] = cm["precision_k"]
             result["n_clusters"] = cm["n_clusters"]
+
+    # Per-lead-day metrics (optional)
+    if per_lead_eval:
+        _n_wins = len(val_wins) if full_val else n_sample_wins
+        rng = np.random.default_rng(0)
+        if len(val_wins) > _n_wins:
+            _idx = rng.choice(len(val_wins), size=_n_wins, replace=False)
+            _sample_idxs = sorted(_idx)
+            _sample_wins = [val_wins[i] for i in _sample_idxs]
+            _sample_dates = ([val_win_dates[i] for i in _sample_idxs]
+                             if val_win_dates is not None else [None] * len(_sample_wins))
+        else:
+            _sample_wins = val_wins
+            _sample_dates = (val_win_dates if val_win_dates is not None
+                             else [None] * len(val_wins))
+
+        _dec_dim = dec_dim or meteo_patched.shape[2]
+        # Collect per-lead probs and labels: dict[lead_day] -> (probs_list, labels_list)
+        n_lead_days = None
+        per_lead_probs = {}   # lead_day -> list of 1-D arrays
+        per_lead_labels = {}
+
+        model.eval()
+        with torch.no_grad():
+            for win_i, (hs, he, ts, te) in enumerate(_sample_wins):
+                win_date = _sample_dates[win_i] if _sample_dates else None
+                prob_chunks = []
+                for cs in range(0, n_patches, chunk):
+                    ce = min(cs + chunk, n_patches)
+                    xb_enc = torch.from_numpy(
+                        np.ascontiguousarray(
+                            meteo_patched[cs:ce, hs:he, :].astype(np.float32)
+                        )
+                    ).to(device)
+                    if random_encoder:
+                        xb_enc = torch.randn_like(xb_enc)
+                    if decoder_mode == "oracle":
+                        xb_dec = torch.from_numpy(
+                            np.ascontiguousarray(
+                                meteo_patched[cs:ce, ts:te, :].astype(np.float32)
+                            )
+                        ).to(device)
+                    else:
+                        enc_np = meteo_patched[cs:ce, hs:he, :].astype(np.float32)
+                        dec_list = [
+                            _make_dec_ablation(decoder_mode, enc_np[i], te - ts, _dec_dim)
+                            for i in range(ce - cs)
+                        ]
+                        xb_dec = torch.from_numpy(
+                            np.stack(dec_list, axis=0)
+                        ).to(device)
+                    _chunk_patch_ids = (torch.arange(cs, ce, device=device)
+                                        if use_patch_embed else None)
+                    with torch.autocast(device_type=device.type, dtype=torch.float16,
+                                        enabled=(device.type == "cuda")):
+                        logits = model(xb_enc, xb_dec, _chunk_patch_ids)
+                    prob_chunks.append(torch.sigmoid(logits.float()).cpu().numpy())
+
+                probs = np.concatenate(prob_chunks, axis=0)   # (n_patches, dec_days, P²)
+                labels = fire_patched[ts:te, :, :]            # (dec_days, n_patches, P²)
+                dec_days = probs.shape[1]
+                if n_lead_days is None:
+                    n_lead_days = dec_days
+
+                for ld in range(dec_days):
+                    p = probs[:, ld, :].reshape(-1)             # (n_patches * P²,)
+                    l = labels[ld, :, :].reshape(-1).astype(np.float32)
+                    per_lead_probs.setdefault(ld, []).append(p)
+                    per_lead_labels.setdefault(ld, []).append(l)
+
+        # Compute Lift@K and Precision@K for each lead day
+        per_lead_lift = []
+        per_lead_precision = []
+        for ld in range(n_lead_days or 0):
+            all_p = np.concatenate(per_lead_probs[ld])
+            all_l = np.concatenate(per_lead_labels[ld])
+            n_total = len(all_p)
+            n_fire = int(all_l.sum())
+            if n_fire == 0 or n_total == 0:
+                per_lead_lift.append(0.0)
+                per_lead_precision.append(0.0)
+                continue
+            k_eff = min(k, n_total)
+            top_idx = np.argpartition(all_p, -k_eff)[-k_eff:]
+            tp = float(all_l[top_idx].sum())
+            baseline = n_fire / n_total
+            prec = tp / k_eff
+            lift = prec / baseline if baseline > 0 else 0.0
+            per_lead_lift.append(lift)
+            per_lead_precision.append(prec)
+
+        result["per_lead_lift"] = per_lead_lift
+        result["per_lead_precision"] = per_lead_precision
 
     return result
 
@@ -747,6 +845,12 @@ def main():
             fwi_dict[d] = p
     t2m_dict = _build_file_dict(obs_root, "2t")
 
+    # ERA5 observation channels (same directory structure as 2t)
+    dew_dict = _build_file_dict(obs_root, "2d") if "2d" in CHANNEL_NAMES else {}
+    tcw_dict = _build_file_dict(obs_root, "tcw") if "tcw" in CHANNEL_NAMES else {}
+    sm20_dict = _build_file_dict(obs_root, "sm20") if "sm20" in CHANNEL_NAMES else {}
+    st20_dict = _build_file_dict(obs_root, "st20") if "st20" in CHANNEL_NAMES else {}
+
     if not fwi_dict:
         raise RuntimeError(f"No FWI .tif files found in {fwi_dir}")
     if not t2m_dict:
@@ -790,6 +894,14 @@ def main():
                 pass
 
     print(f"  FWI: {len(fwi_dict):,}  2t: {len(t2m_dict):,}")
+    if dew_dict:
+        print(f"  2d (dewpoint): {len(dew_dict):,}")
+    if tcw_dict:
+        print(f"  tcw (total column water): {len(tcw_dict):,}")
+    if sm20_dict:
+        print(f"  sm20 (soil moisture 0-20cm): {len(sm20_dict):,}")
+    if st20_dict:
+        print(f"  st20 (soil temp 0-20cm): {len(st20_dict):,}")
     if lightning_dict:
         print(f"  Lightning: {len(lightning_dict):,}")
     if ndvi_index:
@@ -898,16 +1010,15 @@ def main():
                 print(f"  {ch_name:12s}  mean={cm:8.3f}  std={cs:8.3f}  (spatial)")
             elif ch_def["type"] == "daily":
                 # Stream from available files
-                if ch_name == "lightning" and lightning_dict:
-                    _paths = [lightning_dict[d] for d in aligned_dates[:train_end_idx] if d in lightning_dict]
-                elif ch_name == "deep_soil" and deep_soil_dict:
-                    _paths = [deep_soil_dict[d] for d in aligned_dates[:train_end_idx] if d in deep_soil_dict]
-                elif ch_name == "u10" and u10_dict:
-                    _paths = [u10_dict[d] for d in aligned_dates[:train_end_idx] if d in u10_dict]
-                elif ch_name == "v10" and v10_dict:
-                    _paths = [v10_dict[d] for d in aligned_dates[:train_end_idx] if d in v10_dict]
-                elif ch_name == "CAPE" and cape_dict:
-                    _paths = [cape_dict[d] for d in aligned_dates[:train_end_idx] if d in cape_dict]
+                _daily_dicts = {
+                    "2d": dew_dict, "tcw": tcw_dict, "sm20": sm20_dict,
+                    "st20": st20_dict, "lightning": lightning_dict,
+                    "deep_soil": deep_soil_dict, "u10": u10_dict,
+                    "v10": v10_dict, "CAPE": cape_dict,
+                }
+                ch_dict = _daily_dicts.get(ch_name, {})
+                if ch_dict:
+                    _paths = [ch_dict[d] for d in aligned_dates[:train_end_idx] if d in ch_dict]
                 else:
                     _paths = []
                 if _paths:
@@ -1116,38 +1227,22 @@ def main():
                 elif ch_def["type"] == "static":
                     frame[..., ch_idx] = static_arrays.get(ch_name, np.zeros((H, W)))
 
-                elif ch_name == "lightning":
-                    if cur_date in lightning_dict:
-                        arr = _read_tif_safe(lightning_dict[cur_date], None)
-                        if arr is not None:
-                            frame[..., ch_idx] = np.nan_to_num(arr, nan=0.0)
-
                 elif ch_name == "NDVI":
                     frame[..., ch_idx] = _interpolate_ndvi(cur_date, ndvi_index, ndvi_cache, H, W)
 
-                elif ch_name == "deep_soil":
-                    if cur_date in deep_soil_dict:
-                        arr = _read_tif_safe(deep_soil_dict[cur_date], None)
+                elif ch_name in ("2d", "tcw", "sm20", "st20", "lightning",
+                                 "deep_soil", "u10", "v10", "CAPE"):
+                    _daily_dicts = {
+                        "2d": dew_dict, "tcw": tcw_dict, "sm20": sm20_dict,
+                        "st20": st20_dict, "lightning": lightning_dict,
+                        "deep_soil": deep_soil_dict, "u10": u10_dict,
+                        "v10": v10_dict, "CAPE": cape_dict,
+                    }
+                    ch_dict = _daily_dicts.get(ch_name, {})
+                    if cur_date in ch_dict:
+                        arr = _read_tif_safe(ch_dict[cur_date], None)
                         if arr is not None:
                             frame[..., ch_idx] = np.nan_to_num(arr, nan=float(fills[ch_idx]))
-
-                elif ch_name == "u10":
-                    if cur_date in u10_dict:
-                        arr = _read_tif_safe(u10_dict[cur_date], None)
-                        if arr is not None:
-                            frame[..., ch_idx] = np.nan_to_num(arr, nan=0.0)
-
-                elif ch_name == "v10":
-                    if cur_date in v10_dict:
-                        arr = _read_tif_safe(v10_dict[cur_date], None)
-                        if arr is not None:
-                            frame[..., ch_idx] = np.nan_to_num(arr, nan=0.0)
-
-                elif ch_name == "CAPE":
-                    if cur_date in cape_dict:
-                        arr = _read_tif_safe(cape_dict[cur_date], None)
-                        if arr is not None:
-                            frame[..., ch_idx] = np.nan_to_num(arr, nan=0.0)
 
                 elif ch_name == "precip_def":
                     # Accumulate precipitation for rolling deficit
@@ -1608,6 +1703,7 @@ def main():
                 cluster_eval=args.cluster_eval,
                 cluster_min_size=args.cluster_min_size,
                 hw=hw, grid=grid, full_val=args.full_val,
+                per_lead_eval=args.per_lead_eval,
             )
             val_lift_k = _m["lift_k"]
             val_prec_k = _m["precision_k"]
@@ -1615,6 +1711,13 @@ def main():
             if args.cluster_eval and "cluster_lift_k" in _m:
                 cluster_str = (f"  cluster: Lift={_m['cluster_lift_k']:.2f}x  "
                                f"n_clusters={_m.get('n_clusters', 0)}")
+            if args.per_lead_eval and "per_lead_lift" in _m:
+                _pl = _m["per_lead_lift"]
+                _pp = _m["per_lead_precision"]
+                print(f"  per-lead Lift@{args.val_lift_k}: "
+                      + "  ".join(f"d{i}={v:.1f}x" for i, v in enumerate(_pl)))
+                print(f"  per-lead Prec@{args.val_lift_k}: "
+                      + "  ".join(f"d{i}={v:.3f}" for i, v in enumerate(_pp)))
 
         epoch_time = time.time() - t0_ep
         print(f"\n  Epoch {epoch:3d}/{args.epochs}  "
