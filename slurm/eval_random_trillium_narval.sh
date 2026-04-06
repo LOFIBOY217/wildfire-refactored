@@ -4,8 +4,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --mem=256G
-#SBATCH --time=06:00:00
+#SBATCH --mem=500G
+#SBATCH --time=12:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/eval_random_tri_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/eval_random_tri_%j.err
 #SBATCH --account=def-inghaw
