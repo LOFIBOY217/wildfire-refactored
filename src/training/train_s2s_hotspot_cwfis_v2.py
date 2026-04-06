@@ -694,10 +694,12 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
         csi_k       : tp / (tp + fp + fn)  Critical Success Index
         ets_k       : (tp - tp_random) / (tp + fp + fn - tp_random)  Equitable Threat Score
         pr_auc      : Area under precision-recall curve (sklearn)
+        roc_auc     : Area under ROC curve
+        brier       : Brier score = mean((prob - label)^2)
         n_fire      : number of fire pixels in sample
         baseline    : n_fire / n_total
     """
-    from sklearn.metrics import average_precision_score
+    from sklearn.metrics import average_precision_score, roc_auc_score
 
     model.eval()
     rng = np.random.default_rng(0)   # fixed seed → same sample every epoch
@@ -782,7 +784,7 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
             labels = fire_patched[ts:te, :, :]            # (dec_days,  n_patches, P²)
 
             # Aggregate across lead days
-            prob_agg  = probs.mean(axis=1)           # (n_patches, P²)
+            prob_agg  = probs.max(axis=1)            # (n_patches, P²)  max risk over window
             label_agg = labels.max(axis=0)           # (n_patches, P²)  uint8
 
             all_probs.append(prob_agg.reshape(-1))
@@ -797,6 +799,7 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
     if n_fire == 0:
         return {"lift_k": 0.0, "precision_k": 0.0, "recall_k": 0.0,
                 "csi_k": 0.0, "ets_k": 0.0, "pr_auc": 0.0,
+                "roc_auc": 0.0, "brier": 0.0,
                 "n_fire": 0, "baseline": 0.0}
 
     k_eff       = min(k, n_total)
@@ -814,6 +817,11 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
     denom_ets   = tp + fp + fn - tp_random
     ets_k       = (tp - tp_random) / denom_ets if denom_ets > 0 else 0.0
     pr_auc      = float(average_precision_score(all_labels, all_probs))
+    try:
+        roc_auc = float(roc_auc_score(all_labels, all_probs))
+    except ValueError:
+        roc_auc = 0.0
+    brier       = float(np.mean((all_probs - all_labels) ** 2))
 
     return {
         "lift_k":      lift_k,
@@ -822,6 +830,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
         "csi_k":       csi_k,
         "ets_k":       ets_k,
         "pr_auc":      pr_auc,
+        "roc_auc":     roc_auc,
+        "brier":       brier,
         "n_fire":      n_fire,
         "baseline":    baseline,
     }

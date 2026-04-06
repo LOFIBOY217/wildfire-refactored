@@ -262,7 +262,7 @@ def load_data(config_path, pred_start_str, pred_end_str, in_days,
 
 def _compute_metrics(all_scores, all_labels, k_values):
     """Lift@K + related metrics given flat score and label arrays."""
-    from sklearn.metrics import average_precision_score
+    from sklearn.metrics import average_precision_score, roc_auc_score
 
     n_total  = len(all_scores)
     n_fire   = int(all_labels.sum())
@@ -271,6 +271,7 @@ def _compute_metrics(all_scores, all_labels, k_values):
     if n_fire == 0:
         return {k: dict(lift_k=0.0, precision_k=0.0, recall_k=0.0,
                         csi_k=0.0, ets_k=0.0, pr_auc=0.0,
+                        roc_auc=0.0, brier=0.0,
                         n_fire=0, n_total=n_total, baseline=0.0,
                         tp=0, k_eff=0)
                 for k in k_values}
@@ -279,6 +280,11 @@ def _compute_metrics(all_scores, all_labels, k_values):
         pr_auc = float(average_precision_score(all_labels, all_scores))
     except Exception:
         pr_auc = 0.0
+    try:
+        roc_auc = float(roc_auc_score(all_labels, all_scores))
+    except ValueError:
+        roc_auc = 0.0
+    brier = float(np.mean((all_scores - all_labels) ** 2))
 
     results = {}
     for k in k_values:
@@ -295,7 +301,8 @@ def _compute_metrics(all_scores, all_labels, k_values):
         ets_k       = (tp - tp_random) / denom_ets if denom_ets > 0 else 0.0
         results[k]  = dict(lift_k=lift_k, precision_k=precision_k,
                            recall_k=recall_k, csi_k=csi_k, ets_k=ets_k,
-                           pr_auc=pr_auc, n_fire=n_fire, n_total=n_total,
+                           pr_auc=pr_auc, roc_auc=roc_auc, brier=brier,
+                           n_fire=n_fire, n_total=n_total,
                            baseline=baseline, tp=int(tp), k_eff=k_eff)
     return results
 
@@ -343,10 +350,19 @@ def eval_per_leadday(score_fn_daily, fire_patched, val_wins,
             all_labels.append(label.reshape(-1).astype(np.float32))
 
         if not all_scores:
+            print(f"  [{name}] lead {lead_day}: NO windows contributed — skipping")
             continue
 
-        by_lead[lead_day] = _compute_metrics(
-            np.concatenate(all_scores), np.concatenate(all_labels), k_values)
+        concat_scores = np.concatenate(all_scores)
+        concat_labels = np.concatenate(all_labels)
+        n_fire_debug = int(concat_labels.sum())
+        n_total_debug = len(concat_labels)
+        print(f"  [{name}] lead {lead_day}: n_wins={len(all_scores)}  "
+              f"n_total={n_total_debug:,}  n_fire={n_fire_debug:,}  "
+              f"baseline={n_fire_debug/n_total_debug:.6f}  "
+              f"score_range=[{concat_scores.min():.4f}, {concat_scores.max():.4f}]")
+
+        by_lead[lead_day] = _compute_metrics(concat_scores, concat_labels, k_values)
 
         if d_offset % 8 == 0 or d_offset == n_leads - 1:
             lk = by_lead[lead_day].get(
@@ -376,13 +392,74 @@ def eval_per_leadday(score_fn_daily, fire_patched, val_wins,
     return by_lead, summary
 
 
+def eval_per_window(score_fn, fire_patched, val_wins,
+                    k_values, n_sample_wins, name):
+    """
+    Per-window evaluation (correct full evaluation).
+
+    Each window is evaluated independently:
+      score_fn(win) -> (n_patches, P²) aggregated over lead days
+      label = max fire over all lead days in the window
+      Lift@K computed separately per window, then mean ± std reported.
+
+    K=5000 is always relative to a single window's pool (~6.14M pixels),
+    so results are comparable regardless of how many windows are used.
+    """
+    rng = np.random.default_rng(0)
+    if len(val_wins) > n_sample_wins:
+        idx = rng.choice(len(val_wins), size=n_sample_wins, replace=False)
+        sample_wins = [val_wins[i] for i in sorted(idx)]
+    else:
+        sample_wins = val_wins
+
+    per_win = []
+    t0 = time.time()
+    for wi, win in enumerate(sample_wins):
+        hs, he, ts, te = win
+        scores    = score_fn(win)
+        label_agg = fire_patched[ts:te, :, :].max(axis=0)
+        m = _compute_metrics(
+            scores.reshape(-1).astype(np.float32),
+            label_agg.reshape(-1).astype(np.float32),
+            k_values)
+        per_win.append(m)
+        if (wi + 1) % 50 == 0 or wi == len(sample_wins) - 1:
+            lk = m.get(5000 if 5000 in k_values else k_values[0], {}).get("lift_k", 0.0)
+            print(f"  [{name}] window {wi+1}/{len(sample_wins)}"
+                  f"  Lift@{5000 if 5000 in k_values else k_values[0]}={lk:.2f}x"
+                  f"  ({time.time()-t0:.0f}s)")
+
+    # Aggregate: mean ± std across windows that have fires
+    summary = {}
+    for k in k_values:
+        valid = [m[k] for m in per_win if m[k]["n_fire"] > 0]
+        if valid:
+            lifts = [r["lift_k"] for r in valid]
+            precs = [r["precision_k"] for r in valid]
+            summary[k] = dict(
+                lift_k=float(np.mean(lifts)),
+                lift_k_std=float(np.std(lifts)),
+                precision_k=float(np.mean(precs)),
+                pr_auc=float(np.mean([r["pr_auc"] for r in valid])),
+                n_wins_with_fire=len(valid),
+                n_fire=int(np.mean([r["n_fire"] for r in valid])),
+                baseline=float(np.mean([r["baseline"] for r in valid])),
+            )
+        else:
+            summary[k] = dict(lift_k=0.0, lift_k_std=0.0, precision_k=0.0,
+                              pr_auc=0.0, n_wins_with_fire=0, n_fire=0, baseline=0.0)
+    return per_win, summary
+
+
 def eval_window(score_fn, fire_patched, val_wins,
                 k_values, n_sample_wins, name):
     """
-    Option B: window-level evaluation.
+    Option B: window-level evaluation (global pool — legacy).
 
     score_fn(win) -> (n_patches, P²) already aggregated over lead days.
     label = max fire over all lead days in the window.
+    NOTE: pools all windows globally — K must scale with n_sample_wins.
+    Prefer eval_per_window for unbiased full evaluation.
     """
     rng = np.random.default_rng(0)
     if len(val_wins) > n_sample_wins:
@@ -422,9 +499,10 @@ def main():
     parser.add_argument("--baseline",  nargs="+",
                         choices=["fwi_oracle", "climatology"],
                         default=["fwi_oracle", "climatology"])
-    parser.add_argument("--eval_mode", choices=["per_leadday", "window"],
-                        default="per_leadday",
-                        help="per_leadday=Option C (default); window=Option B")
+    parser.add_argument("--eval_mode", choices=["per_leadday", "window", "per_window"],
+                        default="per_window",
+                        help="per_window=each window independently, mean±std (default/correct); "
+                             "per_leadday=per-lead-day pooled; window=global pool (legacy)")
     parser.add_argument("--pred_start",       default="2022-05-01")
     parser.add_argument("--pred_end",         default="2025-10-31")
     parser.add_argument("--in_days",          type=int, default=7)
@@ -435,6 +513,11 @@ def main():
     parser.add_argument("--k_values",         nargs="+", type=int,
                         default=[1000, 2500, 5000, 10000, 25000])
     parser.add_argument("--n_sample_wins",    type=int, default=20)
+    parser.add_argument("--k_ref_wins",       type=int, default=None,
+                        help="Reference window count for K scaling. "
+                             "If set, k_values are scaled by (n_actual_wins/k_ref_wins) "
+                             "so Lift@K is comparable across different pool sizes. "
+                             "E.g. --k_ref_wins 20 when using full eval with 646 windows.")
     parser.add_argument("--fire_season_only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output_csv",       default=None)
     args = parser.parse_args()
@@ -457,6 +540,20 @@ def main():
         args.config, args.pred_start, args.pred_end,
         args.in_days, args.lead_start, args.lead_end,
         args.patch_size, args.dilate_radius, args.fire_season_only)
+
+    # ── K scaling (proportional to pool size) ─────────────────────────
+    # When using more windows than the reference (e.g. 646 vs 20), the pixel
+    # pool grows proportionally. Scale K so Lift@K represents the same
+    # "top X%" density regardless of how many windows are sampled.
+    n_eval_wins = min(len(val_wins), args.n_sample_wins)
+    if args.k_ref_wins is not None and args.k_ref_wins > 0:
+        scale = n_eval_wins / args.k_ref_wins
+        k_values_scaled = [max(1, int(k * scale)) for k in args.k_values]
+        print(f"  K scaling: {args.k_values} × {scale:.1f} ({n_eval_wins}/{args.k_ref_wins} wins)"
+              f" → {k_values_scaled}")
+        args.k_values = k_values_scaled
+    # Also print label for display_k
+    print(f"  Effective K values: {args.k_values}")
 
     all_results = {}
 
@@ -489,7 +586,34 @@ def main():
                 args.n_sample_wins, name, args.lead_start, args.lead_end)
             all_results[name] = {"by_lead": by_lead, "summary": summary}
 
-    else:   # window mode
+    elif args.eval_mode == "per_window":   # NEW: correct full evaluation
+
+        def _fwi_win(win):
+            """Max FWI over the entire lead window."""
+            hs, he, ts, te = win
+            return np.nan_to_num(
+                fwi_patched[:, ts:te, :].astype(np.float32), nan=0.0
+            ).max(axis=1)   # (n_patches, P²)
+
+        def _clim_win(win):
+            return clim_patched.astype(np.float32)
+
+        score_fns = {
+            "fwi_oracle":  _fwi_win,
+            "climatology": _clim_win,
+        }
+
+        for name in args.baseline:
+            if name == "climatology" and clim_patched is None:
+                print(f"\nSKIP {name}: fire_climatology.tif not found")
+                continue
+            print(f"\n{'='*40}\nBaseline: {name}  [per-window]\n{'='*40}")
+            per_win, summary = eval_per_window(
+                score_fns[name], fire_patched, val_wins, args.k_values,
+                args.n_sample_wins, name)
+            all_results[name] = {"per_win": per_win, "summary": summary}
+
+    else:   # window mode (global pool, legacy)
 
         def _fwi_win(win):
             """Max FWI over the entire lead window (Option B score)."""
@@ -519,7 +643,24 @@ def main():
     display_k = 5000 if 5000 in args.k_values else args.k_values[0]
 
     print(f"\n{'='*70}")
-    if args.eval_mode == "per_leadday":
+    if args.eval_mode == "per_window":
+        print("SUMMARY — Mean ± Std Lift@K across all windows (per-window eval)")
+        print(f"{'='*70}")
+        hdr = f"{'Baseline':<20}"
+        for k in args.k_values:
+            hdr += f"  {'Lift@'+str(k):>13}"
+        print(hdr)
+        print("-" * len(hdr))
+        for name, res in all_results.items():
+            row = f"{name:<20}"
+            for k in args.k_values:
+                v   = res["summary"][k]["lift_k"]
+                std = res["summary"][k]["lift_k_std"]
+                row += f"  {v:8.2f}±{std:4.2f}x"
+            print(row)
+        print(f"\n  n_windows evaluated: {min(len(val_wins), args.n_sample_wins)}")
+
+    elif args.eval_mode == "per_leadday":
         print("SUMMARY — Mean Lift@K across all lead days")
         print(f"{'='*70}")
         hdr = f"{'Baseline':<20}"

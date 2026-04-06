@@ -520,7 +520,7 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
             labels = fire_patched[ts:te, :, :]  # (dec_days, n_patches, P*P)
 
             # Aggregate across lead days
-            prob_agg = probs.mean(axis=1)  # (n_patches, P*P)
+            prob_agg = probs.max(axis=1)   # (n_patches, P*P)  max risk over window
             label_agg = labels.max(axis=0)  # (n_patches, P*P)
 
             # Depatchify to 2D
@@ -1707,6 +1707,8 @@ def main():
             )
             val_lift_k = _m["lift_k"]
             val_prec_k = _m["precision_k"]
+            val_roc_auc = _m.get("roc_auc", 0.0)
+            val_brier = _m.get("brier", 0.0)
             cluster_str = ""
             if args.cluster_eval and "cluster_lift_k" in _m:
                 cluster_str = (f"  cluster: Lift={_m['cluster_lift_k']:.2f}x  "
@@ -1724,6 +1726,8 @@ def main():
               f"loss={train_loss:.6f}  "
               f"Lift@{args.val_lift_k}={val_lift_k:.2f}x  "
               f"prec={val_prec_k:.4f}  "
+              f"ROC-AUC={val_roc_auc:.4f}  "
+              f"Brier={val_brier:.6f}  "
               f"({epoch_time/60:.1f}m)")
         if cluster_str:
             print(f"  {cluster_str}")
