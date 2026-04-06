@@ -88,16 +88,16 @@ def process_var(grib_dir, var_prefix, out_var):
                 fail += 1
                 continue
 
-            # Daily average if multiple timesteps
-            if 'time' in data.dims:
-                arr = data.mean(dim='time').values.astype(np.float32)
-            elif 'step' in data.dims:
-                arr = data.mean(dim='step').values.astype(np.float32)
+            # Daily average: collapse ALL non-spatial dims (time, step, etc.)
+            non_spatial = [d for d in data.dims if d not in ('latitude', 'longitude')]
+            if non_spatial:
+                arr = data.mean(dim=non_spatial).values.astype(np.float32)
             else:
                 arr = data.values.astype(np.float32)
 
-            if arr.ndim == 3:
-                arr = np.squeeze(arr)
+            # Safety: squeeze any remaining singular dims
+            while arr.ndim > 2:
+                arr = arr.mean(axis=0)
 
             lats = data.latitude.values if 'latitude' in data.coords else data.coords['latitude'].values
             lons = data.longitude.values if 'longitude' in data.coords else data.coords['longitude'].values
