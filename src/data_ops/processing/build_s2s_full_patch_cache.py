@@ -323,11 +323,31 @@ def _load_weather_for_lead(date_dir, lead, Hc, Wc):
 # ---------------------------------------------------------------------------
 def build_cache(s2s_dir, out_file, reference_tif, fire_clim_path,
                 ffmc_dir, dmc_dir, dc_dir, norm_stats_path,
-                patch_size=16, workers=4, delete_after=False):
+                patch_size=16, workers=4, delete_after=False,
+                start_year=None, end_year=None, fire_season_only=False):
     """Build the (n_dates, n_patches, 32, 2048) float16 full-patch cache."""
 
     # Discover date directories
     date_dirs = _parse_date_dirs(s2s_dir)
+
+    # Apply date filters
+    if start_year or end_year or fire_season_only:
+        n_before = len(date_dirs)
+        filtered = []
+        for d in date_dirs:
+            year = int(d[:4])
+            month = int(d[5:7])
+            if start_year and year < start_year:
+                continue
+            if end_year and year > end_year:
+                continue
+            if fire_season_only and month not in (5, 6, 7, 8, 9, 10):
+                continue
+            filtered.append(d)
+        date_dirs = filtered
+        print(f"Date filter: {n_before} → {len(date_dirs)} dates "
+              f"(years={start_year}-{end_year}, fire_season={fire_season_only})",
+              flush=True)
     if not date_dirs:
         raise RuntimeError(f"No YYYY-MM-DD subdirectories found in {s2s_dir}")
     n_dates = len(date_dirs)
@@ -506,6 +526,12 @@ def main():
                     help="Number of parallel worker processes (default: 4).")
     ap.add_argument("--delete-after", action="store_true",
                     help="Delete s2s_processed/{date}/ dirs after caching.")
+    ap.add_argument("--start-year", type=int, default=None,
+                    help="Only process dates >= this year (e.g. 2018).")
+    ap.add_argument("--end-year", type=int, default=None,
+                    help="Only process dates <= this year (e.g. 2025).")
+    ap.add_argument("--fire-season-only", action="store_true",
+                    help="Only process May-October dates (fire season).")
     args = ap.parse_args()
 
     # In single-process mode, initialize globals directly
@@ -529,6 +555,9 @@ def main():
         patch_size=args.patch_size,
         workers=args.workers,
         delete_after=args.delete_after,
+        start_year=args.start_year,
+        end_year=args.end_year,
+        fire_season_only=args.fire_season_only,
     )
 
 

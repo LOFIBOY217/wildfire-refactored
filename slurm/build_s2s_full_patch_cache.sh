@@ -36,14 +36,17 @@ echo ""
 
 python $PROJECT/src/data_ops/processing/build_s2s_full_patch_cache.py \
     --s2s-dir      $PROJECT/data/s2s_processed \
-    --out-file     $PROJECT/data/s2s_full_patch_cache.dat \
+    --out-file     $SCRATCH/meteo_cache/s2s_full_patch_cache.dat \
     --reference    $PROJECT/data/fwi_data/fwi_20250615.tif \
     --fire-clim    $PROJECT/data/fire_climatology.tif \
     --ffmc-dir     $PROJECT/data/ffmc_data \
     --dmc-dir      $PROJECT/data/dmc_data \
     --dc-dir       $PROJECT/data/dc_data \
     --norm-stats   $PROJECT/checkpoints/s2s_hotspot_cwfis_v2/norm_stats.npy \
-    --workers      16
+    --workers      16 \
+    --start-year   2018 \
+    --end-year     2025 \
+    --fire-season-only
 
 echo ""
 echo "=== DONE: $(date) ==="
