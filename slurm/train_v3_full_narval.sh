@@ -10,69 +10,76 @@
 #SBATCH --account=def-inghaw
 
 # ----------------------------------------------------------------
-# V3 Full Training (all available channels):
+# V3 Full Training (16 channels):
 #
-# Weather/atmosphere (5):
-#   FWI      — composite fire weather index
-#   2t       — 2m temperature
-#   2d       — 2m dewpoint (→ VPD proxy)
-#   tcw      — total column water vapour
-#   CAPE     — convective available potential energy (thunderstorm/lightning proxy)
+# ENCODER (16ch → enc_dim = 256×16 = 4096):
+#   Weather/atmosphere (5):   FWI, 2t, 2d, tcw, CAPE
+#   Surface/soil (3):         sm20, deep_soil (swvl2), precip_def (30d)
+#   Wind (2):                 u10, v10
+#   Vegetation (1):           NDVI
+#   Spatial prior (3):        fire_clim (annual), population, slope
+#   Fuel history (2):         burn_age, burn_count
 #
-# Surface/soil (3):
-#   sm20     — 0-20cm soil moisture
-#   deep_soil — deep soil moisture (swvl2)
-#   precip_def — 30-day rolling precipitation deficit
+# DECODER (s2s_legacy → dec_dim = 9 + decoder_ctx):
+#   S2S ECMWF forecast (6ch): 2t, 2d, tcw, sm20, st20, VPD
+#   + 3 metadata dims + decoder_ctx (5 static patches + 4 lead/season)
 #
-# Wind (2):
-#   u10      — 10m eastward wind
-#   v10      — 10m northward wind
-#
-# Vegetation (1):
-#   NDVI     — normalized difference vegetation index (16-day interp)
-#
-# Spatial prior (3):
-#   fire_clim   — historical fire frequency (static)
-#   population  — population density (static)
-#   slope       — terrain slope from CDEM (static)
-#
-# Fuel history (2):
-#   burn_age   — years since last burn
-#   burn_count — cumulative burn frequency
-#
-# Total: 16 channels
+# SSD: venv + S2S cache on NVMe, meteo memmap on NVMe
+# NOTE: 16ch memmap ~549GB — may exceed localscratch on some nodes.
+#       If SSD is too small, falls back to Lustre cache_dir.
 # ----------------------------------------------------------------
 
 set -euo pipefail
 
-if [ -z "${SCRATCH:-}" ]; then
-    export SCRATCH=/scratch/jiaqi217
-fi
+export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 
-module load gcc/12.3 python/3.11.5 proj/9.4.1 2>/dev/null || true
-
-VENV="$SCRATCH/venv-wildfire"
-if [ -d "$VENV" ]; then
-    source "$VENV/bin/activate"
-else
-    echo "[ERROR] venv not found: $VENV"
-    exit 1
-fi
+[[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
+module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1 eccodes/2.31.0
 
 cd "$SCRATCH/wildfire-refactored"
+export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
+export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Compiler/gcccore/proj/9.4.1/share/proj
+export PYTHONUNBUFFERED=1
 
-CACHE_DIR="$SCRATCH/meteo_cache/v3_full"
-mkdir -p "$CACHE_DIR"
+# ---- SSD setup ----
+source slurm/lib_copy_cache.sh
+
+copy_venv $SCRATCH/venv-wildfire
+
+ts "=== PREFLIGHT ==="
+ts "Node: $(hostname)"
+$PYTHON -c "import torch; print('torch:', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
+ts "=== PREFLIGHT OK ==="
+
+# Copy S2S decoder cache to local SSD
+LOCAL_CACHE=$SLURM_TMPDIR/cache
+mkdir -p "$LOCAL_CACHE"
+copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
+
+# Check SSD capacity — 16ch memmap is ~549GB + S2S 15G + venv 0.8G ≈ 565GB
+# If not enough space, fall back to Lustre
+SSD_AVAIL_KB=$(df --output=avail $SLURM_TMPDIR | tail -1)
+SSD_AVAIL_GB=$((SSD_AVAIL_KB / 1048576))
+ts "=== LOCAL DISK: ${SSD_AVAIL_GB}GB available ==="
+
+if [ "$SSD_AVAIL_GB" -ge 600 ]; then
+    CACHE_DIR="$LOCAL_CACHE"
+    ts "Using local SSD for meteo cache (${SSD_AVAIL_GB}GB available)"
+else
+    CACHE_DIR="$SCRATCH/meteo_cache/v3_full"
+    mkdir -p "$CACHE_DIR"
+    ts "WARNING: SSD too small (${SSD_AVAIL_GB}GB < 600GB). Using Lustre: $CACHE_DIR"
+fi
 
 CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,deep_soil,precip_def,u10,v10,CAPE,NDVI,population,slope,burn_age,burn_count"
 
-echo "============================================="
-echo "  V3 Full Training (16 channels)"
-echo "  channels: $CHANNELS"
-echo "  Node: $(hostname)  Time: $(date)"
-echo "============================================="
+ts "============================================="
+ts "  V3 Full Training (16 channels)"
+ts "  channels: $CHANNELS"
+ts "  cache_dir: $CACHE_DIR"
+ts "============================================="
 
-python3 -u -m src.training.train_v3 \
+$PYTHON -u -m src.training.train_v3 \
     --config configs/paths_narval.yaml \
     --run_name v3_full \
     --data_start 2018-05-01 \
@@ -80,7 +87,7 @@ python3 -u -m src.training.train_v3 \
     --pred_end 2025-10-31 \
     --channels "$CHANNELS" \
     --decoder s2s_legacy \
-    --s2s_cache "$SCRATCH/meteo_cache/s2s_decoder_cache.dat" \
+    --s2s_cache "$LOCAL_CACHE/s2s_decoder_cache.dat" \
     --s2s_max_issue_lag 3 \
     --loss_fn focal \
     --focal_alpha 0.25 \
@@ -112,5 +119,15 @@ python3 -u -m src.training.train_v3 \
     --skip_forecast
 
 TRAIN_EXIT=$?
-echo "Exit: $TRAIN_EXIT"
+
+# Copy stats back to scratch for future resume/eval
+if [ -f "$LOCAL_CACHE/meteo_v3_p16_C16_stats.npy" ]; then
+    ts "=== COPYING STATS BACK ==="
+    SCRATCH_CACHE="$SCRATCH/meteo_cache/v3_full"
+    mkdir -p "$SCRATCH_CACHE"
+    cp "$LOCAL_CACHE"/meteo_v3_p16_C16_stats.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+    cp "$LOCAL_CACHE"/fire_*.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+fi
+
+ts "Exit: $TRAIN_EXIT"
 exit $TRAIN_EXIT
