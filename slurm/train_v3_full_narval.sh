@@ -79,7 +79,9 @@ python3 -u -m src.training.train_v3 \
     --pred_start 2022-05-01 \
     --pred_end 2025-10-31 \
     --channels "$CHANNELS" \
-    --decoder random \
+    --decoder s2s_legacy \
+    --s2s_cache "$SCRATCH/meteo_cache/s2s_decoder_cache.dat" \
+    --s2s_max_issue_lag 3 \
     --loss_fn focal \
     --focal_alpha 0.25 \
     --focal_gamma 2.0 \
