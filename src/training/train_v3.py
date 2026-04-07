@@ -176,7 +176,7 @@ def _load_static_channel(tif_path, expected_h, expected_w, name="static"):
 # Decoder context augmentation
 # ------------------------------------------------------------------ #
 
-def _build_decoder_ctx_static(meteo_patched, channel_names, P2):
+def _build_decoder_ctx_static(meteo_patched, channel_names, P2, patch_mean=True):
     """
     Extract static channels from meteo_patched and return per-patch context.
 
@@ -184,9 +184,11 @@ def _build_decoder_ctx_static(meteo_patched, channel_names, P2):
         meteo_patched: (n_patches, T, enc_dim) — only need T=0 slice
         channel_names: list of channel name strings
         P2: pixels per patch (P*P = 256)
+        patch_mean: If True (default), reduce each channel to patch mean (1 scalar).
+                    If False, keep full P2-pixel patch per channel (legacy behaviour).
 
     Returns:
-        static_ctx: (n_patches, n_static * P2) float16
+        static_ctx: (n_patches, n_static) if patch_mean else (n_patches, n_static * P2)
         static_channel_indices: list of int (which channels are static)
     """
     indices = [i for i, name in enumerate(channel_names)
@@ -201,9 +203,12 @@ def _build_decoder_ctx_static(meteo_patched, channel_names, P2):
     for ch_idx in indices:
         # (n_patches, P2) — one static map per patch
         ch_data = meteo_patched[:, 0, ch_idx * P2: (ch_idx + 1) * P2]
-        parts.append(ch_data)
+        if patch_mean:
+            # Reduce to per-patch scalar: (n_patches, 1)
+            parts.append(ch_data.mean(axis=1, keepdims=True))
+        else:
+            parts.append(ch_data)
 
-    # (n_patches, n_static * P2)
     static_ctx = np.concatenate(parts, axis=1)
     return static_ctx, indices
 
@@ -1228,8 +1233,8 @@ def main():
     ctx_extra_dim = 0
     if args.decoder_ctx:
         n_ctx_channels = sum(1 for name in CHANNEL_NAMES if name in DECODER_CTX_CHANNELS)
-        ctx_extra_dim = n_ctx_channels * out_dim + 4  # static patches + lead/season sin/cos
-        print(f"  [decoder_ctx] {n_ctx_channels} static channels + 4 lead/season dims "
+        ctx_extra_dim = n_ctx_channels + 4  # patch-mean scalars + lead/season sin/cos
+        print(f"  [decoder_ctx] {n_ctx_channels} spatial means + 4 lead/season dims "
               f"= +{ctx_extra_dim} to dec_dim")
     dec_dim = dec_dim_base + ctx_extra_dim
 
