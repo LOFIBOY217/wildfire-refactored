@@ -86,7 +86,7 @@ python3 -u -m src.training.train_v3 \
     --hard_neg_fraction 0.5 \
     --neg_ratio 20 \
     --neg_buffer 2 \
-    --batch_size 4096 \
+    --batch_size 1024 \
     --epochs 8 \
     --lr 1e-4 \
     --weight_decay 0.01 \
@@ -101,6 +101,7 @@ python3 -u -m src.training.train_v3 \
     --val_lift_sample_wins 20 \
     --fire_season_only \
     --cluster_eval \
+    --decoder_ctx \
     --load_train_to_ram \
     --cache_dir "$CACHE_DIR" \
     --chunk_patches 2000 \
