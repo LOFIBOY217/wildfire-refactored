@@ -109,14 +109,28 @@ $PYTHON -u -m src.training.train_v3 \
 TRAIN_EXIT=$?
 
 # Copy meteo cache back to scratch for future resume/eval
-if [ $TRAIN_EXIT -eq 0 ] || [ -f "$LOCAL_CACHE/meteo_v3_p16_C13_stats.npy" ]; then
-    ts "=== COPYING STATS BACK TO SCRATCH ==="
-    SCRATCH_CACHE="$SCRATCH/meteo_cache/v3_13ch"
-    mkdir -p "$SCRATCH_CACHE"
-    cp "$LOCAL_CACHE"/meteo_v3_p16_C13_stats.npy "$SCRATCH_CACHE/" 2>/dev/null || true
-    cp "$LOCAL_CACHE"/fire_*.npy "$SCRATCH_CACHE/" 2>/dev/null || true
-    ts "Stats copied. Memmap stays on SSD (will be rebuilt on resume)."
+SCRATCH_CACHE="$SCRATCH/meteo_cache/v3_13ch"
+mkdir -p "$SCRATCH_CACHE"
+
+ts "=== COPYING CACHE BACK TO SCRATCH ==="
+# Stats (tiny files)
+cp "$LOCAL_CACHE"/meteo_v3_p16_C13_stats.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+cp "$LOCAL_CACHE"/*_stats.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+cp "$LOCAL_CACHE"/fire_*.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+cp "$LOCAL_CACHE"/norm_stats*.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+
+# Meteo memmap (large, ~600GB — essential for eval/resume without rebuilding)
+PF_DAT=$(ls "$LOCAL_CACHE"/meteo_v3_*_pf.dat 2>/dev/null | head -1)
+if [ -n "$PF_DAT" ]; then
+    PF_SIZE=$(du -h "$PF_DAT" | cut -f1)
+    ts "  Copying memmap $PF_SIZE → scratch (this takes ~10-30min)..."
+    timeout 3600 cp "$PF_DAT" "$SCRATCH_CACHE/" && \
+        ts "  Memmap copied OK" || \
+        ts "  WARNING: memmap copy failed/timed out (eval will rebuild)"
+else
+    ts "  No pf.dat found on SSD"
 fi
+ts "=== COPY BACK COMPLETE ==="
 
 ts "Exit: $TRAIN_EXIT"
 exit $TRAIN_EXIT

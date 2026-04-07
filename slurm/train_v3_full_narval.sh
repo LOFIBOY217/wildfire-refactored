@@ -120,14 +120,24 @@ $PYTHON -u -m src.training.train_v3 \
 
 TRAIN_EXIT=$?
 
-# Copy stats back to scratch for future resume/eval
-if [ -f "$LOCAL_CACHE/meteo_v3_p16_C16_stats.npy" ]; then
-    ts "=== COPYING STATS BACK ==="
-    SCRATCH_CACHE="$SCRATCH/meteo_cache/v3_full"
-    mkdir -p "$SCRATCH_CACHE"
-    cp "$LOCAL_CACHE"/meteo_v3_p16_C16_stats.npy "$SCRATCH_CACHE/" 2>/dev/null || true
-    cp "$LOCAL_CACHE"/fire_*.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+# Copy cache back to scratch for future resume/eval
+SCRATCH_CACHE="$SCRATCH/meteo_cache/v3_full"
+mkdir -p "$SCRATCH_CACHE"
+
+ts "=== COPYING CACHE BACK TO SCRATCH ==="
+cp "$LOCAL_CACHE"/*_stats.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+cp "$LOCAL_CACHE"/fire_*.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+cp "$LOCAL_CACHE"/norm_stats*.npy "$SCRATCH_CACHE/" 2>/dev/null || true
+
+PF_DAT=$(ls "$LOCAL_CACHE"/meteo_v3_*_pf.dat 2>/dev/null | head -1)
+if [ -n "$PF_DAT" ]; then
+    PF_SIZE=$(du -h "$PF_DAT" | cut -f1)
+    ts "  Copying memmap $PF_SIZE → scratch (~10-30min)..."
+    timeout 3600 cp "$PF_DAT" "$SCRATCH_CACHE/" && \
+        ts "  Memmap copied OK" || \
+        ts "  WARNING: memmap copy failed/timed out"
 fi
+ts "=== COPY BACK COMPLETE ==="
 
 ts "Exit: $TRAIN_EXIT"
 exit $TRAIN_EXIT
