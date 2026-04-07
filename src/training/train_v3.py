@@ -905,7 +905,9 @@ def main():
 
     # Optional daily channels
     lightning_dict = _build_flat_file_dict(lightning_dir, "lightning") if "lightning" in CHANNEL_NAMES else {}
-    deep_soil_dict = _build_flat_file_dict(deep_soil_dir, "deep_soil") if "deep_soil" in CHANNEL_NAMES else {}
+    deep_soil_dict = _build_flat_file_dict(deep_soil_dir, "swvl2") if "deep_soil" in CHANNEL_NAMES else {}
+    if not deep_soil_dict and "deep_soil" in CHANNEL_NAMES:
+        deep_soil_dict = _build_flat_file_dict(deep_soil_dir, "deep_soil")
     precip_dict = _build_flat_file_dict(precip_dir, "tp") if "precip_def" in CHANNEL_NAMES else {}
 
     # Wind and CAPE (from ERA5 extraction — era5_to_daily.py output)
