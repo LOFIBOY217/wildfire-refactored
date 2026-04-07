@@ -843,7 +843,12 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
             })
 
             del probs, labels, prob_agg, label_agg, p, y, top_idx_w
-            if (win_idx + 1) % 200 == 0:
+            if (win_idx + 1) % 50 == 0 or (win_idx + 1) == len(sample_wins):
+                _n_done = len(per_win_metrics)
+                _avg_lift = np.mean([m["lift_k"] for m in per_win_metrics]) if per_win_metrics else 0
+                print(f"    [eval] {win_idx+1}/{len(sample_wins)} windows  "
+                      f"({_n_done} with fire)  avg Lift@{k}={_avg_lift:.2f}x",
+                      flush=True)
                 gc.collect()
 
     if not per_win_metrics:
