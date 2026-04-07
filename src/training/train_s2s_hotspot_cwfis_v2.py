@@ -679,27 +679,32 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         s2s_full_cache=None, use_patch_embed=False,
                         random_encoder=False):
     """
-    Compute ranking metrics on a random sample of validation windows.
+    Per-window ranking metrics on a random sample of validation windows.
 
     Samples *n_sample_wins* windows from *val_wins*, runs patch-level
-    inference, aggregates across lead days
-      • prob  → mean  (overall fire risk across the 14–46 day window)
+    inference, aggregates across lead days per window:
+      • prob  → max   (peak risk across the 14–46 day window)
       • label → max   (any lead day with fire = positive pixel)
-    then computes all metrics globally across all sampled pixels.
+    then computes metrics *per window* and returns mean ± std.
+
+    Memory-efficient: only one window's data in memory at a time,
+    avoids concatenating all windows (~63 GB for 1285 windows).
 
     Metrics returned (dict):
-        lift_k      : Precision@K / baseline_fire_rate
-        precision_k : tp / K
-        recall_k    : tp / n_fires
-        csi_k       : tp / (tp + fp + fn)  Critical Success Index
-        ets_k       : (tp - tp_random) / (tp + fp + fn - tp_random)  Equitable Threat Score
-        pr_auc      : Area under precision-recall curve (sklearn)
-        roc_auc     : Area under ROC curve
-        brier       : Brier score = mean((prob - label)^2)
-        n_fire      : number of fire pixels in sample
-        baseline    : n_fire / n_total
+        lift_k, lift_k_std           : Precision@K / baseline (mean ± std)
+        precision_k, precision_k_std : tp / K
+        recall_k, recall_k_std      : tp / n_fires
+        csi_k, csi_k_std            : Critical Success Index
+        ets_k, ets_k_std            : Equitable Threat Score
+        pr_auc, pr_auc_std          : Area under PR curve
+        roc_auc, roc_auc_std        : Area under ROC curve
+        brier, brier_std            : Brier score
+        n_fire                      : total fires across all windows
+        baseline                    : mean baseline fire rate
+        n_windows                   : number of windows with fires
     """
     from sklearn.metrics import average_precision_score, roc_auc_score
+    import gc
 
     model.eval()
     rng = np.random.default_rng(0)   # fixed seed → same sample every epoch
@@ -715,10 +720,12 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
         sample_dates = (val_win_dates if val_win_dates is not None
                         else [None] * len(val_wins))
 
-    all_probs  = []
-    all_labels = []
-
     _dec_dim = dec_dim or meteo_patched.shape[2]
+
+    _METRIC_KEYS = ["lift_k", "precision_k", "recall_k", "csi_k", "ets_k",
+                    "pr_auc", "roc_auc", "brier", "n_fire", "baseline"]
+    per_win_metrics = []
+    total_n_fire = 0
 
     with torch.no_grad():
         for win_idx, (hs, he, ts, te) in enumerate(sample_wins):
@@ -787,54 +794,75 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
             prob_agg  = probs.max(axis=1)            # (n_patches, P²)  max risk over window
             label_agg = labels.max(axis=0)           # (n_patches, P²)  uint8
 
-            all_probs.append(prob_agg.reshape(-1))
-            all_labels.append(label_agg.reshape(-1).astype(np.float32))
+            p = prob_agg.reshape(-1)
+            y = label_agg.reshape(-1).astype(np.float32)
 
-    all_probs  = np.concatenate(all_probs)   # (N_total,)
-    all_labels = np.concatenate(all_labels)  # (N_total,)
+            n_total_w = len(p)
+            n_fire_w  = int(y.sum())
+            total_n_fire += n_fire_w
 
-    n_total = len(all_probs)
-    n_fire  = int(all_labels.sum())
+            if n_fire_w == 0:
+                del probs, labels, prob_agg, label_agg, p, y
+                continue  # skip fireless windows for ranking metrics
 
-    if n_fire == 0:
+            k_eff_w     = min(k, n_total_w)
+            top_idx_w   = np.argpartition(p, -k_eff_w)[-k_eff_w:]
+            tp_w        = float(y[top_idx_w].sum())
+            fp_w        = k_eff_w - tp_w
+            fn_w        = n_fire_w - tp_w
+            baseline_w  = n_fire_w / n_total_w
+
+            precision_k_w = tp_w / k_eff_w
+            recall_k_w    = tp_w / n_fire_w
+            lift_k_w      = precision_k_w / baseline_w if baseline_w > 0 else 0.0
+            csi_k_w       = tp_w / (tp_w + fp_w + fn_w) if (tp_w + fp_w + fn_w) > 0 else 0.0
+            tp_random_w   = k_eff_w * baseline_w
+            denom_ets_w   = tp_w + fp_w + fn_w - tp_random_w
+            ets_k_w       = (tp_w - tp_random_w) / denom_ets_w if denom_ets_w > 0 else 0.0
+            try:
+                pr_auc_w  = float(average_precision_score(y, p))
+            except (ValueError, IndexError):
+                pr_auc_w  = 0.0
+            try:
+                roc_auc_w = float(roc_auc_score(y, p))
+            except (ValueError, IndexError):
+                roc_auc_w = 0.0
+            brier_w       = float(np.mean((p - y) ** 2))
+
+            per_win_metrics.append({
+                "lift_k":      lift_k_w,
+                "precision_k": precision_k_w,
+                "recall_k":    recall_k_w,
+                "csi_k":       csi_k_w,
+                "ets_k":       ets_k_w,
+                "pr_auc":      pr_auc_w,
+                "roc_auc":     roc_auc_w,
+                "brier":       brier_w,
+                "n_fire":      n_fire_w,
+                "baseline":    baseline_w,
+            })
+
+            del probs, labels, prob_agg, label_agg, p, y, top_idx_w
+            if (win_idx + 1) % 200 == 0:
+                gc.collect()
+
+    if not per_win_metrics:
         return {"lift_k": 0.0, "precision_k": 0.0, "recall_k": 0.0,
                 "csi_k": 0.0, "ets_k": 0.0, "pr_auc": 0.0,
                 "roc_auc": 0.0, "brier": 0.0,
-                "n_fire": 0, "baseline": 0.0}
+                "n_fire": 0, "baseline": 0.0, "n_windows": 0,
+                **{mk + "_std": 0.0 for mk in _METRIC_KEYS}}
 
-    k_eff       = min(k, n_total)
-    top_idx     = np.argpartition(all_probs, -k_eff)[-k_eff:]
-    tp          = float(all_labels[top_idx].sum())
-    fp          = k_eff - tp
-    fn          = n_fire - tp
-    baseline    = n_fire / n_total
+    # Aggregate: mean ± std across windows
+    result = {}
+    for mk in _METRIC_KEYS:
+        vals = [m[mk] for m in per_win_metrics]
+        result[mk]           = float(np.mean(vals))
+        result[mk + "_std"]  = float(np.std(vals))
+    result["n_fire"]    = total_n_fire        # override with total count
+    result["n_windows"] = len(per_win_metrics)
 
-    precision_k = tp / k_eff
-    recall_k    = tp / n_fire
-    lift_k      = precision_k / baseline if baseline > 0 else 0.0
-    csi_k       = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else 0.0
-    tp_random   = k_eff * baseline          # expected tp by random selection
-    denom_ets   = tp + fp + fn - tp_random
-    ets_k       = (tp - tp_random) / denom_ets if denom_ets > 0 else 0.0
-    pr_auc      = float(average_precision_score(all_labels, all_probs))
-    try:
-        roc_auc = float(roc_auc_score(all_labels, all_probs))
-    except ValueError:
-        roc_auc = 0.0
-    brier       = float(np.mean((all_probs - all_labels) ** 2))
-
-    return {
-        "lift_k":      lift_k,
-        "precision_k": precision_k,
-        "recall_k":    recall_k,
-        "csi_k":       csi_k,
-        "ets_k":       ets_k,
-        "pr_auc":      pr_auc,
-        "roc_auc":     roc_auc,
-        "brier":       brier,
-        "n_fire":      n_fire,
-        "baseline":    baseline,
-    }
+    return result
 
 
 # ------------------------------------------------------------------ #
@@ -2569,29 +2597,37 @@ def main():
                 use_patch_embed=getattr(args, "use_patch_embed", False),
                 random_encoder=getattr(args, "random_encoder", False),
             )
-            print(f"    Lift@{args.val_lift_k}={m['lift_k']:.2f}x  "
+            _nw = m.get('n_windows', '?')
+            print(f"    Lift@{args.val_lift_k}={m['lift_k']:.2f}±{m.get('lift_k_std',0):.2f}x  "
                   f"Prec={m['precision_k']:.4f}  Recall={m['recall_k']:.4f}  "
-                  f"CSI={m['csi_k']:.4f}  ETS={m['ets_k']:.4f}  PR-AUC={m['pr_auc']:.4f}  "
-                  f"(n_fire={m['n_fire']:,}  baseline={m['baseline']:.6f})")
+                  f"CSI={m['csi_k']:.4f}  ETS={m['ets_k']:.4f}  "
+                  f"ROC-AUC={m.get('roc_auc',0):.4f}  Brier={m.get('brier',0):.6f}  "
+                  f"PR-AUC={m['pr_auc']:.4f}  "
+                  f"({_nw} wins, n_fire={m['n_fire']:,})")
             results.append((epoch_name, m))
             del model_eval
             torch.cuda.empty_cache()
 
         K = args.val_lift_k
-        print(f"\n{'─'*90}")
-        print(f"  {'Epoch':<12}  {'Lift@K':>8}  {'Prec@K':>8}  {'Recall@K':>9}  "
-              f"{'CSI@K':>7}  {'ETS@K':>7}  {'PR-AUC':>8}")
-        print(f"{'─'*90}")
+        print(f"\n{'─'*110}")
+        print(f"  {'Epoch':<12}  {'Lift@K':>12}  {'Prec@K':>8}  {'Recall@K':>9}  "
+              f"{'CSI@K':>7}  {'ETS@K':>7}  {'ROC-AUC':>8}  {'Brier':>10}  {'PR-AUC':>8}")
+        print(f"{'─'*110}")
         best_name = max(results, key=lambda x: x[1]["lift_k"])[0]
         for name, m in results:
             marker = " ★" if name == best_name else ""
-            print(f"  {name:<12}  {m['lift_k']:>8.2f}x  {m['precision_k']:>8.4f}  "
+            _lift_std = m.get('lift_k_std', 0)
+            print(f"  {name:<12}  {m['lift_k']:>5.2f}±{_lift_std:<5.2f}x"
+                  f"  {m['precision_k']:>8.4f}  "
                   f"{m['recall_k']:>9.4f}  {m['csi_k']:>7.4f}  {m['ets_k']:>7.4f}  "
+                  f"{m.get('roc_auc',0):>8.4f}  {m.get('brier',0):>10.6f}  "
                   f"{m['pr_auc']:>8.4f}{marker}")
-        print(f"{'─'*90}")
+        print(f"{'─'*110}")
         best_m = next(m for n, m in results if n == best_name)
-        print(f"  Best: {best_name}  Lift@{K}={best_m['lift_k']:.2f}x  "
-              f"ETS={best_m['ets_k']:.4f}  PR-AUC={best_m['pr_auc']:.4f}")
+        print(f"  Best: {best_name}  Lift@{K}={best_m['lift_k']:.2f}±{best_m.get('lift_k_std',0):.2f}x  "
+              f"ROC-AUC={best_m.get('roc_auc',0):.4f}  "
+              f"ETS={best_m['ets_k']:.4f}  PR-AUC={best_m['pr_auc']:.4f}  "
+              f"({best_m.get('n_windows','?')} windows)")
         return
 
     # ----------------------------------------------------------------
