@@ -1132,11 +1132,12 @@ def main():
                 ch_stats.append((ch_name, m, max(s, 1e-6), f))
                 print(f"  {ch_name:12s}  mean={m:8.3f}  std={s:8.3f}  (sampled)")
             elif ch_def["type"] == "computed":
-                # precip_def: use precip stats as proxy
+                # precip_def: use precip stats as proxy (converted m→mm, ×1000)
                 if precip_dict:
                     _paths = [precip_dict[d] for d in aligned_dates[:train_end_idx] if d in precip_dict]
                     if _paths:
                         m, s, f = _stream_channel_stats(_paths[:50])
+                        m, s, f = m * 1000.0, s * 1000.0, f * 1000.0  # m/day → mm/day
                     else:
                         m, s, f = 0.0, 1.0, 0.0
                 else:
@@ -1360,10 +1361,11 @@ def main():
 
                 elif ch_name == "precip_def":
                     # Accumulate precipitation for rolling deficit
+                    # ERA5 tp is in meters/day — convert to mm/day (* 1000)
                     if cur_date in precip_dict:
                         p_arr = _read_tif_safe(precip_dict[cur_date], None)
                         if p_arr is not None:
-                            precip_deque.append(np.nan_to_num(p_arr, nan=0.0))
+                            precip_deque.append(np.nan_to_num(p_arr, nan=0.0) * 1000.0)
                     if len(precip_deque) > 0:
                         # Simple deficit: negative of accumulated precip (less rain = higher deficit)
                         rolling_sum = np.sum(precip_deque, axis=0)
