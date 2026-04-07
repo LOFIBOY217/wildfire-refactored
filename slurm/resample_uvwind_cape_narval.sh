@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=wf-resamp-uvc
-#SBATCH --time=24:00:00
+#SBATCH --job-name=wf-resamp
+#SBATCH --time=14:00:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/resample_uvc_%j.log
@@ -46,7 +46,10 @@ dst_crs = CRS.from_string(FWI_CRS)
 profile = dict(driver='GTiff', dtype='float32', width=FWI_W, height=FWI_H,
                count=1, crs=dst_crs, transform=dst_tf, nodata=np.nan, compress='lzw')
 
-for var in ['u10', 'v10', 'cape']:
+import sys
+vars_arg = os.environ.get('RESAMP_VARS', 'u10,v10,cape')
+var_list = [v.strip() for v in vars_arg.split(',')]
+for var in var_list:
     outdir = f'data/era5_{var}'
     os.makedirs(outdir, exist_ok=True)
 
