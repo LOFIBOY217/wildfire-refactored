@@ -34,7 +34,7 @@ Channel table:
   -----  ----------      ------               ----
   0      FWI             fwi_dir              daily
   1      2t              observation_dir       daily
-  2      fire_clim       fire_climatology_tif  static
+  2      fire_clim       fire_clim_dir         annual (fire_clim_upto_Y.tif per year)
   3      lightning       lightning_dir         daily
   4      NDVI            ndvi_dir              16-day→daily
   5      population      population_tif        static
@@ -126,7 +126,7 @@ from src.training.train_s2s_hotspot_cwfis_v2 import (
 V3_CHANNEL_DEFS = {
     "FWI":        {"type": "daily",   "required": True},
     "2t":         {"type": "daily",   "required": True},
-    "fire_clim":  {"type": "static",  "required": True},
+    "fire_clim":  {"type": "annual",  "required": True},
     "2d":         {"type": "daily",   "required": False},
     "tcw":        {"type": "daily",   "required": False},
     "sm20":       {"type": "daily",   "required": False},
@@ -696,7 +696,11 @@ def main():
     ap.add_argument("--in_days", type=int, default=7)
     ap.add_argument("--lead_start", type=int, default=14)
     ap.add_argument("--lead_end", type=int, default=46)
-    ap.add_argument("--fire_climatology_tif", type=str, default=None)
+    ap.add_argument("--fire_climatology_tif", type=str, default=None,
+                    help="Path to static fire climatology TIF (fallback if fire_clim_dir not set).")
+    ap.add_argument("--fire_clim_dir", type=str, default=None,
+                    help="Directory with annual fire_clim_upto_YEAR.tif files. "
+                         "If set, overrides --fire_climatology_tif for per-year loading.")
     ap.add_argument("--dilate_radius", type=int, default=14)
 
     # V3: channel selection
@@ -836,6 +840,7 @@ def main():
     os.makedirs(ckpt_dir, exist_ok=True)
 
     fire_clim_path = args.fire_climatology_tif or paths_cfg.get("fire_climatology_tif")
+    fire_clim_dir = args.fire_clim_dir or paths_cfg.get("fire_clim_dir")
     lightning_dir = paths_cfg.get("lightning_dir", "data/lightning")
     ndvi_dir = paths_cfg.get("ndvi_dir", "data/ndvi_data")
     terrain_dir = paths_cfg.get("terrain_dir", "data/terrain")
@@ -935,6 +940,22 @@ def main():
             except ValueError:
                 pass
 
+    # Annual fire climatology: fire_clim_upto_YEAR.tif (one per target year)
+    fire_clim_annual_dict = {}  # year → path
+    if "fire_clim" in CHANNEL_NAMES and fire_clim_dir:
+        for p in sorted(glob.glob(os.path.join(fire_clim_dir, "fire_clim_upto_*.tif"))):
+            bn = os.path.basename(p)
+            try:
+                year = int(bn.replace("fire_clim_upto_", "").replace(".tif", ""))
+                fire_clim_annual_dict[year] = p
+            except ValueError:
+                pass
+        if fire_clim_annual_dict:
+            print(f"  Annual fire_clim: years {sorted(fire_clim_annual_dict.keys())}")
+        else:
+            print(f"  [WARN] fire_clim_dir={fire_clim_dir} has no fire_clim_upto_*.tif — "
+                  f"falling back to static fire_climatology_tif")
+
     print(f"  FWI: {len(fwi_dict):,}  2t: {len(t2m_dict):,}")
     if dew_dict:
         print(f"  2d (dewpoint): {len(dew_dict):,}")
@@ -995,7 +1016,28 @@ def main():
     # Load static channels
     static_arrays = {}
     if "fire_clim" in CHANNEL_NAMES:
-        static_arrays["fire_clim"] = _load_static_channel(fire_clim_path, H, W, "fire_clim")
+        if fire_clim_annual_dict:
+            # Annual mode: load all years into memory; build mean map for stats/hard-neg
+            fire_clim_arrays = {}
+            for yr, p in fire_clim_annual_dict.items():
+                arr = _load_static_channel(p, H, W, f"fire_clim_{yr}")
+                fire_clim_arrays[yr] = arr
+            # Average over all loaded maps for hard-neg mining & stats
+            _stacked = np.stack(list(fire_clim_arrays.values()), axis=0)
+            static_arrays["fire_clim"] = _stacked.mean(axis=0)
+            print(f"  fire_clim: {len(fire_clim_arrays)} annual maps loaded "
+                  f"(years {sorted(fire_clim_arrays.keys())})")
+        elif fire_clim_path:
+            # Fallback: single static TIF
+            fire_clim_arrays = {}
+            static_arrays["fire_clim"] = _load_static_channel(fire_clim_path, H, W, "fire_clim")
+            print(f"  fire_clim: static fallback ({fire_clim_path})")
+        else:
+            fire_clim_arrays = {}
+            static_arrays["fire_clim"] = np.zeros((H, W), dtype=np.float32)
+            print("  [WARN] fire_clim: no source found, using zeros")
+    else:
+        fire_clim_arrays = {}
     if "population" in CHANNEL_NAMES:
         static_arrays["population"] = _load_static_channel(population_tif, H, W, "population")
     if "slope" in CHANNEL_NAMES:
@@ -1095,9 +1137,18 @@ def main():
                 ch_stats.append((ch_name, m, max(s, 1e-6), f))
                 print(f"  {ch_name:12s}  mean={m:8.3f}  std={s:8.3f}  (proxy)")
             elif ch_def["type"] == "annual":
-                # burn_age: log1p transform, typical range 0-4
-                ch_stats.append((ch_name, 1.5, 1.0, 1.5))
-                print(f"  {ch_name:12s}  mean=1.500  std=1.000  (default)")
+                if ch_name == "fire_clim":
+                    # Use the mean map (average of all loaded annual TIFs)
+                    arr = static_arrays.get("fire_clim", np.zeros((H, W), dtype=np.float32))
+                    valid = arr[(arr > -1e30) & np.isfinite(arr)]
+                    cm = float(valid.mean()) if valid.size else 0.0
+                    cs = float(valid.std()) if valid.size else 1.0
+                    ch_stats.append((ch_name, cm, max(cs, 1e-6), cm))
+                    print(f"  {ch_name:12s}  mean={cm:8.3f}  std={cs:8.3f}  (annual-avg)")
+                else:
+                    # burn_age / burn_count: log1p transform, typical range 0-4
+                    ch_stats.append((ch_name, 1.5, 1.0, 1.5))
+                    print(f"  {ch_name:12s}  mean=1.500  std=1.000  (default)")
 
         meteo_means = np.array([s[1] for s in ch_stats], dtype=np.float32)
         meteo_stds = np.array([max(s[2], 1e-6) for s in ch_stats], dtype=np.float32)
@@ -1268,6 +1319,20 @@ def main():
 
                 elif ch_def["type"] == "static":
                     frame[..., ch_idx] = static_arrays.get(ch_name, np.zeros((H, W)))
+
+                elif ch_name == "fire_clim":
+                    # Annual fire climatology: use fire_clim_upto_{year} for current year
+                    yr = cur_date.year
+                    if fire_clim_arrays:
+                        if yr in fire_clim_arrays:
+                            frame[..., ch_idx] = fire_clim_arrays[yr]
+                        else:
+                            # Use nearest available year (no leakage: nearest < yr preferred)
+                            nearest = min(fire_clim_arrays.keys(), key=lambda y: abs(y - yr))
+                            frame[..., ch_idx] = fire_clim_arrays[nearest]
+                    else:
+                        # Fallback to static mean map
+                        frame[..., ch_idx] = static_arrays.get("fire_clim", np.zeros((H, W)))
 
                 elif ch_name == "NDVI":
                     frame[..., ch_idx] = _interpolate_ndvi(cur_date, ndvi_index, ndvi_cache, H, W)

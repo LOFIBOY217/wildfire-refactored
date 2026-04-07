@@ -22,6 +22,8 @@ paths:
   cape_dir:   "data/era5_cape"     # CAPE (59), lightning / thunderstorm proxy
   # V2 model: static fire-frequency climatology (produced by make_fire_climatology.py)
   fire_climatology_tif: "data/fire_climatology.tif"
+  # V3 model: annual rolling fire climatology directory (fire_clim_upto_YEAR.tif)
+  fire_clim_dir:        "data/fire_clim_annual"
   # New data sources (FWI gaps: lightning, vegetation, terrain, burn scars, climate modes)
   lightning_dir:       "data/lightning"          # GOES-16/18 GLM daily flash counts → FWI grid
   ndvi_dir:            "data/ndvi_data"          # MODIS MOD13A2 NDVI (16-day → daily interp)

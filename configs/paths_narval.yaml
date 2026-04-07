@@ -20,6 +20,7 @@ paths:
   precip_dir:   "/scratch/jiaqi217/wildfire-refactored/data/era5_precip"
   cape_dir:     "/scratch/jiaqi217/wildfire-refactored/data/era5_cape"
   fire_climatology_tif: "/scratch/jiaqi217/wildfire-refactored/data/fire_climatology.tif"
+  fire_clim_dir:        "/scratch/jiaqi217/wildfire-refactored/data/fire_clim_annual"
   lightning_dir:       "/scratch/jiaqi217/wildfire-refactored/data/lightning"
   ndvi_dir:            "/scratch/jiaqi217/wildfire-refactored/data/ndvi_data"
   evi_dir:             "/scratch/jiaqi217/wildfire-refactored/data/evi_data"
