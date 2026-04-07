@@ -1225,6 +1225,8 @@ def main():
         dec_dim_base = S2S_DEC_DIM
     elif args.decoder == "s2s":
         dec_dim_base = enc_dim
+        if args.dec_dim is not None:
+            dec_dim_base = args.dec_dim
     else:
         dec_dim_base = enc_dim
     out_dim = P * P
