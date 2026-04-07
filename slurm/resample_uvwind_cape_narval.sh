@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=wf-resamp-uvc
-#SBATCH --time=8:00:00
+#SBATCH --time=24:00:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/resample_uvc_%j.log
