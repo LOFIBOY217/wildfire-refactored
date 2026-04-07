@@ -88,16 +88,35 @@ class S2SHotspotTransformer(nn.Module):
         decoder_days: int = 33,
         n_patches: int = 0,
         mlp_dec_embed: bool = False,
+        dec_ctx_dim: int = 0,
     ):
         super().__init__()
 
         self.encoder_days  = encoder_days
         self.decoder_days  = decoder_days
         self.patch_dim_out = patch_dim_out
+        self.dec_ctx_dim   = dec_ctx_dim
 
         # Separate linear projections for encoder (history) and decoder (forecast)
         self.enc_embed = nn.Linear(patch_dim_enc, d_model)
-        if mlp_dec_embed and patch_dim_dec > d_model:
+
+        if dec_ctx_dim > 0 and dec_ctx_dim < patch_dim_dec:
+            # Dual-path decoder embedding: separate projections for forecast signal
+            # and spatial/temporal context, then add. Prevents the small forecast
+            # signal (e.g. 9-dim S2S) from being drowned by large context (1284-dim).
+            dec_forecast_dim = patch_dim_dec - dec_ctx_dim
+            self.dec_forecast_embed = nn.Sequential(
+                nn.Linear(dec_forecast_dim, d_model),
+                nn.GELU(),
+                nn.LayerNorm(d_model),
+            )
+            self.dec_ctx_embed = nn.Sequential(
+                nn.Linear(dec_ctx_dim, d_model),
+                nn.GELU(),
+                nn.LayerNorm(d_model),
+            )
+            self.dec_embed = None  # unused, forward uses dual path
+        elif mlp_dec_embed and patch_dim_dec > d_model:
             # 2-layer MLP for decoder: better preserves structure when compressing
             # large oracle/S2S inputs (e.g. 2048-dim full patch → d_model).
             hidden_dec = max(d_model * 2, patch_dim_dec // 2)
@@ -160,7 +179,16 @@ class S2SHotspotTransformer(nn.Module):
                     Raw fire-probability logits (apply sigmoid for probabilities).
         """
         enc = self.pos_enc(self.embed_drop(self.enc_embed(encoder_input)))  # (B, enc_days, d_model)
-        dec = self.pos_enc(self.embed_drop(self.dec_embed(decoder_input)))  # (B, dec_days, d_model)
+
+        if self.dec_ctx_dim > 0 and self.dec_embed is None:
+            # Dual-path: split decoder input into forecast + context, project separately, add
+            split_at = decoder_input.shape[-1] - self.dec_ctx_dim
+            dec_forecast = decoder_input[..., :split_at]   # (B, dec_days, forecast_dim)
+            dec_context  = decoder_input[..., split_at:]   # (B, dec_days, ctx_dim)
+            dec = self.dec_forecast_embed(dec_forecast) + self.dec_ctx_embed(dec_context)
+            dec = self.pos_enc(self.embed_drop(dec))
+        else:
+            dec = self.pos_enc(self.embed_drop(self.dec_embed(decoder_input)))  # (B, dec_days, d_model)
 
         # Add learnable spatial embedding (same for all time steps in enc & dec)
         if self.patch_embed is not None and patch_ids is not None:

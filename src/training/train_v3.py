@@ -1753,6 +1753,7 @@ def main():
         decoder_days=decoder_days,
         n_patches=(n_patches if args.use_patch_embed else 0),
         mlp_dec_embed=args.mlp_dec_embed,
+        dec_ctx_dim=ctx_extra_dim if args.decoder_ctx else 0,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
