@@ -864,7 +864,7 @@ def main():
     in_days = args.in_days
     lead_start = args.lead_start
     lead_end = args.lead_end
-    if args.decoder == "s2s" and lead_end > 45:
+    if args.decoder in ("s2s", "s2s_legacy") and lead_end > 45:
         lead_end = 45
     decoder_days = lead_end - lead_start + 1
 
