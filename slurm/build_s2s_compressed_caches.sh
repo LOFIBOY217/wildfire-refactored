@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=12:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/s2s_compress_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/s2s_compress_%j.err
 #SBATCH --account=def-inghaw
@@ -40,13 +40,11 @@ echo "  Node: $(hostname)  Time: $(date)"
 echo "  Full-patch cache: $FULL_CACHE"
 echo "============================================="
 
-# 1. multi_stat (mean/std/max per channel → 24 dims)
-echo ""
-echo ">>> MODE 1: multi_stat (24 dims)"
-python -u -m src.data_ops.processing.build_s2s_compressed_caches \
-    --full-cache "$FULL_CACHE" \
-    --out-file "$OUT_DIR/s2s_multistat_cache.dat" \
-    --mode multi_stat
+# 1. multi_stat — ALREADY DONE (62G), skip
+# python -u -m src.data_ops.processing.build_s2s_compressed_caches \
+#     --full-cache "$FULL_CACHE" \
+#     --out-file "$OUT_DIR/s2s_multistat_cache.dat" \
+#     --mode multi_stat
 
 # 2. subpatch_4x4 (4×4 sub-block means → 128 dims)
 echo ""
