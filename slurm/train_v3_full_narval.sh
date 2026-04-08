@@ -29,7 +29,8 @@
 #       If SSD is too small, falls back to Lustre cache_dir.
 # ----------------------------------------------------------------
 
-set -euo pipefail
+set -uo pipefail
+# NOTE: not using -e so that copy-back runs even if training crashes
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 

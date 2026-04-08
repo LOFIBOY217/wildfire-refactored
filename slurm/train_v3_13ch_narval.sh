@@ -27,7 +27,8 @@
 # SSD: venv + S2S cache + meteo cache all on local NVMe
 # ----------------------------------------------------------------
 
-set -euo pipefail
+set -uo pipefail
+# NOTE: not using -e so that copy-back runs even if training crashes
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 
