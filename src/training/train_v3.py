@@ -155,16 +155,24 @@ DECODER_CTX_CHANNELS = {"fire_clim", "population", "slope", "burn_age", "burn_co
 # ------------------------------------------------------------------ #
 
 def _load_static_channel(tif_path, expected_h, expected_w, name="static"):
-    """Load a static single-band GeoTIFF. Returns (H, W) float32 (zeros on failure)."""
+    """Load a static single-band GeoTIFF. Returns (H, W) float32 (zeros on failure).
+
+    Reads the TIF's nodata value from metadata and replaces nodata pixels with 0.
+    This is critical for burn_scars (nodata=9999 means 'never burned').
+    """
     if tif_path is None or not os.path.exists(tif_path):
         print(f"  [WARN] {name}: file not found: {tif_path} — using zeros")
         return np.zeros((expected_h, expected_w), dtype=np.float32)
     with rasterio.open(tif_path) as src:
         arr = src.read(1).astype(np.float32)
+        nodata = src.nodata
     if arr.shape != (expected_h, expected_w):
         print(f"  [WARN] {name}: shape {arr.shape} != ({expected_h},{expected_w}) — using zeros")
         return np.zeros((expected_h, expected_w), dtype=np.float32)
     arr[~np.isfinite(arr)] = 0.0
+    # Mask nodata values (e.g. burn_scars use 9999 for 'never burned')
+    if nodata is not None:
+        arr[arr == nodata] = 0.0
     nonzero = int((arr > 0).sum())
     print(f"  {name}: {arr.shape}  nonzero={nonzero:,}  "
           f"max={arr.max():.3f}  mean(nz)={arr[arr>0].mean():.3f}" if nonzero else
@@ -1154,9 +1162,33 @@ def main():
                     ch_stats.append((ch_name, cm, max(cs, 1e-6), cm))
                     print(f"  {ch_name:12s}  mean={cm:8.3f}  std={cs:8.3f}  (annual-avg)")
                 else:
-                    # burn_age / burn_count: log1p transform, typical range 0-4
-                    ch_stats.append((ch_name, 1.5, 1.0, 1.5))
-                    print(f"  {ch_name:12s}  mean=1.500  std=1.000  (default)")
+                    # burn_age / burn_count: compute stats from actual data
+                    # After nodata masking (9999→0), non-burned pixels are 0.
+                    # Stats are computed on the encoded values (log1p or bucket).
+                    _burn_arr = None
+                    if ch_name == "burn_age" and burn_scar_dict:
+                        # Sample a middle year
+                        _mid_year = sorted(burn_scar_dict.keys())[len(burn_scar_dict) // 2]
+                        _burn_arr = _load_static_channel(
+                            burn_scar_dict[_mid_year], H, W, f"burn_age_stats_{_mid_year}")
+                        _burn_arr = np.maximum(_burn_arr, 0)
+                        _burn_arr = np.log1p(_burn_arr)  # same as default encoding
+                    elif ch_name == "burn_count" and burn_count_dict:
+                        _mid_year = sorted(burn_count_dict.keys())[len(burn_count_dict) // 2]
+                        _burn_arr = _load_static_channel(
+                            burn_count_dict[_mid_year], H, W, f"burn_count_stats_{_mid_year}")
+                        _burn_arr = np.maximum(_burn_arr, 0)
+                        _burn_arr = np.log1p(_burn_arr)
+                    if _burn_arr is not None:
+                        valid = _burn_arr[np.isfinite(_burn_arr)]
+                        cm = float(valid.mean()) if valid.size else 0.0
+                        cs = float(valid.std()) if valid.size else 1.0
+                        ch_stats.append((ch_name, cm, max(cs, 1e-6), cm))
+                        print(f"  {ch_name:12s}  mean={cm:8.3f}  std={cs:8.3f}  (computed from data)")
+                    else:
+                        # Fallback if no burn data available
+                        ch_stats.append((ch_name, 0.0, 1.0, 0.0))
+                        print(f"  {ch_name:12s}  mean=0.000  std=1.000  (fallback, no data)")
 
         meteo_means = np.array([s[1] for s in ch_stats], dtype=np.float32)
         meteo_stds = np.array([max(s[2], 1e-6) for s in ch_stats], dtype=np.float32)
