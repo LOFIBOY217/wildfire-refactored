@@ -677,7 +677,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         s2s_means=None, s2s_stds=None,
                         date_to_s2s_lag=None, s2s_max_lag=3,
                         s2s_full_cache=None, use_patch_embed=False,
-                        random_encoder=False):
+                        random_encoder=False,
+                        decoder_ctx_fn=None):
     """
     Per-window ranking metrics on a random sample of validation windows.
 
@@ -780,6 +781,9 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                     xb_dec = torch.from_numpy(
                         np.stack(dec_list, axis=0)   # (chunk, dec_days, dec_dim)
                     ).to(device)
+                # V3 decoder_ctx augmentation (adds static context + lead time encoding)
+                if decoder_ctx_fn is not None:
+                    xb_dec = decoder_ctx_fn(xb_dec, cs, ce)
                 _chunk_patch_ids = (torch.arange(cs, ce, device=device)
                                     if use_patch_embed else None)
                 with torch.autocast(device_type=device.type, dtype=torch.float16,

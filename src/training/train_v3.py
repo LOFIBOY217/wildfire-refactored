@@ -485,7 +485,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                            random_encoder=False,
                            cluster_eval=False, cluster_min_size=1,
                            hw=None, grid=None, full_val=False,
-                           per_lead_eval=False):
+                           per_lead_eval=False,
+                           decoder_ctx_fn=None):
     """V3 validation: standard pixel-level metrics + optional cluster/per-lead."""
     # Pixel-level metrics via V2 function
     _n_wins = len(val_wins) if full_val else n_sample_wins
@@ -500,6 +501,7 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
         s2s_full_cache=s2s_full_cache, use_patch_embed=use_patch_embed,
         random_encoder=random_encoder,
         s2s_cache=s2s_cache,
+        decoder_ctx_fn=decoder_ctx_fn,
     )
 
     result = dict(pixel_metrics)
@@ -1921,6 +1923,16 @@ def main():
         val_lift_k = 0.0
         val_prec_k = 0.0
         if not args.skip_val and val_wins_lift:
+            # Build decoder_ctx callback if decoder_ctx is enabled
+            _val_ctx_fn = None
+            if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
+                def _val_ctx_fn(xb_dec, cs, ce):
+                    """Augment decoder input with static context + lead time encoding."""
+                    _ctx_batch = torch.from_numpy(
+                        _dec_ctx_np[cs:ce].astype(np.float32)
+                    ).to(xb_dec.device)
+                    return _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
+
             _m = _compute_val_lift_k_v3(
                 model, meteo_patched, fire_patched, val_wins_lift,
                 n_patches, k=args.val_lift_k,
@@ -1934,6 +1946,7 @@ def main():
                 cluster_min_size=args.cluster_min_size,
                 hw=hw, grid=grid, full_val=args.full_val,
                 per_lead_eval=args.per_lead_eval,
+                decoder_ctx_fn=_val_ctx_fn,
             )
             val_lift_k = _m["lift_k"]
             val_prec_k = _m["precision_k"]
