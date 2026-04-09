@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-smoke
 #SBATCH --gpus-per-node=1
-#SBATCH --time=1:00:00
+#SBATCH --time=2:00:00
 #SBATCH --mem=200G
 #SBATCH --output=/scratch/jiaqi217/logs/smoke_test_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/smoke_test_%j.err
@@ -85,6 +85,7 @@ $PYTHON -u -m src.training.train_v3 \
     --fire_season_only \
     --cluster_eval \
     --decoder_ctx \
+    --load_train_to_ram \
     --cache_dir "$LOCAL_CACHE" \
     --chunk_patches 2000 \
     --num_workers 2 \
