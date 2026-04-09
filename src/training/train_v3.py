@@ -524,9 +524,12 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                          else [None] * len(val_wins))
 
         cl_lifts, cl_precs, cl_recalls, cl_nclusters = [], [], [], []
+        # Determine S2S decoder dim for cluster eval (9 for s2s_legacy, 2048 for s2s/oracle)
+        _cl_s2s_dim = S2S_DEC_DIM if decoder_mode == "s2s_legacy" else _dec_dim_cl
         model.eval()
         with torch.no_grad():
             for wi, (hs, he, ts, te) in enumerate(_cl_wins):
+                win_date_cl = _cl_dates[wi] if _cl_dates else None
                 prob_chunks = []
                 for cs in range(0, n_patches, chunk):
                     ce = min(cs + chunk, n_patches)
@@ -543,6 +546,33 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                                 meteo_patched[cs:ce, ts:te, :].astype(np.float32)
                             )
                         ).to(device)
+                    elif decoder_mode == "s2s_legacy":
+                        dec_list = [
+                            _make_dec_s2s(
+                                s2s_cache, date_to_s2s_idx,
+                                win_date_cl, cs + pi,
+                                te - ts, _cl_s2s_dim, patch_size,
+                                s2s_means=s2s_means, s2s_stds=s2s_stds,
+                                date_to_s2s_lag=date_to_s2s_lag,
+                                s2s_max_lag=s2s_max_lag,
+                            ).astype(np.float32)
+                            for pi in range(ce - cs)
+                        ]
+                        xb_dec = torch.from_numpy(
+                            np.stack(dec_list, axis=0)
+                        ).to(device)
+                    elif decoder_mode == "s2s" and s2s_full_cache is not None:
+                        dec_list = [
+                            _make_dec_s2s_full(
+                                s2s_full_cache, date_to_s2s_idx,
+                                win_date_cl, cs + pi,
+                                te - ts, _dec_dim_cl,
+                            ).astype(np.float32)
+                            for pi in range(ce - cs)
+                        ]
+                        xb_dec = torch.from_numpy(
+                            np.stack(dec_list, axis=0)
+                        ).to(device)
                     else:
                         enc_np = meteo_patched[cs:ce, hs:he, :].astype(np.float32)
                         dec_list = [
@@ -552,6 +582,9 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                         xb_dec = torch.from_numpy(
                             np.stack(dec_list, axis=0)
                         ).to(device)
+                    # V3 decoder_ctx augmentation (must match training-time augment)
+                    if decoder_ctx_fn is not None:
+                        xb_dec = decoder_ctx_fn(xb_dec, cs, ce)
                     with torch.autocast(device_type=device.type, dtype=torch.float16,
                                         enabled=(device.type == "cuda")):
                         logits = model(xb_enc, xb_dec)
