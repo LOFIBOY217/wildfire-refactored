@@ -34,6 +34,30 @@ set -uo pipefail
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 
+# Cache copy-back function — registered as EXIT trap so it ALWAYS runs
+# (on success, crash, cancel, OOM kill, etc.)
+_copy_back_cache() {
+    local src="$1"
+    local dst="$2"
+    [ -z "$src" ] || [ -z "$dst" ] && return 0
+    [ ! -d "$src" ] && return 0
+    mkdir -p "$dst"
+    echo "[trap] Copying cache from $src → $dst"
+    cp "$src"/*_stats.npy "$dst/" 2>/dev/null || true
+    cp "$src"/fire_*.npy "$dst/" 2>/dev/null || true
+    cp "$src"/fire_*.dat "$dst/" 2>/dev/null || true
+    cp "$src"/norm_stats*.npy "$dst/" 2>/dev/null || true
+    local pf
+    pf=$(ls "$src"/meteo_v3_*_pf.dat 2>/dev/null | head -1)
+    if [ -n "$pf" ]; then
+        local size
+        size=$(du -h "$pf" | cut -f1)
+        echo "[trap] Copying pf.dat ($size)..."
+        timeout 3600 cp "$pf" "$dst/" && echo "[trap] pf.dat copied OK" || echo "[trap] pf.dat copy failed"
+    fi
+    echo "[trap] Cache copy-back complete"
+}
+
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
 module load StdEnv/2023 gcc/12.3 cuda/12.2 python/3.11.5 proj/9.4.1 eccodes/2.31.0
 
@@ -65,6 +89,9 @@ ts "=== LOCAL DISK: ${SSD_AVAIL_GB}GB available ==="
 
 SCRATCH_CACHE="$SCRATCH/meteo_cache/v3_full"
 PF_ON_SCRATCH=$(ls "$SCRATCH_CACHE"/meteo_v3_*_pf.dat 2>/dev/null | head -1)
+
+# Register EXIT trap now that we know src/dst — fires on ANY exit path
+trap '_copy_back_cache "$LOCAL_CACHE" "$SCRATCH_CACHE"' EXIT
 
 if [ "$SSD_AVAIL_GB" -ge 600 ] && [ -n "$PF_ON_SCRATCH" ]; then
     # Best path: copy pre-built memmap from scratch to SSD (fast IO during training)

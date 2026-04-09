@@ -178,16 +178,33 @@ class S2SHotspotTransformer(nn.Module):
             logits: (B, decoder_days, patch_dim_out)
                     Raw fire-probability logits (apply sigmoid for probabilities).
         """
+        # Shape assertions — catches train/val interface mismatches at batch 1
+        assert encoder_input.dim() == 3, \
+            f"encoder_input must be 3D (B,T,D), got shape {tuple(encoder_input.shape)}"
+        assert encoder_input.shape[-1] == self.enc_embed.in_features, \
+            f"encoder_input dim {encoder_input.shape[-1]} != expected {self.enc_embed.in_features}"
+        assert decoder_input.dim() == 3, \
+            f"decoder_input must be 3D (B,T,D), got shape {tuple(decoder_input.shape)}"
+
         enc = self.pos_enc(self.embed_drop(self.enc_embed(encoder_input)))  # (B, enc_days, d_model)
 
         if self.dec_ctx_dim > 0 and self.dec_embed is None:
             # Dual-path: split decoder input into forecast + context, project separately, add
+            expected_dec_dim = self.dec_forecast_embed.in_features + self.dec_ctx_dim
+            assert decoder_input.shape[-1] == expected_dec_dim, (
+                f"decoder_input dim {decoder_input.shape[-1]} != expected "
+                f"{expected_dec_dim} (forecast {self.dec_forecast_embed.in_features} "
+                f"+ ctx {self.dec_ctx_dim}). Did training augment with decoder_ctx "
+                f"but validation forget to?"
+            )
             split_at = decoder_input.shape[-1] - self.dec_ctx_dim
             dec_forecast = decoder_input[..., :split_at]   # (B, dec_days, forecast_dim)
             dec_context  = decoder_input[..., split_at:]   # (B, dec_days, ctx_dim)
             dec = self.dec_forecast_embed(dec_forecast) + self.dec_ctx_embed(dec_context)
             dec = self.pos_enc(self.embed_drop(dec))
         else:
+            assert decoder_input.shape[-1] == self.dec_embed.in_features, \
+                f"decoder_input dim {decoder_input.shape[-1]} != expected {self.dec_embed.in_features}"
             dec = self.pos_enc(self.embed_drop(self.dec_embed(decoder_input)))  # (B, dec_days, d_model)
 
         # Add learnable spatial embedding (same for all time steps in enc & dec)

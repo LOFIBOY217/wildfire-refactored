@@ -154,6 +154,30 @@ DECODER_CTX_CHANNELS = {"fire_clim", "population", "slope", "burn_age", "burn_co
 # Static channel loader
 # ------------------------------------------------------------------ #
 
+def _assert_channel_quality(arr, name, max_frac_same_value=0.999, warn_only=True):
+    """Sanity check: flag channels where >99.9% of pixels have the same value
+    (typical symptom of sentinel/nodata not masked).
+
+    Default warn-only to avoid false positives on legitimately sparse data
+    (e.g. population is mostly 0). Set warn_only=False for hard fail.
+    """
+    total = arr.size
+    if total == 0:
+        return
+    # Fast check: count nonzero. If almost all zero, that's fine (sparse data).
+    # The dangerous case is a specific non-zero value dominating.
+    vals, counts = np.unique(arr, return_counts=True)
+    top_val = vals[counts.argmax()]
+    top_frac = counts.max() / total
+    if top_val != 0 and top_frac > max_frac_same_value:
+        msg = (f"  [QUALITY] {name}: {top_frac:.1%} of pixels have value "
+               f"{top_val:.3f} (likely sentinel not masked!)")
+        if warn_only:
+            print(f"  WARN: {msg}")
+        else:
+            raise ValueError(msg)
+
+
 def _load_static_channel(tif_path, expected_h, expected_w, name="static"):
     """Load a static single-band GeoTIFF. Returns (H, W) float32 (zeros on failure).
 
@@ -177,6 +201,8 @@ def _load_static_channel(tif_path, expected_h, expected_w, name="static"):
     print(f"  {name}: {arr.shape}  nonzero={nonzero:,}  "
           f"max={arr.max():.3f}  mean(nz)={arr[arr>0].mean():.3f}" if nonzero else
           f"  {name}: {arr.shape}  ALL ZERO")
+    # Data quality check
+    _assert_channel_quality(arr, name, warn_only=True)
     return arr
 
 
@@ -488,6 +514,26 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                            per_lead_eval=False,
                            decoder_ctx_fn=None):
     """V3 validation: standard pixel-level metrics + optional cluster/per-lead."""
+    # PROBE: validate full forward pass with fake tensors BEFORE running all windows.
+    # Catches shape mismatches (like missing decoder_ctx_fn) in <1 second.
+    if len(val_wins) > 0 and dec_dim is not None:
+        try:
+            _B, _hs, _he, _ts, _te = 2, *val_wins[0]
+            _enc_dim = meteo_patched.shape[2]
+            _dec_days = _te - _ts
+            _probe_enc = torch.zeros(_B, _he - _hs, _enc_dim,
+                                     dtype=torch.float32, device=device)
+            _probe_dec = torch.zeros(_B, _dec_days, dec_dim,
+                                     dtype=torch.float32, device=device)
+            _probe_pids = (torch.zeros(_B, dtype=torch.long, device=device)
+                           if use_patch_embed else None)
+            with torch.no_grad():
+                _ = model(_probe_enc, _probe_dec, _probe_pids)
+        except Exception as _e:
+            print(f"  [VAL PROBE FAILED] {type(_e).__name__}: {_e}")
+            print(f"    enc shape: ({_B}, {_he-_hs}, {_enc_dim})")
+            print(f"    dec shape: ({_B}, {_dec_days}, {dec_dim})")
+            raise
     # Pixel-level metrics via V2 function
     _n_wins = len(val_wins) if full_val else n_sample_wins
     pixel_metrics = _compute_val_lift_k(
@@ -911,6 +957,24 @@ def main():
         lead_end = 45
     decoder_days = lead_end - lead_start + 1
 
+    # Print git SHA so logs always show which commit is running
+    # (Python modules are cached at import — this prevents "fix pushed but job uses old code" confusion)
+    try:
+        import subprocess as _sp
+        _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        _git_sha = _sp.check_output(
+            ["git", "-C", _repo_root, "rev-parse", "--short", "HEAD"],
+            stderr=_sp.DEVNULL,
+        ).decode().strip()
+        _git_status = _sp.check_output(
+            ["git", "-C", _repo_root, "status", "--porcelain"],
+            stderr=_sp.DEVNULL,
+        ).decode().strip()
+        _dirty = " [DIRTY]" if _git_status else ""
+        print(f"\n=== CODE VERSION: git {_git_sha}{_dirty} ===")
+    except Exception as _e:
+        print(f"\n=== CODE VERSION: unknown ({_e}) ===")
+
     print("\n" + "=" * 70)
     print("S2S HOTSPOT TRANSFORMER V3  [Focal Loss, Hard Negatives]")
     print("=" * 70)
@@ -1270,7 +1334,13 @@ def main():
     # ----------------------------------------------------------------
     print(f"\n[STEP 5] Normalisation stats ({N_CHANNELS} channels):")
     for i, name in enumerate(CHANNEL_NAMES):
-        print(f"  {name:12s}  mean={meteo_means[i]:8.3f}  std={meteo_stds[i]:8.3f}")
+        # Quality sanity check on stats: warn if std is tiny (near-constant channel)
+        _warn = ""
+        if meteo_stds[i] < 1e-3:
+            _warn = "  [WARN: std<1e-3, channel nearly constant]"
+        elif abs(meteo_means[i]) > 1e4:
+            _warn = "  [WARN: |mean|>1e4, possible sentinel leak]"
+        print(f"  {name:12s}  mean={meteo_means[i]:8.3f}  std={meteo_stds[i]:8.3f}{_warn}")
     np.save(os.path.join(ckpt_dir, "norm_stats.npy"),
             np.stack([meteo_means, meteo_stds]))
 
