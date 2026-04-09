@@ -63,11 +63,30 @@ SSD_AVAIL_KB=$(df --output=avail $SLURM_TMPDIR | tail -1)
 SSD_AVAIL_GB=$((SSD_AVAIL_KB / 1048576))
 ts "=== LOCAL DISK: ${SSD_AVAIL_GB}GB available ==="
 
-if [ "$SSD_AVAIL_GB" -ge 600 ]; then
+SCRATCH_CACHE="$SCRATCH/meteo_cache/v3_full"
+PF_ON_SCRATCH=$(ls "$SCRATCH_CACHE"/meteo_v3_*_pf.dat 2>/dev/null | head -1)
+
+if [ "$SSD_AVAIL_GB" -ge 600 ] && [ -n "$PF_ON_SCRATCH" ]; then
+    # Best path: copy pre-built memmap from scratch to SSD (fast IO during training)
     CACHE_DIR="$LOCAL_CACHE"
+    PF_SIZE=$(du -h "$PF_ON_SCRATCH" | cut -f1)
+    ts "Copying pre-built memmap ($PF_SIZE) from scratch → SSD..."
+    cp "$PF_ON_SCRATCH" "$LOCAL_CACHE/" && ts "  Memmap copy OK" || {
+        ts "  WARNING: copy failed, falling back to Lustre"
+        CACHE_DIR="$SCRATCH_CACHE"
+    }
+    # Also copy stats and fire caches if they exist
+    cp "$SCRATCH_CACHE"/*_stats.npy "$LOCAL_CACHE/" 2>/dev/null || true
+    cp "$SCRATCH_CACHE"/fire_*.npy "$LOCAL_CACHE/" 2>/dev/null || true
+    cp "$SCRATCH_CACHE"/fire_*.dat "$LOCAL_CACHE/" 2>/dev/null || true
     ts "Using local SSD for meteo cache (${SSD_AVAIL_GB}GB available)"
+elif [ "$SSD_AVAIL_GB" -ge 600 ]; then
+    # SSD available but no pre-built cache — build on SSD (first run)
+    CACHE_DIR="$LOCAL_CACHE"
+    ts "No pre-built cache found. Building on SSD (${SSD_AVAIL_GB}GB available)"
 else
-    CACHE_DIR="$SCRATCH/meteo_cache/v3_full"
+    # SSD too small — read directly from Lustre (slower but works)
+    CACHE_DIR="$SCRATCH_CACHE"
     mkdir -p "$CACHE_DIR"
     ts "WARNING: SSD too small (${SSD_AVAIL_GB}GB < 600GB). Using Lustre: $CACHE_DIR"
 fi
@@ -122,7 +141,6 @@ $PYTHON -u -m src.training.train_v3 \
 TRAIN_EXIT=$?
 
 # Copy cache back to scratch for future resume/eval
-SCRATCH_CACHE="$SCRATCH/meteo_cache/v3_full"
 mkdir -p "$SCRATCH_CACHE"
 
 ts "=== COPYING CACHE BACK TO SCRATCH ==="
