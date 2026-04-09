@@ -1406,24 +1406,31 @@ def main():
                         frame[..., ch_idx] = -rolling_sum  # negative = deficit
 
                 elif ch_name == "burn_age":
-                    year = cur_date.year
+                    # Use PREVIOUS year's burn scars to avoid temporal leakage.
+                    # years_since_burn_YYYY.tif contains all fires from year YYYY,
+                    # so a sample from 2021-07 would see Sept-Dec 2021 fires.
+                    # Using year-1 ensures we only see fires strictly before this year.
+                    prev_year = cur_date.year - 1
                     raw = None
-                    if year in burn_scar_raw:
-                        raw = burn_scar_raw[year]
+                    if prev_year in burn_scar_raw:
+                        raw = burn_scar_raw[prev_year]
                     elif burn_scar_raw:
-                        nearest = min(burn_scar_raw.keys(), key=lambda y: abs(y - year))
-                        raw = burn_scar_raw[nearest]
+                        # Fallback: use nearest year that is <= prev_year
+                        valid_years = [y for y in burn_scar_raw.keys() if y <= prev_year]
+                        if valid_years:
+                            raw = burn_scar_raw[max(valid_years)]
                     if raw is not None:
                         frame[..., ch_idx] = _encode_burn_age(raw, args.burn_age_encoding)
 
                 elif ch_name == "burn_count":
-                    year = cur_date.year
-                    if year in burn_count_arrays:
-                        # log1p to compress range (0-10+ fires → 0-2.4)
-                        frame[..., ch_idx] = np.log1p(burn_count_arrays[year])
+                    # Same logic: use previous year to avoid temporal leakage
+                    prev_year = cur_date.year - 1
+                    if prev_year in burn_count_arrays:
+                        frame[..., ch_idx] = np.log1p(burn_count_arrays[prev_year])
                     elif burn_count_arrays:
-                        nearest = min(burn_count_arrays.keys(), key=lambda y: abs(y - year))
-                        frame[..., ch_idx] = np.log1p(burn_count_arrays[nearest])
+                        valid_years = [y for y in burn_count_arrays.keys() if y <= prev_year]
+                        if valid_years:
+                            frame[..., ch_idx] = np.log1p(burn_count_arrays[max(valid_years)])
 
             # Normalize and patchify
             frame -= meteo_means
