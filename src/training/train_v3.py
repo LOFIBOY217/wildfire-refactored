@@ -142,6 +142,12 @@ V3_CHANNEL_DEFS = {
     "u10":        {"type": "daily",   "required": False},
     "v10":        {"type": "daily",   "required": False},
     "CAPE":       {"type": "daily",   "required": False},
+    # V2-compatible FWI sub-components (for fair comparison experiments)
+    "FFMC":       {"type": "daily",   "required": False},
+    "DMC":        {"type": "daily",   "required": False},
+    "DC":         {"type": "daily",   "required": False},
+    "BUI":        {"type": "daily",   "required": False},
+    "ISI":        {"type": "daily",   "required": False},
 }
 
 DEFAULT_CHANNELS = "FWI,2t,fire_clim,lightning,NDVI,population,deep_soil,precip_def,slope,burn_age,burn_count,u10,v10,CAPE"
@@ -475,7 +481,9 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
                                      np.zeros(len(bg_tile_scores), dtype=np.float32)])
 
     n_total = len(all_scores)
-    k_eff = min(k, n_total)
+    # Adapt K for cluster-level: pixel-level K=5000 is meaningless for ~300 clusters.
+    # Use K = min(requested_k, 3 * n_clusters) to keep K proportional to the pool.
+    k_eff = min(k, n_total, max(3 * n_clusters, 50))
     top_idx = np.argpartition(all_scores, -k_eff)[-k_eff:]
     tp = float(all_labels_arr[top_idx].sum())
     baseline = n_clusters / n_total
@@ -483,6 +491,13 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
     precision_k = tp / k_eff
     lift_k = precision_k / baseline if baseline > 0 else 0.0
     recall_k = tp / n_clusters if n_clusters > 0 else 0.0
+
+    # Also compute PR-AUC at cluster level (threshold-independent, more robust)
+    try:
+        from sklearn.metrics import average_precision_score
+        cl_pr_auc = float(average_precision_score(all_labels_arr, all_scores))
+    except Exception:
+        cl_pr_auc = 0.0
 
     return {
         "lift_k": lift_k,
@@ -492,7 +507,9 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
         "n_clusters_raw": n_clusters_raw,
         "baseline": baseline,
         "n_items": n_total,
+        "k_eff": k_eff,
         "median_cluster_size": median_size,
+        "cl_pr_auc": cl_pr_auc,
     }
 
 
@@ -1031,6 +1048,18 @@ def main():
         deep_soil_dict = _build_flat_file_dict(deep_soil_dir, "deep_soil")
     precip_dict = _build_flat_file_dict(precip_dir, "tp") if "precip_def" in CHANNEL_NAMES else {}
 
+    # FWI sub-components (V2-compatible, for fair comparison experiments)
+    ffmc_dir = paths_cfg.get("ffmc_dir", "data/ffmc_data")
+    dmc_dir_ch = paths_cfg.get("dmc_dir", "data/dmc_data")
+    dc_dir_ch = paths_cfg.get("dc_dir", "data/dc_data")
+    bui_dir_ch = paths_cfg.get("bui_dir", "data/bui_data")
+    isi_dir_ch = paths_cfg.get("isi_dir", "data/isi_data")
+    ffmc_dict = _build_flat_file_dict(ffmc_dir, "ffmc") if "FFMC" in CHANNEL_NAMES else {}
+    dmc_dict = _build_flat_file_dict(dmc_dir_ch, "dmc") if "DMC" in CHANNEL_NAMES else {}
+    dc_dict = _build_flat_file_dict(dc_dir_ch, "dc") if "DC" in CHANNEL_NAMES else {}
+    bui_dict = _build_flat_file_dict(bui_dir_ch, "bui") if "BUI" in CHANNEL_NAMES else {}
+    isi_dict = _build_flat_file_dict(isi_dir_ch, "isi") if "ISI" in CHANNEL_NAMES else {}
+
     # Wind and CAPE (from ERA5 extraction — era5_to_daily.py output)
     u10_dir = paths_cfg.get("wind_u_dir", "data/era5_u10")
     v10_dir = paths_cfg.get("wind_v_dir", "data/era5_v10")
@@ -1523,12 +1552,15 @@ def main():
                     frame[..., ch_idx] = _interpolate_ndvi(cur_date, ndvi_index, ndvi_cache, H, W)
 
                 elif ch_name in ("2d", "tcw", "sm20", "st20", "lightning",
-                                 "deep_soil", "u10", "v10", "CAPE"):
+                                 "deep_soil", "u10", "v10", "CAPE",
+                                 "FFMC", "DMC", "DC", "BUI", "ISI"):
                     _daily_dicts = {
                         "2d": dew_dict, "tcw": tcw_dict, "sm20": sm20_dict,
                         "st20": st20_dict, "lightning": lightning_dict,
                         "deep_soil": deep_soil_dict, "u10": u10_dict,
                         "v10": v10_dict, "CAPE": cape_dict,
+                        "FFMC": ffmc_dict, "DMC": dmc_dict, "DC": dc_dict,
+                        "BUI": bui_dict, "ISI": isi_dict,
                     }
                     ch_dict = _daily_dicts.get(ch_name, {})
                     if cur_date in ch_dict:
