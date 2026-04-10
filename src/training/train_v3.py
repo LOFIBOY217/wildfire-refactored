@@ -888,6 +888,9 @@ def main():
     ap.add_argument("--ckpt_interval", type=int, default=2000,
                     help="Save mid-epoch checkpoint every N batches (0=disable). "
                          "Enables crash recovery without losing the whole epoch.")
+    ap.add_argument("--consolidated", type=str, default=None,
+                    help="Path to pre-consolidated encoder memmap (T,H,W,N_CH) float32. "
+                         "Skips 27K+ TIF opens, cache build ~16h → ~1-2h.")
     ap.add_argument("--eval_checkpoint", type=str, default=None,
                     help="Eval-only mode: load this checkpoint, run one val pass, "
                          "and exit. Use with --epochs 0.")
@@ -1447,6 +1450,19 @@ def main():
         # Precipitation accumulator for rolling deficit
         precip_deque = deque(maxlen=args.precip_deficit_days)
 
+        # FAST PATH: pre-consolidated encoder array (skips 27K+ TIF opens)
+        _con = None
+        _con_date_to_idx = None
+        if args.consolidated and os.path.exists(args.consolidated):
+            _con_dates_path = args.consolidated + ".dates.npy"
+            if os.path.exists(_con_dates_path):
+                _con_dates = np.load(_con_dates_path, allow_pickle=True)
+                _con = np.memmap(args.consolidated, dtype=np.float32, mode='r',
+                                 shape=(len(_con_dates), H, W, N_CHANNELS))
+                _con_date_to_idx = {d: i for i, d in enumerate(_con_dates)}
+                print(f"  [FAST] Consolidated: {_con.shape} "
+                      f"({os.path.getsize(args.consolidated) / 1e9:.1f} GB)")
+
         _fallback_fwi = None
         _fallback_t2m = None
         t0_mmap = time.time()
@@ -1455,7 +1471,23 @@ def main():
             cur_date = aligned_dates[t_idx]
             frame = np.zeros((H, W, N_CHANNELS), dtype=np.float32)
 
+            # FAST PATH: read entire frame from consolidated (1 memmap index)
+            _used_consolidated = False
+            if _con is not None:
+                _d_str = (cur_date.isoformat() if hasattr(cur_date, 'isoformat')
+                          else str(cur_date))
+                _ci = _con_date_to_idx.get(_d_str)
+                if _ci is not None:
+                    frame = np.array(_con[_ci])  # (H, W, N_CH) copy
+                    _used_consolidated = True
+
+            if not _used_consolidated:
+                # SLOW PATH: read individual TIF files per channel
+                pass  # fall through to per-channel loop below
+
             for ch_idx, ch_name in enumerate(CHANNEL_NAMES):
+                if _used_consolidated:
+                    continue  # already filled from consolidated array
                 ch_def = V3_CHANNEL_DEFS[ch_name]
 
                 if ch_name == "FWI":
