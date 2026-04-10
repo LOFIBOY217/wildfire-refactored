@@ -149,19 +149,30 @@ def fit_pca(full_cache, n_dates, n_patches, n_components=128,
             print(f"    sampled {i+1:,}/{n_samples:,}  "
                   f"({time.time()-t0:.0f}s)", flush=True)
 
-    print(f"  [PCA] Fitting PCA with n_components={n_components}...", flush=True)
-    mean_vec = samples.mean(axis=0)
-    centered = samples - mean_vec
+    print(f"  [PCA] Fitting PCA via covariance method...", flush=True)
+    # Memory-efficient PCA: compute covariance matrix (2048x2048 = 16MB)
+    # instead of doing SVD on (1M x 2048) sample matrix (which needs ~30GB).
+    mean_vec = samples.mean(axis=0).astype(np.float32)
+    # In-place centering to save memory
+    samples -= mean_vec
+    # Covariance: (2048, 2048) float64 for numerical precision
+    print(f"  [PCA] Computing covariance (2048x2048)...", flush=True)
+    cov = (samples.astype(np.float64).T @ samples.astype(np.float64)) / (n_samples - 1)
+    # Free the sample matrix now
+    del samples
+    import gc; gc.collect()
 
-    # Use SVD for PCA (more numerically stable than covariance)
-    # Only compute top-k via truncated SVD
-    from numpy.linalg import svd
-    # For 2048 dims, full SVD is fine (not too large)
-    U, S, Vt = svd(centered, full_matrices=False)
-    components = Vt[:n_components]  # (n_components, 2048)
+    print(f"  [PCA] Eigendecomposition of covariance...", flush=True)
+    # Eigendecomposition (symmetric matrix, fast)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    # eigh returns ascending, flip to descending
+    eigvals = eigvals[::-1]
+    eigvecs = eigvecs[:, ::-1]
+    components = eigvecs[:, :n_components].T  # (n_components, 2048)
 
     # Report variance explained
-    var_explained = (S[:n_components] ** 2).sum() / (S ** 2).sum()
+    total_var = eigvals.sum()
+    var_explained = eigvals[:n_components].sum() / total_var
     print(f"  [PCA] Variance explained by {n_components} components: "
           f"{var_explained:.4f} ({var_explained*100:.1f}%)")
     print(f"  [PCA] Fitting done ({time.time()-t0:.0f}s)", flush=True)

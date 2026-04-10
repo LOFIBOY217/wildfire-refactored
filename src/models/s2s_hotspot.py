@@ -105,6 +105,7 @@ class S2SHotspotTransformer(nn.Module):
             # and spatial/temporal context, then add. Prevents the small forecast
             # signal (e.g. 9-dim S2S) from being drowned by large context (1284-dim).
             dec_forecast_dim = patch_dim_dec - dec_ctx_dim
+            self._dec_forecast_dim = dec_forecast_dim  # remembered for shape assertions
             self.dec_forecast_embed = nn.Sequential(
                 nn.Linear(dec_forecast_dim, d_model),
                 nn.GELU(),
@@ -125,8 +126,10 @@ class S2SHotspotTransformer(nn.Module):
                 nn.GELU(),
                 nn.Linear(hidden_dec, d_model),
             )
+            self._dec_embed_in_dim = patch_dim_dec
         else:
             self.dec_embed = nn.Linear(patch_dim_dec, d_model)
+            self._dec_embed_in_dim = patch_dim_dec
         self.embed_drop = nn.Dropout(dropout)
 
         # Learnable spatial patch embedding (geographic location encoding).
@@ -190,10 +193,10 @@ class S2SHotspotTransformer(nn.Module):
 
         if self.dec_ctx_dim > 0 and self.dec_embed is None:
             # Dual-path: split decoder input into forecast + context, project separately, add
-            expected_dec_dim = self.dec_forecast_embed.in_features + self.dec_ctx_dim
+            expected_dec_dim = self._dec_forecast_dim + self.dec_ctx_dim
             assert decoder_input.shape[-1] == expected_dec_dim, (
                 f"decoder_input dim {decoder_input.shape[-1]} != expected "
-                f"{expected_dec_dim} (forecast {self.dec_forecast_embed.in_features} "
+                f"{expected_dec_dim} (forecast {self._dec_forecast_dim} "
                 f"+ ctx {self.dec_ctx_dim}). Did training augment with decoder_ctx "
                 f"but validation forget to?"
             )
@@ -203,8 +206,8 @@ class S2SHotspotTransformer(nn.Module):
             dec = self.dec_forecast_embed(dec_forecast) + self.dec_ctx_embed(dec_context)
             dec = self.pos_enc(self.embed_drop(dec))
         else:
-            assert decoder_input.shape[-1] == self.dec_embed.in_features, \
-                f"decoder_input dim {decoder_input.shape[-1]} != expected {self.dec_embed.in_features}"
+            assert decoder_input.shape[-1] == self._dec_embed_in_dim, \
+                f"decoder_input dim {decoder_input.shape[-1]} != expected {self._dec_embed_in_dim}"
             dec = self.pos_enc(self.embed_drop(self.dec_embed(decoder_input)))  # (B, dec_days, d_model)
 
         # Add learnable spatial embedding (same for all time steps in enc & dec)

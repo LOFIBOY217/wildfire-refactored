@@ -2,7 +2,7 @@
 #SBATCH --job-name=wf-s2s-compress
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
+#SBATCH --mem=96G
 #SBATCH --time=2-00:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/s2s_compress_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/s2s_compress_%j.err
@@ -46,13 +46,11 @@ echo "============================================="
 #     --out-file "$OUT_DIR/s2s_multistat_cache.dat" \
 #     --mode multi_stat
 
-# 2. subpatch_4x4 (4×4 sub-block means → 128 dims)
-echo ""
-echo ">>> MODE 2: subpatch_4x4 (128 dims)"
-python -u -m src.data_ops.processing.build_s2s_compressed_caches \
-    --full-cache "$FULL_CACHE" \
-    --out-file "$OUT_DIR/s2s_subpatch4x4_cache.dat" \
-    --mode subpatch_4x4
+# 2. subpatch_4x4 — ALREADY DONE (331G), skip
+# python -u -m src.data_ops.processing.build_s2s_compressed_caches \
+#     --full-cache "$FULL_CACHE" \
+#     --out-file "$OUT_DIR/s2s_subpatch4x4_cache.dat" \
+#     --mode subpatch_4x4
 
 # 3. pca (128 components from 2048 dims)
 echo ""
