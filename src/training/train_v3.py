@@ -885,6 +885,12 @@ def main():
     ap.add_argument("--eval_n_windows", type=int, default=20)
     ap.add_argument("--mem_limit_pct", type=float, default=90.0)
     ap.add_argument("--log_interval", type=int, default=500)
+    ap.add_argument("--ckpt_interval", type=int, default=2000,
+                    help="Save mid-epoch checkpoint every N batches (0=disable). "
+                         "Enables crash recovery without losing the whole epoch.")
+    ap.add_argument("--eval_checkpoint", type=str, default=None,
+                    help="Eval-only mode: load this checkpoint, run one val pass, "
+                         "and exit. Use with --epochs 0.")
     ap.add_argument("--no_amp", action="store_true")
     ap.add_argument("--pred_batch_size", type=int, default=256)
     ap.add_argument("--forecast_only", action="store_true")
@@ -1959,6 +1965,69 @@ def main():
     n_batches = len(train_dl)
     train_started = time.time()
 
+    # ----------------------------------------------------------------
+    # EVAL-ONLY mode: load checkpoint, run one val pass, exit.
+    # Use with --eval_checkpoint <path> --epochs 0 to skip training.
+    # ----------------------------------------------------------------
+    if args.eval_checkpoint:
+        print(f"\n=== EVAL-ONLY MODE ===")
+        print(f"  Checkpoint: {args.eval_checkpoint}")
+        if not os.path.exists(args.eval_checkpoint):
+            print(f"  ERROR: checkpoint not found")
+            return
+        ckpt = torch.load(args.eval_checkpoint, map_location=device, weights_only=False)
+        state = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if missing:
+            print(f"  [warn] {len(missing)} missing keys (first: {missing[:3]})")
+        if unexpected:
+            print(f"  [warn] {len(unexpected)} unexpected keys (first: {unexpected[:3]})")
+        _ep = ckpt.get("epoch", "?") if isinstance(ckpt, dict) else "?"
+        print(f"  Loaded from epoch {_ep}")
+
+        # Build decoder_ctx callback (same as training-time val)
+        _eval_ctx_fn = None
+        if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
+            def _eval_ctx_fn(xb_dec, cs, ce):
+                _ctx_batch = torch.from_numpy(
+                    _dec_ctx_np[cs:ce].astype(np.float32)
+                ).to(xb_dec.device)
+                return _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
+
+        print(f"\n[eval-only] Running validation on {len(val_wins_lift)} windows...")
+        _m = _compute_val_lift_k_v3(
+            model, meteo_patched, fire_patched, val_wins_lift,
+            n_patches, k=args.val_lift_k,
+            n_sample_wins=args.val_lift_sample_wins,
+            chunk=256, device=device,
+            decoder_mode=args.decoder, dec_dim=dec_dim,
+            val_win_dates=val_wins_lift_dates, patch_size=P,
+            s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+            s2s_means=s2s_means, s2s_stds=s2s_stds,
+            date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+            s2s_full_cache=s2s_full_cache,
+            use_patch_embed=args.use_patch_embed,
+            random_encoder=args.random_encoder,
+            cluster_eval=args.cluster_eval,
+            cluster_min_size=args.cluster_min_size,
+            hw=hw, grid=grid, full_val=args.full_val,
+            per_lead_eval=args.per_lead_eval,
+            decoder_ctx_fn=_eval_ctx_fn,
+        )
+        print(f"\n=== EVAL RESULTS ===")
+        print(f"  Lift@{args.val_lift_k}: {_m['lift_k']:.3f}±{_m.get('lift_k_std', 0):.3f}x")
+        print(f"  Prec@{args.val_lift_k}: {_m['precision_k']:.4f}")
+        print(f"  Recall@{args.val_lift_k}: {_m['recall_k']:.4f}")
+        print(f"  ROC-AUC: {_m.get('roc_auc', 0):.4f}")
+        print(f"  PR-AUC : {_m.get('pr_auc', 0):.4f}")
+        print(f"  Brier  : {_m.get('brier', 0):.4f}")
+        print(f"  n_fire : {_m.get('n_fire', 0):,}")
+        if "cluster_lift_k" in _m:
+            print(f"  Cluster Lift@{args.val_lift_k}: {_m['cluster_lift_k']:.3f}±"
+                  f"{_m.get('cluster_lift_k_std', 0):.3f}x  "
+                  f"({_m.get('cluster_n_windows', 0)} wins)")
+        return
+
     for epoch in range(start_epoch, args.epochs + 1):
         if mem_guard.triggered:
             print(f"  MemoryGuard triggered — stopping.")
@@ -2016,6 +2085,34 @@ def main():
                 print(f"    ep{epoch} [{batch_idx+1:5d}/{n_batches} {pct*100:4.1f}%]  "
                       f"loss={train_loss/max(train_samples,1):.4f}  "
                       f"{(batch_idx+1)/elapsed:.1f}b/s")
+
+            # Mid-epoch checkpoint (no val, lightweight snapshot for crash recovery)
+            # Saves every `ckpt_interval` batches, atomic rename to prevent partial writes.
+            if (args.ckpt_interval > 0
+                    and (batch_idx + 1) % args.ckpt_interval == 0
+                    and (batch_idx + 1) < n_batches):
+                _mid_path = os.path.join(ckpt_dir, f"epoch_{epoch:02d}_mid.pt")
+                _mid_tmp = _mid_path + ".tmp"
+                _mid_payload = {
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": (scheduler.state_dict()
+                                             if scheduler is not None else None),
+                    "epoch": epoch,
+                    "batch_idx": batch_idx + 1,
+                    "args": vars(args),
+                }
+                try:
+                    torch.save(_mid_payload, _mid_tmp)
+                    os.replace(_mid_tmp, _mid_path)  # atomic rename
+                    print(f"    [mid-ckpt] saved batch {batch_idx+1} → {_mid_path}")
+                except Exception as _e:
+                    print(f"    [mid-ckpt] save failed: {_e}")
+                    if os.path.exists(_mid_tmp):
+                        try:
+                            os.remove(_mid_tmp)
+                        except Exception:
+                            pass
 
         if train_samples == 0:
             print(f"  Epoch {epoch}: all NaN — stopping.")
