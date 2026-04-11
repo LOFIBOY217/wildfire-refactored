@@ -86,7 +86,7 @@ $PYTHON -u -m src.training.train_v3 \
     --fire_season_only \
     --cluster_eval \
     --decoder_ctx \
-    --cache_dir "$SCRATCH/meteo_cache/v3_full" \
+    --cache_dir "${CACHE_DIR:-$SCRATCH/meteo_cache/v3_full}" \
     --chunk_patches 2000 \
     --num_workers 2 \
     --skip_forecast \
