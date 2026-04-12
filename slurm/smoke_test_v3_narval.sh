@@ -110,7 +110,7 @@ if [ -f "$S2S_FULL_CACHE" ]; then
     $PYTHON -u -m src.training.train_v3 \
         --config configs/paths_narval.yaml \
         --run_name smoke_test_fp \
-        --data_start 2021-06-01 \
+        --data_start 2021-04-01 \
         --pred_start 2021-08-01 \
         --pred_end 2021-09-30 \
         --channels "$CHANNELS" \
