@@ -1767,6 +1767,33 @@ def main():
             s2s_means = None
             s2s_stds  = None
 
+    elif args.decoder == "s2s" and args.s2s_full_cache:
+        print(f"\n[S2S decoder — full-patch] dec_dim={dec_dim_base}")
+        s2s_fc_path = args.s2s_full_cache
+        if not os.path.exists(s2s_fc_path):
+            raise FileNotFoundError(f"S2S full-patch cache not found: {s2s_fc_path}")
+        dates_file = s2s_fc_path + ".dates.npy"
+        if not os.path.exists(dates_file):
+            raise FileNotFoundError(f"S2S full-patch dates file not found: {dates_file}")
+        s2s_dates = np.load(dates_file, allow_pickle=True)
+        s2s_n_dates = len(s2s_dates)
+        # Full-patch cache shape: (n_dates, n_patches, 32, 2048)
+        s2s_full_cache = np.memmap(s2s_fc_path, dtype="float16", mode="r",
+                                    shape=(s2s_n_dates, n_patches, 32, dec_dim_base))
+        print(f"  S2S full-patch cache: {s2s_full_cache.shape}  "
+              f"({os.path.getsize(s2s_fc_path)/1e12:.2f} TB)")
+        date_to_s2s_idx, date_to_s2s_exact, date_to_s2s_lag = _expand_s2s_date_mapping(
+            s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
+        )
+        _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
+        _n_fallback = sum(
+            1 for d in aligned_dates
+            if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
+        )
+        _n_miss = len(aligned_dates) - _n_exact - _n_fallback
+        print(f"  S2S date mapping: exact={_n_exact}  fallback={_n_fallback}  "
+              f"miss={_n_miss}  (max_lag={args.s2s_max_issue_lag}d)")
+
     # ----------------------------------------------------------------
     # STEP 7b  Positive pairs + HARD NEGATIVE MINING
     # ----------------------------------------------------------------
