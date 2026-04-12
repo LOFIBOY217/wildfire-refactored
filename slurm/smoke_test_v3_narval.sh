@@ -92,11 +92,74 @@ $PYTHON -u -m src.training.train_v3 \
     --log_interval 10 \
     --skip_forecast
 
-EXIT=$?
-echo ""
-if [ $EXIT -eq 0 ]; then
-    echo "=== SMOKE TEST PASSED ✓ ==="
+EXIT1=$?
+
+if [ $EXIT1 -eq 0 ]; then
+    echo "=== SMOKE TEST 1 (s2s_legacy) PASSED ✓ ==="
 else
-    echo "=== SMOKE TEST FAILED (exit=$EXIT) ==="
+    echo "=== SMOKE TEST 1 (s2s_legacy) FAILED (exit=$EXIT1) ==="
+    exit $EXIT1
 fi
-exit $EXIT
+
+# Smoke test 2: full-patch S2S decoder (2048 dim) + enc21
+echo ""
+echo "=== SMOKE TEST 2: full-patch decoder + enc21 ==="
+S2S_FULL_CACHE="$SCRATCH/wildfire-refactored/data/s2s_full_patch_cache.dat"
+
+if [ -f "$S2S_FULL_CACHE" ]; then
+    $PYTHON -u -m src.training.train_v3 \
+        --config configs/paths_narval.yaml \
+        --run_name smoke_test_fp \
+        --data_start 2021-06-01 \
+        --pred_start 2021-08-01 \
+        --pred_end 2021-09-30 \
+        --channels "$CHANNELS" \
+        --in_days 21 \
+        --decoder s2s \
+        --s2s_full_cache "$S2S_FULL_CACHE" \
+        --dec_dim 2048 \
+        --loss_fn focal \
+        --focal_alpha 0.25 \
+        --focal_gamma 2.0 \
+        --hard_neg_fraction 0.5 \
+        --neg_ratio 20 \
+        --neg_buffer 2 \
+        --batch_size 256 \
+        --epochs 1 \
+        --lr 1e-4 \
+        --d_model 256 \
+        --nhead 8 \
+        --enc_layers 4 \
+        --dec_layers 4 \
+        --patch_size 16 \
+        --val_lift_k 1000 \
+        --val_lift_sample_wins 2 \
+        --fire_season_only \
+        --cluster_eval \
+        --decoder_ctx \
+        --load_train_to_ram \
+        --cache_dir "$LOCAL_CACHE" \
+        --chunk_patches 2000 \
+        --num_workers 2 \
+        --log_interval 10 \
+        --skip_forecast
+    EXIT2=$?
+else
+    echo "  [SKIP] s2s_full_patch_cache.dat not found"
+    EXIT2=0
+fi
+
+echo ""
+if [ $EXIT2 -eq 0 ]; then
+    echo "=== SMOKE TEST 2 (full-patch + enc21) PASSED ✓ ==="
+else
+    echo "=== SMOKE TEST 2 (full-patch + enc21) FAILED (exit=$EXIT2) ==="
+fi
+
+if [ $EXIT1 -eq 0 ] && [ $EXIT2 -eq 0 ]; then
+    echo "=== ALL SMOKE TESTS PASSED ✓ ==="
+    exit 0
+else
+    echo "=== SOME SMOKE TESTS FAILED ==="
+    exit 1
+fi
