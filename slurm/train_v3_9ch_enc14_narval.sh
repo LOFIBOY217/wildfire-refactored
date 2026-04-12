@@ -2,7 +2,7 @@
 #SBATCH --job-name=wf-v3-enc14
 #SBATCH --gpus-per-node=1
 #SBATCH --time=3-00:00:00
-#SBATCH --mem=256G
+#SBATCH --mem=500G
 #SBATCH --output=/scratch/jiaqi217/logs/train_v3_9ch_enc14_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/train_v3_9ch_enc14_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL

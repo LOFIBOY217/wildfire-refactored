@@ -1251,6 +1251,8 @@ def main():
                     "st20": st20_dict, "lightning": lightning_dict,
                     "deep_soil": deep_soil_dict, "u10": u10_dict,
                     "v10": v10_dict, "CAPE": cape_dict,
+                    "FFMC": ffmc_dict, "DMC": dmc_dict, "DC": dc_dict,
+                    "BUI": bui_dict, "ISI": isi_dict,
                 }
                 ch_dict = _daily_dicts.get(ch_name, {})
                 if ch_dict:
@@ -2040,7 +2042,16 @@ def main():
             print(f"  ERROR: checkpoint not found")
             return
         ckpt = torch.load(args.eval_checkpoint, map_location=device, weights_only=False)
-        state = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
+        # Support both naming conventions: train_v3 saves "model_state", V2 saves "model_state_dict"
+        if isinstance(ckpt, dict):
+            if "model_state_dict" in ckpt:
+                state = ckpt["model_state_dict"]
+            elif "model_state" in ckpt:
+                state = ckpt["model_state"]
+            else:
+                state = ckpt
+        else:
+            state = ckpt
         missing, unexpected = model.load_state_dict(state, strict=False)
         if missing:
             print(f"  [warn] {len(missing)} missing keys (first: {missing[:3]})")
