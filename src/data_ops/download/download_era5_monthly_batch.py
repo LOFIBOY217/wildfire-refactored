@@ -62,7 +62,7 @@ VARIANTS = {
 def _make_cds_client(api_key=None):
     import cdsapi
     if api_key is None:
-        api_key = os.environ.get("CDS_API_KEY", "5d9b9a0f-cb8f-4773-884d-5ecaa33e6c39")
+        api_key = os.environ.get("CDS_API_KEY", "d952a10c-f9c0-4ff3-92e1-aac8756dd123")
     return cdsapi.Client(
         url="https://cds.climate.copernicus.eu/api",
         key=api_key,
