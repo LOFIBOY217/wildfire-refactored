@@ -66,7 +66,7 @@ def _make_cds_client(api_key=None):
     return cdsapi.Client(
         url="https://cds.climate.copernicus.eu/api",
         key=api_key,
-        quiet=True,
+        quiet=False,
     )
 
 
