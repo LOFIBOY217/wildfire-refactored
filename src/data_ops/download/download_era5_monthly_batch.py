@@ -49,12 +49,12 @@ VARIANTS = {
             'convective_available_potential_energy',
         ],
         "output_pattern": "era5_sfc_{year}_{month:02d}.grib",
-        "output_dir_key": "era5_on_fwi_grid",
+        "output_dir_key": "era5_dir",
     },
     "deep_soil": {
         "variables": ['volumetric_soil_water_layer_2'],
         "output_pattern": "era5_swvl2_{year}_{month:02d}.grib",
-        "output_dir_key": "era5_deep_soil",
+        "output_dir_key": "deep_soil_dir",
     },
 }
 

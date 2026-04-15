@@ -130,10 +130,14 @@ def process_single_grib(grib_path, output_dir, skip_existing=True):
             try:
                 data = ds[grib_var]
 
-                # Daily average
-                if 'time' in data.dims:
-                    daily_avg = data.mean(dim='time')
-                    print(f"  Averaged {len(data.time)} timesteps for {out_var}")
+                # Average over all non-spatial dims to get a 2-D (lat, lon) array.
+                # For most variables this is just 'time'; for accumulated fields
+                # like tp, cfgrib may also produce a 'step' dimension.
+                spatial_dims = {'latitude', 'longitude'}
+                avg_dims = [d for d in data.dims if d not in spatial_dims]
+                if avg_dims:
+                    daily_avg = data.mean(dim=avg_dims)
+                    print(f"  Averaged dims {avg_dims} for {out_var}")
                 else:
                     daily_avg = data
                     print(f"  Single timestep for {out_var}, no averaging needed")
@@ -153,10 +157,15 @@ def process_single_grib(grib_path, output_dir, skip_existing=True):
                     continue
 
                 data_array = daily_avg.values
-                if data_array.ndim == 2:
-                    pass
-                elif data_array.ndim == 3:
+                # Ensure exactly 2-D (lat, lon). Squeeze any remaining
+                # size-1 dimensions; average any remaining size->1 dims.
+                if data_array.ndim > 2:
                     data_array = np.squeeze(data_array)
+                if data_array.ndim > 2:
+                    # Still extra dims after squeeze (size > 1); average them
+                    while data_array.ndim > 2:
+                        data_array = data_array.mean(axis=0)
+                    print(f"  Warning: extra dims averaged for {out_var}")
 
                 # ERA5 is regular lat/lon grid
                 lat_min, lat_max = lats.min(), lats.max()

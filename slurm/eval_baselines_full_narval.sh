@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=wf-baseline
-#SBATCH --time=4:00:00
+#SBATCH --time=24:00:00
 #SBATCH --mem=256G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/baseline_full_%j.log
@@ -31,7 +31,7 @@ echo "============================================="
 python3 -u -m src.evaluation.benchmark_baselines \
     --config configs/paths_narval.yaml \
     --baseline fwi_oracle climatology \
-    --eval_mode per_leadday \
+    --eval_mode per_window \
     --k_values 1000 2500 5000 10000 25000 \
     --n_sample_wins 9999 \
     --pred_start 2022-05-01 \
