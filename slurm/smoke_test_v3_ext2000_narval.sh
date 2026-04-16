@@ -99,14 +99,14 @@ if [ $PREFLIGHT_OK -eq 0 ]; then
 fi
 echo "  [OK] All critical files present for 2000-2017 sample dates"
 
-# --- VALIDATE ALL CHANNELS ---
+# --- VALIDATE ALL CHANNELS (with timeout; Lustre stat-walk is slow) ---
 echo ""
-echo "=== Running full channel validation ==="
-$PYTHON -u -m src.data_ops.validation.validate_all_channels \
+echo "=== Running full channel validation (5min timeout) ==="
+timeout 300 $PYTHON -u -m src.data_ops.validation.validate_all_channels \
     --config configs/paths_narval.yaml \
     --start_year 2000 \
     --end_year 2025 || {
-    echo "  [WARN] validation exited non-zero (continue to smoke test anyway)"
+    echo "  [WARN] validation timed out or failed (continue to smoke test anyway)"
 }
 
 # --- SMOKE TEST: 9ch, tiny year-2000 range, 1 epoch ---
