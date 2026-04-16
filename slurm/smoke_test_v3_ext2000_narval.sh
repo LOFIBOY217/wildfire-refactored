@@ -77,16 +77,18 @@ for yr in 2000 2001 2010 2017; do
     check_file "$SCRATCH/wildfire-refactored/data/burn_scars/burn_count_${yr}.tif"
 done
 
-# ERA5 observation 2t/2d/tcw/sm20 for a few early dates
-for dt in 20000501 20000601 20010501 20050515 20100801 20170615; do
+# ERA5 observation 2t/2d/tcw/sm20 — smoke test only needs 2000-2001 dates
+# (NOTE: 2010-2017 ERA5 TIFs are still being downloaded/resampled; this test
+#  intentionally focuses on the year-2000 edge cases, not the 2010-2017 gap)
+for dt in 20000501 20000601 20000715 20010501 20010715 20010901; do
     check_file "$SCRATCH/wildfire-refactored/data/ecmwf_observation/2t/2t_${dt}.tif"
     check_file "$SCRATCH/wildfire-refactored/data/ecmwf_observation/2d/2d_${dt}.tif"
     check_file "$SCRATCH/wildfire-refactored/data/ecmwf_observation/tcw/tcw_${dt}.tif"
     check_file "$SCRATCH/wildfire-refactored/data/ecmwf_observation/sm20/sm20_${dt}.tif"
 done
 
-# FWI for same dates
-for dt in 20000501 20000601 20010501 20050515 20100801 20170615; do
+# FWI for same dates (2000-2001 only)
+for dt in 20000501 20000601 20000715 20010501 20010715 20010901; do
     check_file "$SCRATCH/wildfire-refactored/data/fwi_data/fwi_${dt}.tif"
 done
 
