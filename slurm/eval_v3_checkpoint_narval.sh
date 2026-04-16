@@ -45,6 +45,7 @@ PYTHON=python
 
 # Default optional args
 DECODER=${DECODER:-s2s_legacy}
+IN_DAYS=${IN_DAYS:-7}
 FULL_VAL_FLAG=""
 [ "${FULL_VAL:-0}" = "1" ] && FULL_VAL_FLAG="--full_val"
 
@@ -54,6 +55,7 @@ echo "  Checkpoint: $CKPT"
 echo "  Run name  : $RUN_NAME"
 echo "  Channels  : $CHANNELS"
 echo "  Decoder   : $DECODER"
+echo "  in_days   : $IN_DAYS"
 echo "  Full val  : ${FULL_VAL:-0}"
 echo "  Node      : $(hostname)"
 echo "  Time      : $(date)"
@@ -71,6 +73,7 @@ $PYTHON -u -m src.training.train_v3 \
     --pred_start 2022-05-01 \
     --pred_end 2025-10-31 \
     --channels "$CHANNELS" \
+    --in_days "$IN_DAYS" \
     --decoder "$DECODER" \
     --s2s_cache "$LOCAL_CACHE/s2s_decoder_cache.dat" \
     --s2s_max_issue_lag 3 \
