@@ -30,6 +30,6 @@ paths:
   population_tif:      "/scratch/jiaqi217/wildfire-refactored/data/population_density.tif"
   climate_indices_csv: "/scratch/jiaqi217/wildfire-refactored/data/climate_indices/climate_indices.csv"
   ciffc_csv:           "/scratch/jiaqi217/wildfire-refactored/data/ciffc/ciffc_logistic_20230505_20250821.csv"
-  hotspot_csv:         "/scratch/jiaqi217/wildfire-refactored/data/hotspot/hotspot_2018_2025.csv"
+  hotspot_csv:         "/scratch/jiaqi217/wildfire-refactored/data/hotspot/hotspot_2000_2025.csv"
   output_dir:          "/scratch/jiaqi217/wildfire-refactored/outputs"
   checkpoint_dir:      "/scratch/jiaqi217/wildfire-refactored/checkpoints"
