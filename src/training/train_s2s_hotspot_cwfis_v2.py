@@ -729,11 +729,12 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
 
     # Extended metric set (2026-04-17 evaluation overhaul)
     # Added: f1, f2, mcc (imbalanced standards)
+    #        bss (Brier Skill Score vs climatology — core skill)
     #        lift_coarse (30km grid — removes spatial autocorrelation)
     #        reliability, resolution (Brier decomposition)
     _METRIC_KEYS = ["lift_k", "precision_k", "recall_k", "csi_k", "ets_k",
                     "pr_auc", "roc_auc", "brier", "n_fire", "baseline",
-                    "f1", "f2", "mcc",
+                    "f1", "f2", "mcc", "bss",
                     "lift_coarse", "reliability", "resolution"]
     per_win_metrics = []
     total_n_fire = 0
@@ -922,6 +923,11 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 roc_auc_w = 0.0
             brier_w       = float(np.mean((p - y) ** 2))
 
+            # --- New: Brier Skill Score vs climatology reference ---
+            # Reference predicts baseline_w everywhere → Brier = p(1-p)
+            brier_clim_w = baseline_w * (1 - baseline_w)
+            bss_w = float(1 - brier_w / brier_clim_w) if brier_clim_w > 0 else 0.0
+
             # --- New: F1 / F2 / MCC at F1-optimal threshold ---
             f1_w, f2_w, mcc_w = _f1f2mcc(y, p)
 
@@ -951,6 +957,7 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 "f1":          f1_w,
                 "f2":          f2_w,
                 "mcc":         mcc_w,
+                "bss":         bss_w,
                 "lift_coarse": lift_coarse_w,
                 "reliability": reliability_w,
                 "resolution":  resolution_w,

@@ -2130,6 +2130,8 @@ def main():
         print(f"  MCC            : {_m.get('mcc', 0):.4f}")
         print(f"  PR-AUC         : {_m.get('pr_auc', 0):.4f}")
         print(f"  ROC-AUC        : {_m.get('roc_auc', 0):.4f} (less reliable for 0.03%-rate)")
+        print(f"  --- skill vs climatology ---")
+        print(f"  BSS            : {_m.get('bss', 0):.4f} (Brier Skill Score; >0 beats climatology)")
         print(f"  --- calibration (Brier decomposition) ---")
         print(f"  Brier          : {_m.get('brier', 0):.5f}")
         print(f"  Reliability    : {_m.get('reliability', 0):.5f} (lower = better calibrated)")
