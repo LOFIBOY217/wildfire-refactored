@@ -3,15 +3,16 @@
 All 20-window results unless marked (full) = 811 windows.
 K=5000 pixels (~2万km²). Goal: improve Lift@5000 metric.
 
-Last updated: **2026-04-14**
+Last updated: **2026-04-17**
 
 ---
 
-## Best Results Summary (Current Leader: enc28)
+## Best Results Summary (Current Leader: enc35)
 
 | Model | Best Lift@5000 | Config | Eval |
 |-------|---------------|--------|------|
-| **V3 9ch enc28 (ep1)** | **6.43x ★** | focal, bs=4096, drop=0.2, in_days=28 | 20-win |
+| **V3 9ch enc35 (ep1)** | **6.56x ★** | focal, bs=4096, drop=0.2, in_days=35 | 20-win |
+| V3 9ch enc28 (ep1) | 6.43x | same, in_days=28 | 20-win |
 | V3 9ch enc21 (ep1) | 5.80x | same, in_days=21 | 20-win |
 | V3 9ch enc14 (ep3) | 5.37x | same, in_days=14 | 20-win |
 | V3 9ch reg (ep1) | 5.43x | same, in_days=7 | 20-win |
@@ -30,14 +31,17 @@ Last updated: **2026-04-14**
 
 ## Key Findings (Ranked by Effect Size)
 
-### 1. Encoder Length = Best Lever
+### 1. Encoder Length = Best Lever (diminishing returns past enc28)
 ```
 enc7:  4.30-5.43x  (depends on regularization)
 enc14: 5.37x
 enc21: 5.80x
-enc28: 6.43x ★
+enc28: 6.43x
+enc35: 6.56x ★  (+0.13x over enc28 — marginal)
 ```
-Longer encoder captures multi-week drought/warming trends that precede fire.
+Longer encoder captures multi-week drought/warming trends. enc35 is current SOTA
+but the enc28→enc35 delta is much smaller than enc21→enc28 (+0.13x vs +0.63x).
+Pending: enc42, enc56 (running 2026-04-17) to confirm ceiling.
 
 ### 2. Anti-Overfit Config = Necessary
 - bs=4096 (was 1024) — 4× fewer gradient updates
@@ -62,10 +66,18 @@ Longer encoder captures multi-week drought/warming trends that precede fire.
 
 ## V3 Anti-Overfit: Full Results (4 epochs each)
 
-### enc28 (current best)
+### enc35 (current best — added 2026-04-17)
 | Ep | Loss | Lift@5000 | Prec | ROC-AUC |
 |----|------|-----------|------|---------|
-| **1** | 0.008833 | **6.43x ★** | 0.528 | 0.858 |
+| **1** | 0.008869 | **6.56x ★** | 0.535 | 0.860 |
+| 2 | 0.006114 | 6.49x | 0.541 | 0.847 |
+| 3 | 0.005388 | 5.72x | 0.467 | 0.816 |
+| 4 | 0.005039 | 5.75x | 0.477 | 0.796 |
+
+### enc28
+| Ep | Loss | Lift@5000 | Prec | ROC-AUC |
+|----|------|-----------|------|---------|
+| **1** | 0.008833 | **6.43x** | 0.528 | 0.858 |
 | 2 | 0.006211 | 5.57x | 0.464 | 0.841 |
 | 3 | 0.005495 | 5.63x | 0.465 | 0.811 |
 | 4 | 0.005138 | 4.96x | 0.413 | 0.788 |
