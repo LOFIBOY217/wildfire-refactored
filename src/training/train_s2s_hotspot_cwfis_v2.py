@@ -896,6 +896,17 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
         vals = [m[mk] for m in per_win_metrics]
         result[mk]           = float(np.mean(vals))
         result[mk + "_std"]  = float(np.std(vals))
+
+    # Bootstrap 95% CI for business-critical metrics
+    # (Lift@K, Lift@30km, Recall@K, BSS — the ones we make decisions on)
+    from src.evaluation.metrics import bootstrap_ci
+    _BOOTSTRAP_METRICS = ["lift_k", "lift_coarse", "recall_k", "bss"]
+    for mk in _BOOTSTRAP_METRICS:
+        vals = [m[mk] for m in per_win_metrics]
+        ci = bootstrap_ci(vals, n_boot=1000, alpha=0.05)
+        result[mk + "_ci_low"]  = ci["ci_low"]
+        result[mk + "_ci_high"] = ci["ci_high"]
+
     result["n_fire"]    = total_n_fire        # override with total count
     result["n_windows"] = len(per_win_metrics)
 

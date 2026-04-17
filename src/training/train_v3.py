@@ -2118,32 +2118,55 @@ def main():
             per_lead_eval=args.per_lead_eval,
             decoder_ctx_fn=_eval_ctx_fn,
         )
-        print(f"\n=== EVAL RESULTS ===")
-        print(f"  Lift@{args.val_lift_k}   : {_m['lift_k']:.3f}±{_m.get('lift_k_std', 0):.3f}x")
-        print(f"  Prec@{args.val_lift_k}   : {_m['precision_k']:.4f}")
-        print(f"  Recall@{args.val_lift_k} : {_m['recall_k']:.4f}")
-        print(f"  CSI@{args.val_lift_k}    : {_m.get('csi_k', 0):.4f}")
-        print(f"  ETS@{args.val_lift_k}    : {_m.get('ets_k', 0):.4f}")
-        print(f"  --- rare-event standards ---")
-        print(f"  F1             : {_m.get('f1', 0):.4f} (at F1-optimal threshold)")
-        print(f"  F2             : {_m.get('f2', 0):.4f}")
-        print(f"  MCC            : {_m.get('mcc', 0):.4f}")
-        print(f"  PR-AUC         : {_m.get('pr_auc', 0):.4f}")
-        print(f"  ROC-AUC        : {_m.get('roc_auc', 0):.4f} (less reliable for 0.03%-rate)")
-        print(f"  --- skill vs climatology ---")
-        print(f"  BSS            : {_m.get('bss', 0):.4f} (Brier Skill Score; >0 beats climatology)")
-        print(f"  --- calibration (Brier decomposition) ---")
-        print(f"  Brier          : {_m.get('brier', 0):.5f}")
-        print(f"  Reliability    : {_m.get('reliability', 0):.5f} (lower = better calibrated)")
-        print(f"  Resolution     : {_m.get('resolution', 0):.5f} (higher = sharper)")
-        print(f"  --- spatial-autocor-free ---")
-        print(f"  Lift@30km      : {_m.get('lift_coarse', 0):.3f}x "
-              f"(coarsened to S2S scale, the honest number)")
-        print(f"  n_fire         : {_m.get('n_fire', 0):,}")
+        # ═════════════════════════════════════════════════════════════════
+        # BUSINESS SUMMARY CARD — what matters for financial risk ranking.
+        # Lift is the primary decision metric: "top-K predicted locations
+        # have N× higher fire density than random", directly maps to
+        # insurance pricing / resource allocation ROI.
+        # ═════════════════════════════════════════════════════════════════
+        k = args.val_lift_k
+        n_wins = _m.get('n_windows', 0)
+
+        print(f"\n╔══════════════════════════════════════════════════════════╗")
+        print(f"║  BUSINESS SUMMARY — Fire Risk Ranking Quality             ║")
+        print(f"║  ({n_wins} val windows, K={k})                            ║")
+        print(f"╚══════════════════════════════════════════════════════════╝")
+
+        def _fmt_ci(mean_v, lo, hi, suffix='x'):
+            return f"{mean_v:.3f}{suffix}  [95% CI: {lo:.3f}–{hi:.3f}]"
+
+        print(f"\n  🎯 LIFT FAMILY (decision metric, higher=better)")
+        print(f"  ─────────────────────────────────────────────────────────")
+        print(f"  Lift@{k} (2km pixel)  : "
+              f"{_fmt_ci(_m['lift_k'], _m.get('lift_k_ci_low', 0), _m.get('lift_k_ci_high', 0))}")
+        print(f"  Lift@30km (coarsened) : "
+              f"{_fmt_ci(_m.get('lift_coarse', 0), _m.get('lift_coarse_ci_low', 0), _m.get('lift_coarse_ci_high', 0))}")
+        print(f"                          ↑ event-level (removes spatial autocor)")
         if "cluster_lift_k" in _m:
-            print(f"  Cluster Lift@{args.val_lift_k}: {_m['cluster_lift_k']:.3f}±"
+            print(f"  Cluster Lift@{k}     : {_m['cluster_lift_k']:.3f}±"
                   f"{_m.get('cluster_lift_k_std', 0):.3f}x  "
                   f"({_m.get('cluster_n_windows', 0)} wins)")
+
+        print(f"\n  📊 SUPPORTING HEALTH CHECKS")
+        print(f"  ─────────────────────────────────────────────────────────")
+        print(f"  BSS                  : "
+              f"{_fmt_ci(_m.get('bss', 0), _m.get('bss_ci_low', 0), _m.get('bss_ci_high', 0), suffix='')}"
+              f"   ← >0 means beats climatology")
+        print(f"  Recall@{k}           : "
+              f"{_fmt_ci(_m.get('recall_k', 0), _m.get('recall_k_ci_low', 0), _m.get('recall_k_ci_high', 0), suffix='')}"
+              f"   ← fraction of fires captured in top-K")
+        print(f"  Prec@{k}             : {_m['precision_k']:.4f}")
+        print(f"  ETS@{k}              : {_m.get('ets_k', 0):.4f}  ← chance-corrected CSI")
+        print(f"  n_fire               : {_m.get('n_fire', 0):,}")
+
+        print(f"\n  ── Secondary metrics (context only) ──────────────────")
+        print(f"  PR-AUC    : {_m.get('pr_auc', 0):.4f}")
+        print(f"  CSI@{k}   : {_m.get('csi_k', 0):.4f}")
+        print(f"  F2        : {_m.get('f2', 0):.4f}  |  MCC: {_m.get('mcc', 0):.4f}")
+        print(f"  Brier     : {_m.get('brier', 0):.5f}  "
+              f"(Reliability={_m.get('reliability', 0):.5f}  Resolution={_m.get('resolution', 0):.5f})")
+        print(f"  ROC-AUC   : {_m.get('roc_auc', 0):.4f}  (unreliable at 0.03% imbalance)")
+        print()
         return
 
     for epoch in range(start_epoch, args.epochs + 1):
