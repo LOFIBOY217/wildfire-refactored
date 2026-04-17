@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-smoke-ext
 #SBATCH --gpus-per-node=1
-#SBATCH --time=1:30:00
+#SBATCH --time=3:00:00
 #SBATCH --mem=200G
 #SBATCH --output=/scratch/jiaqi217/logs/smoke_ext2000_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/smoke_ext2000_%j.err
