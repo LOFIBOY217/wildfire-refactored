@@ -264,113 +264,41 @@ def _compute_metrics(all_scores, all_labels, k_values,
                      spatial_shape=None, coarsen_factor=15):
     """Lift@K + related metrics given flat score and label arrays.
 
-    If spatial_shape=(H, W) is given, also computes coarsened Lift@30km.
+    Delegates to src.evaluation.metrics.compute_all_metrics (pure functions).
+    Returns per-K dict for backward compat with callers.
     """
-    from sklearn.metrics import (average_precision_score, roc_auc_score,
-                                 fbeta_score, matthews_corrcoef,
-                                 precision_recall_curve)
+    from src.evaluation.metrics import compute_all_metrics
 
-    n_total  = len(all_scores)
-    n_fire   = int(all_labels.sum())
-    baseline = n_fire / n_total if n_total > 0 else 0.0
+    all_scores = np.asarray(all_scores, dtype=np.float32)
+    all_labels = np.asarray(all_labels, dtype=np.float32)
+    n_total = len(all_scores)
+    n_fire = int(all_labels.sum())
 
-    if n_fire == 0:
-        return {k: dict(lift_k=0.0, precision_k=0.0, recall_k=0.0,
-                        csi_k=0.0, ets_k=0.0, pr_auc=0.0,
-                        roc_auc=0.0, brier=0.0,
-                        f1=0.0, f2=0.0, mcc=0.0, bss=0.0,
-                        reliability=0.0, resolution=0.0, lift_coarse=0.0,
-                        n_fire=0, n_total=n_total, baseline=0.0,
-                        tp=0, k_eff=0)
-                for k in k_values}
+    m = compute_all_metrics(all_scores, all_labels,
+                            k_values=k_values,
+                            spatial_shape=spatial_shape,
+                            coarsen_factor=coarsen_factor)
 
-    try:
-        pr_auc = float(average_precision_score(all_labels, all_scores))
-    except Exception:
-        pr_auc = 0.0
-    try:
-        roc_auc = float(roc_auc_score(all_labels, all_scores))
-    except ValueError:
-        roc_auc = 0.0
-    brier = float(np.mean((all_scores - all_labels) ** 2))
-
-    # --- New: Brier Skill Score vs climatology reference forecast ---
-    # Reference brier: predict baseline probability for every pixel
-    brier_clim = float(baseline * (1 - baseline))
-    bss = 1.0 - brier / brier_clim if brier_clim > 0 else 0.0
-
-    # --- New: F1 / F2 / MCC at F1-optimal threshold ---
-    try:
-        precs, recs, thrs = precision_recall_curve(all_labels, all_scores)
-        f1s = 2 * precs * recs / (precs + recs + 1e-12)
-        opt_idx = int(np.argmax(f1s[:-1]))
-        opt_thr = thrs[opt_idx] if opt_idx < len(thrs) else 0.5
-        y_pred = (all_scores >= opt_thr).astype(np.int32)
-        y_int = all_labels.astype(np.int32)
-        f1 = float(fbeta_score(y_int, y_pred, beta=1, zero_division=0))
-        f2 = float(fbeta_score(y_int, y_pred, beta=2, zero_division=0))
-        mcc = float(matthews_corrcoef(y_int, y_pred)) if (
-            y_int.sum() > 0 and y_int.sum() < len(y_int)) else 0.0
-    except Exception:
-        f1 = f2 = mcc = 0.0
-
-    # --- New: Brier decomposition (Reliability/Resolution) ---
-    reliability, resolution = 0.0, 0.0
-    n_bins = 10
-    bin_edges = np.linspace(0, 1, n_bins + 1)
-    bin_idx = np.clip(np.digitize(all_scores, bin_edges) - 1, 0, n_bins - 1)
-    y_mean = float(all_labels.mean())
-    for b in range(n_bins):
-        mask = bin_idx == b
-        n_b = int(mask.sum())
-        if n_b == 0: continue
-        p_b = float(all_scores[mask].mean())
-        y_b = float(all_labels[mask].mean())
-        reliability += (n_b / n_total) * (p_b - y_b) ** 2
-        resolution  += (n_b / n_total) * (y_b - y_mean) ** 2
-
-    # --- New: coarsened Lift@30km (removes spatial autocorrelation) ---
-    lift_coarse = 0.0
-    if spatial_shape is not None and coarsen_factor > 1:
-        H, W = spatial_shape
-        if all_scores.size == H * W:
-            h2, w2 = H // coarsen_factor, W // coarsen_factor
-            if h2 > 0 and w2 > 0:
-                p_2d = all_scores.reshape(H, W)[:h2 * coarsen_factor, :w2 * coarsen_factor]
-                y_2d = all_labels.reshape(H, W)[:h2 * coarsen_factor, :w2 * coarsen_factor]
-                p_c = p_2d.reshape(h2, coarsen_factor, w2, coarsen_factor).mean(axis=(1, 3))
-                y_c = y_2d.reshape(h2, coarsen_factor, w2, coarsen_factor).max(axis=(1, 3))
-                n_fire_c = float(y_c.sum())
-                if n_fire_c > 0:
-                    baseline_c = n_fire_c / y_c.size
-                    # Scale K proportional to area ratio
-                    k_c = max(1, 5000 // (coarsen_factor * coarsen_factor))
-                    k_c = min(k_c, y_c.size)
-                    top_c = np.argpartition(p_c.ravel(), -k_c)[-k_c:]
-                    prec_c = y_c.ravel()[top_c].sum() / k_c
-                    lift_coarse = float(prec_c / baseline_c)
+    # Reshape from flat dict to per-K dict for backward compat
+    shared = dict(pr_auc=m['pr_auc'], roc_auc=m['roc_auc'],
+                  brier=m['brier'],
+                  f1=m['f1'], f2=m['f2'], mcc=m['mcc'], bss=m['bss'],
+                  reliability=m['reliability'], resolution=m['resolution'],
+                  lift_coarse=m['lift_coarse'],
+                  n_fire=n_fire, n_total=n_total,
+                  baseline=m.get('baseline', 0.0))
 
     results = {}
     for k in k_values:
-        k_eff       = min(k, n_total)
-        top_idx     = np.argpartition(all_scores, -k_eff)[-k_eff:]
-        tp          = float(all_labels[top_idx].sum())
-        fp, fn      = k_eff - tp, n_fire - tp
-        precision_k = tp / k_eff
-        recall_k    = tp / n_fire
-        lift_k      = precision_k / baseline if baseline > 0 else 0.0
-        csi_k       = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else 0.0
-        tp_random   = k_eff * baseline
-        denom_ets   = tp + fp + fn - tp_random
-        ets_k       = (tp - tp_random) / denom_ets if denom_ets > 0 else 0.0
-        results[k]  = dict(lift_k=lift_k, precision_k=precision_k,
-                           recall_k=recall_k, csi_k=csi_k, ets_k=ets_k,
-                           pr_auc=pr_auc, roc_auc=roc_auc, brier=brier,
-                           f1=f1, f2=f2, mcc=mcc, bss=bss,
-                           reliability=reliability, resolution=resolution,
-                           lift_coarse=lift_coarse,
-                           n_fire=n_fire, n_total=n_total,
-                           baseline=baseline, tp=int(tp), k_eff=k_eff)
+        rk = dict(lift_k=m[f'lift_k_{k}'],
+                  precision_k=m[f'precision_k_{k}'],
+                  recall_k=m[f'recall_k_{k}'],
+                  csi_k=m[f'csi_k_{k}'],
+                  ets_k=m[f'ets_k_{k}'],
+                  tp=int(m.get('tp', 0)),  # only primary K has tp/k_eff in flat
+                  k_eff=int(m.get('k_eff', 0)),
+                  **shared)
+        results[k] = rk
     return results
 
 
