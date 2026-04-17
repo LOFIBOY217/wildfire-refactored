@@ -678,7 +678,11 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         date_to_s2s_lag=None, s2s_max_lag=3,
                         s2s_full_cache=None, use_patch_embed=False,
                         random_encoder=False,
-                        decoder_ctx_fn=None):
+                        decoder_ctx_fn=None,
+                        # --- Mainstream rare-event eval additions (2026-04-17) ---
+                        hw=None, grid=None,
+                        coarsen_factor=15,      # 15 × 2km = 30km grid
+                        coarsen_k=None):         # top-K in coarse space (default: k / factor²)
     """
     Per-window ranking metrics on a random sample of validation windows.
 
@@ -723,10 +727,95 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
 
     _dec_dim = dec_dim or meteo_patched.shape[2]
 
+    # Extended metric set (2026-04-17 evaluation overhaul)
+    # Added: f1, f2, mcc (imbalanced standards)
+    #        lift_coarse (30km grid — removes spatial autocorrelation)
+    #        reliability, resolution (Brier decomposition)
     _METRIC_KEYS = ["lift_k", "precision_k", "recall_k", "csi_k", "ets_k",
-                    "pr_auc", "roc_auc", "brier", "n_fire", "baseline"]
+                    "pr_auc", "roc_auc", "brier", "n_fire", "baseline",
+                    "f1", "f2", "mcc",
+                    "lift_coarse", "reliability", "resolution"]
     per_win_metrics = []
     total_n_fire = 0
+
+    # Default coarsened K: keep same target area as fine K
+    _do_coarsen = (hw is not None) and (grid is not None) and (coarsen_factor > 1)
+    if _do_coarsen:
+        _nph, _npw = grid
+        _coarse_K = coarsen_k or max(1, k // (coarsen_factor * coarsen_factor))
+
+    def _patches_to_image(per_patch_flat, nph, npw, P):
+        """(n_patches, P²) → (nph*P, npw*P) 2D image."""
+        arr = per_patch_flat.reshape(nph, npw, P, P)
+        arr = arr.transpose(0, 2, 1, 3)
+        return arr.reshape(nph * P, npw * P)
+
+    def _coarsen_and_lift(prob_2d, label_2d, factor, K_c):
+        """Downsample by factor (mean for prob, max for label), compute Lift@K_c."""
+        H, W = prob_2d.shape
+        h2, w2 = H // factor, W // factor
+        if h2 == 0 or w2 == 0:
+            return 0.0, 0, 0.0
+        p = prob_2d[:h2 * factor, :w2 * factor].reshape(
+            h2, factor, w2, factor).mean(axis=(1, 3))
+        y = label_2d[:h2 * factor, :w2 * factor].reshape(
+            h2, factor, w2, factor).max(axis=(1, 3))
+        p_flat = p.ravel()
+        y_flat = y.ravel().astype(np.float32)
+        n_fire = int(y_flat.sum())
+        if n_fire == 0:
+            return 0.0, 0, 0.0
+        baseline = n_fire / y_flat.size
+        k_eff = min(K_c, y_flat.size)
+        top_idx = np.argpartition(p_flat, -k_eff)[-k_eff:]
+        prec = y_flat[top_idx].sum() / k_eff
+        lift = prec / baseline if baseline > 0 else 0.0
+        return float(lift), n_fire, float(baseline)
+
+    def _brier_decomp(y, p, n_bins=10):
+        """Decompose Brier = Reliability - Resolution + Uncertainty.
+
+        Lower Reliability = better calibration.
+        Higher Resolution = sharper (useful info in forecasts).
+        """
+        N = len(y)
+        if N == 0:
+            return 0.0, 0.0
+        y_mean = y.mean()
+        bin_edges = np.linspace(0, 1, n_bins + 1)
+        bin_idx = np.clip(np.digitize(p, bin_edges) - 1, 0, n_bins - 1)
+        reliability = 0.0
+        resolution = 0.0
+        for b in range(n_bins):
+            mask = bin_idx == b
+            n_b = int(mask.sum())
+            if n_b == 0:
+                continue
+            p_b = p[mask].mean()
+            y_b = y[mask].mean()
+            reliability += (n_b / N) * (p_b - y_b) ** 2
+            resolution += (n_b / N) * (y_b - y_mean) ** 2
+        return float(reliability), float(resolution)
+
+    def _f1f2mcc(y, p):
+        """Compute F1, F2, MCC at F1-optimal threshold."""
+        from sklearn.metrics import (precision_recall_curve, fbeta_score,
+                                     matthews_corrcoef)
+        try:
+            precs, recs, thrs = precision_recall_curve(y, p)
+            f1s = 2 * precs * recs / (precs + recs + 1e-12)
+            opt_idx = int(np.argmax(f1s[:-1]))  # last point has undefined thr
+            opt_thr = thrs[opt_idx] if opt_idx < len(thrs) else 0.5
+            y_pred = (p >= opt_thr).astype(np.int32)
+            y_int = y.astype(np.int32)
+            if y_int.sum() == 0 or y_int.sum() == len(y_int):
+                return 0.0, 0.0, 0.0
+            f1 = float(fbeta_score(y_int, y_pred, beta=1, zero_division=0))
+            f2 = float(fbeta_score(y_int, y_pred, beta=2, zero_division=0))
+            mcc = float(matthews_corrcoef(y_int, y_pred))
+            return f1, f2, mcc
+        except Exception:
+            return 0.0, 0.0, 0.0
 
     with torch.no_grad():
         for win_idx, (hs, he, ts, te) in enumerate(sample_wins):
@@ -833,6 +922,21 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 roc_auc_w = 0.0
             brier_w       = float(np.mean((p - y) ** 2))
 
+            # --- New: F1 / F2 / MCC at F1-optimal threshold ---
+            f1_w, f2_w, mcc_w = _f1f2mcc(y, p)
+
+            # --- New: Brier decomposition (reliability + resolution) ---
+            reliability_w, resolution_w = _brier_decomp(y, p)
+
+            # --- New: coarsened Lift (30km grid, removes spatial autocor) ---
+            lift_coarse_w = 0.0
+            if _do_coarsen:
+                prob_2d = _patches_to_image(prob_agg, _nph, _npw, patch_size)
+                label_2d = _patches_to_image(label_agg, _nph, _npw, patch_size)
+                lift_coarse_w, _n_fire_c, _baseline_c = _coarsen_and_lift(
+                    prob_2d, label_2d, coarsen_factor, _coarse_K)
+                del prob_2d, label_2d
+
             per_win_metrics.append({
                 "lift_k":      lift_k_w,
                 "precision_k": precision_k_w,
@@ -844,6 +948,12 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 "brier":       brier_w,
                 "n_fire":      n_fire_w,
                 "baseline":    baseline_w,
+                "f1":          f1_w,
+                "f2":          f2_w,
+                "mcc":         mcc_w,
+                "lift_coarse": lift_coarse_w,
+                "reliability": reliability_w,
+                "resolution":  resolution_w,
             })
 
             del probs, labels, prob_agg, label_agg, p, y, top_idx_w
@@ -856,11 +966,9 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 gc.collect()
 
     if not per_win_metrics:
-        return {"lift_k": 0.0, "precision_k": 0.0, "recall_k": 0.0,
-                "csi_k": 0.0, "ets_k": 0.0, "pr_auc": 0.0,
-                "roc_auc": 0.0, "brier": 0.0,
-                "n_fire": 0, "baseline": 0.0, "n_windows": 0,
-                **{mk + "_std": 0.0 for mk in _METRIC_KEYS}}
+        return {mk: 0.0 for mk in _METRIC_KEYS} | {
+            "n_fire": 0, "n_windows": 0,
+            **{mk + "_std": 0.0 for mk in _METRIC_KEYS}}
 
     # Aggregate: mean ± std across windows
     result = {}

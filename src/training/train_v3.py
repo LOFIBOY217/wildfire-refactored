@@ -565,6 +565,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
         random_encoder=random_encoder,
         s2s_cache=s2s_cache,
         decoder_ctx_fn=decoder_ctx_fn,
+        # 2026-04-17: forward hw/grid so coarsened Lift (30km) works
+        hw=hw, grid=grid,
     )
 
     result = dict(pixel_metrics)
@@ -2117,13 +2119,25 @@ def main():
             decoder_ctx_fn=_eval_ctx_fn,
         )
         print(f"\n=== EVAL RESULTS ===")
-        print(f"  Lift@{args.val_lift_k}: {_m['lift_k']:.3f}±{_m.get('lift_k_std', 0):.3f}x")
-        print(f"  Prec@{args.val_lift_k}: {_m['precision_k']:.4f}")
-        print(f"  Recall@{args.val_lift_k}: {_m['recall_k']:.4f}")
-        print(f"  ROC-AUC: {_m.get('roc_auc', 0):.4f}")
-        print(f"  PR-AUC : {_m.get('pr_auc', 0):.4f}")
-        print(f"  Brier  : {_m.get('brier', 0):.4f}")
-        print(f"  n_fire : {_m.get('n_fire', 0):,}")
+        print(f"  Lift@{args.val_lift_k}   : {_m['lift_k']:.3f}±{_m.get('lift_k_std', 0):.3f}x")
+        print(f"  Prec@{args.val_lift_k}   : {_m['precision_k']:.4f}")
+        print(f"  Recall@{args.val_lift_k} : {_m['recall_k']:.4f}")
+        print(f"  CSI@{args.val_lift_k}    : {_m.get('csi_k', 0):.4f}")
+        print(f"  ETS@{args.val_lift_k}    : {_m.get('ets_k', 0):.4f}")
+        print(f"  --- rare-event standards ---")
+        print(f"  F1             : {_m.get('f1', 0):.4f} (at F1-optimal threshold)")
+        print(f"  F2             : {_m.get('f2', 0):.4f}")
+        print(f"  MCC            : {_m.get('mcc', 0):.4f}")
+        print(f"  PR-AUC         : {_m.get('pr_auc', 0):.4f}")
+        print(f"  ROC-AUC        : {_m.get('roc_auc', 0):.4f} (less reliable for 0.03%-rate)")
+        print(f"  --- calibration (Brier decomposition) ---")
+        print(f"  Brier          : {_m.get('brier', 0):.5f}")
+        print(f"  Reliability    : {_m.get('reliability', 0):.5f} (lower = better calibrated)")
+        print(f"  Resolution     : {_m.get('resolution', 0):.5f} (higher = sharper)")
+        print(f"  --- spatial-autocor-free ---")
+        print(f"  Lift@30km      : {_m.get('lift_coarse', 0):.3f}x "
+              f"(coarsened to S2S scale, the honest number)")
+        print(f"  n_fire         : {_m.get('n_fire', 0):,}")
         if "cluster_lift_k" in _m:
             print(f"  Cluster Lift@{args.val_lift_k}: {_m['cluster_lift_k']:.3f}±"
                   f"{_m.get('cluster_lift_k_std', 0):.3f}x  "
