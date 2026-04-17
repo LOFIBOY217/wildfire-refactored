@@ -2242,6 +2242,15 @@ def main():
                 chunk=256, device=device,
                 decoder_mode=args.decoder, dec_dim=dec_dim,
                 val_win_dates=val_wins_lift_dates, patch_size=P,
+                # S2S plumbing — MUST be passed so val uses correct forecast
+                # dimensionality. Without these, --decoder s2s with
+                # --s2s_full_cache (e.g. sub4x4 128-dim) falls back to
+                # 9-dim _make_dec_s2s → decoder shape mismatch at val.
+                s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+                s2s_means=s2s_means, s2s_stds=s2s_stds,
+                date_to_s2s_lag=date_to_s2s_lag,
+                s2s_max_lag=args.s2s_max_issue_lag,
+                s2s_full_cache=s2s_full_cache,
                 use_patch_embed=args.use_patch_embed,
                 random_encoder=args.random_encoder,
                 cluster_eval=args.cluster_eval,

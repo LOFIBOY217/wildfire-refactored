@@ -73,4 +73,6 @@ $PYTHON -u -m src.training.train_v3 \
     --cache_dir "$SCRATCH/meteo_cache/v3_9ch" --chunk_patches 2000 --num_workers 4 \
     --log_interval 200 --skip_forecast
 
-echo "=== Done: $(date) ==="
+PY_EXIT=$?
+echo "=== Done: $(date) exit=$PY_EXIT ==="
+exit $PY_EXIT

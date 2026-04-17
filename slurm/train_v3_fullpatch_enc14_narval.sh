@@ -92,4 +92,6 @@ $PYTHON -u -m src.training.train_v3 \
     --log_interval 200 \
     --skip_forecast
 
-echo "=== Done: $(date) ==="
+PY_EXIT=$?
+echo "=== Done: $(date) exit=$PY_EXIT ==="
+exit $PY_EXIT
