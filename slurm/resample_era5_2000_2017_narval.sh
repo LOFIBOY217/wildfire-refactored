@@ -1,4 +1,9 @@
 #!/bin/bash
+
+# DEPRECATED (2026-04-18): use slurm/process_era5_narval.sh instead.
+# This hardcoded-year script is preserved for git history/reference only.
+# Example: START_YEAR=2009 END_YEAR=2017 sbatch slurm/process_era5_narval.sh
+
 #SBATCH --job-name=wf-resamp-all
 #SBATCH --time=14:00:00
 #SBATCH --mem=32G
