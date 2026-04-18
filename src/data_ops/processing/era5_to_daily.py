@@ -91,12 +91,16 @@ def process_single_grib(grib_path, output_dir, skip_existing=True):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract date from filename: era5_sfc_2025_09_12.grib
+    # Extract date from filename: supports both conventions
+    #   era5_sfc_2025_09_12.grib   (main ERA5 multi-var)
+    #   era5_swvl2_2025_09_12.grib (deep soil single-var)
+    # General pattern: any era5_<prefix>_YYYY_MM_DD.grib
     filename = grib_path.stem
-    try:
-        date_part = filename.split('era5_sfc_')[1]  # "2025_09_12"
-        date_str = date_part.replace('_', '')        # "20250912"
-    except Exception:
+    import re
+    m = re.search(r'(\d{4})_(\d{2})_(\d{2})$', filename)
+    if m:
+        date_str = m.group(1) + m.group(2) + m.group(3)
+    else:
         print(f"[ERROR] Cannot parse date from filename: {filename}")
         return False
 
@@ -261,7 +265,8 @@ def main():
             # Default to configured ERA5 directory where downloader writes GRIB.
             input_dir_str = get_path(cfg, 'era5_dir')
         input_dir = Path(input_dir_str)
-        grib_files = sorted(input_dir.glob("era5_sfc_*.grib"))
+        # Match any era5_*_YYYY_MM_DD.grib (era5_sfc_, era5_swvl2_, etc.)
+        grib_files = sorted(input_dir.glob("era5_*.grib"))
 
     output_dir_str = args.output_dir
     if output_dir_str is None:
