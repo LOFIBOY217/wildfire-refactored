@@ -491,8 +491,9 @@ def main():
           f"{'✓ ALL COMPLETE' if n_bad_spatial == 0 else f'{n_bad_spatial} channel(s) <95% valid'}")
     print(f"  Distribution drift      : "
           f"{'✓ STABLE' if n_drift == 0 else f'{n_drift} channel(s) drifting'}")
+    _missing_count = len(f['missing'])
     print(f"  Cross-channel alignment : "
-          f"{'✓ ALL PRESENT' if not f['missing'] else f'missing {len(f[\"missing\"])}'}")
+          f"{'✓ ALL PRESENT' if _missing_count == 0 else f'missing {_missing_count}'}")
     print(f"  Label integrity         : "
           f"{'⚠ drift' if g.get('drift_ratio', 0) > 10 else '✓'}  "
           f"({g.get('drift_ratio', 0):.1f}× year-ratio)")
