@@ -126,12 +126,19 @@ for i, src_path in enumerate(src_files):
             src_crs = src.crs
             src_tf = src.transform
             src_nd = src.nodata  # capture before src closes
-        # Fill with nan (project standard, see header comment).
+        # Fill with nan initially (project standard, see header comment).
+        # IMPORTANT: do NOT pass src_nodata/dst_nodata to reproject. ERA5
+        # reanalysis has no real missing data — passing src_nodata=nan makes
+        # reproject refuse to extrapolate at Canada Lambert edges beyond
+        # WGS84 source bbox [-141..-52, 41..83], leaving 24% of pixels nan.
+        # Old pre-existing 2000-2008/2018+ files were produced WITHOUT these
+        # args, yielding fully populated rasters via bilinear extension.
+        # This bug was caught 2026-04-18 via audit_channel_stats.py (2009-
+        # 2017 had 24% nan, mean +3°C due to cold pixels excluded).
         dst = np.full((FWI_H, FWI_W), np.nan, dtype=np.float32)
         reproject(source=data, destination=dst,
                   src_transform=src_tf, src_crs=src_crs,
                   dst_transform=dst_tf, dst_crs=dst_crs,
-                  src_nodata=src_nd, dst_nodata=np.nan,
                   resampling=Resampling.bilinear)
         with rasterio.open(out_path, 'w', **profile) as out:
             out.write(dst, 1)

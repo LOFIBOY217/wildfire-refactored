@@ -107,12 +107,14 @@ for gi, gf in enumerate(gribs):
         h, w = arr.shape
         src_tf = from_bounds(lon_min, lat_min, lon_max, lat_max, w, h)
 
+        # IMPORTANT: no src_nodata/dst_nodata — see process_era5_2009_2017_narval.sh
+        # for explanation. ERA5 has no real nans; passing them makes reproject
+        # refuse to extrapolate at Canada Lambert edges, yielding 24% nan output.
         dst_data = np.full((FWI_H, FWI_W), np.nan, dtype=np.float32)
         reproject(arr, dst_data,
                   src_transform=src_tf, src_crs='EPSG:4326',
                   dst_transform=dst_tf, dst_crs=dst_crs,
-                  resampling=Resampling.bilinear,
-                  src_nodata=np.nan, dst_nodata=np.nan)
+                  resampling=Resampling.bilinear)
 
         with rasterio.open(out_path, 'w', **profile) as dst:
             dst.write(dst_data, 1)
