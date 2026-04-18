@@ -81,11 +81,25 @@ FWI_BOUNDS = (-2378164.0, -707617.0, 3039835.0, 3854382.0)
 dst_tf = from_bounds(*FWI_BOUNDS, FWI_W, FWI_H)
 dst_crs = CRS.from_string(FWI_CRS)
 
-profile = dict(driver='GTiff', dtype='float32', width=FWI_W, height=FWI_H,
-               count=1, crs=dst_crs, transform=dst_tf, nodata=np.nan, compress='lzw')
-
+# Use nan as nodata sentinel — project-wide de facto standard.
+# Audit 2026-04-18 (12 channel sources):
+#   nan: FWI/FFMC/DC/u10/v10/CAPE/NDVI/population/2000-2008 ERA5 obs (9/12)
+#   -9999: 2018+ ecmwf_observation/{2t,2d,tcw,sm20,st20} (2/12, outlier)
+#   9999 sentinel: burn_scars uint16 (1/12, source of historical bug)
+#
+# Decision: nan for new 2009-2017 files because
+#   1. Matches 2000-2008 (keeps fresh time series consistent)
+#   2. IEEE 754 standard — propagates loudly through math
+#   3. Loader (train_v3._load_static_channel) handles both via
+#      arr[~np.isfinite(arr)] = 0 + arr[arr==src.nodata] = 0
+#   4. 2018+ is the outlier; future cleanup should standardize to nan
 var = '${VAR}'
 outdir = '${OUTDIR}'
+
+DST_NODATA = float('nan')  # project standard
+profile = dict(driver='GTiff', dtype='float32', width=FWI_W, height=FWI_H,
+               count=1, crs=dst_crs, transform=dst_tf,
+               nodata=DST_NODATA, compress='lzw')
 
 src_files = []
 for year in range(2009, 2018):
@@ -106,10 +120,13 @@ for i, src_path in enumerate(src_files):
             data = src.read(1).astype(np.float32)
             src_crs = src.crs
             src_tf = src.transform
+            src_nd = src.nodata  # capture before src closes
+        # Fill with nan (project standard, see header comment).
         dst = np.full((FWI_H, FWI_W), np.nan, dtype=np.float32)
         reproject(source=data, destination=dst,
                   src_transform=src_tf, src_crs=src_crs,
                   dst_transform=dst_tf, dst_crs=dst_crs,
+                  src_nodata=src_nd, dst_nodata=np.nan,
                   resampling=Resampling.bilinear)
         with rasterio.open(out_path, 'w', **profile) as out:
             out.write(dst, 1)
