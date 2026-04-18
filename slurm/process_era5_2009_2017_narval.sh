@@ -30,6 +30,11 @@ export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
 module load StdEnv/2023 gcc/12.3 python/3.11.5 proj/9.4.1 eccodes/2.31.0
 
+# venv's cfgrib package needs ecCodes C library on LD_LIBRARY_PATH.
+# `module load eccodes` sets up build envs but not LD_LIBRARY_PATH.
+# Without this, cfgrib import fails with "Cannot find the ecCodes library".
+export LD_LIBRARY_PATH=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Compiler/gcc12/eccodes/2.31.0/lib64:${LD_LIBRARY_PATH:-}
+
 source $SCRATCH/venv-wildfire/bin/activate
 cd $SCRATCH/wildfire-refactored
 export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
