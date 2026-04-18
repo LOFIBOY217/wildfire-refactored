@@ -151,6 +151,46 @@ Example: `src/training/train_v3.py:_load_static_channel`.
 
 ---
 
+## 7a. 🚨 KNOWN DATA BUGS (2026-04-18 audit)
+
+### Bug #1: reproject nan-edge (5 channels × multiple years)
+
+Channels with 24% nan pixels concentrated in Canada Lambert edges
+(N/E Canada beyond WGS84 source bbox [-141..-52, 41..83]):
+
+| Channel | 2000-2008 | 2009-2017 | 2018-2025 |
+|---|---|---|---|
+| 2t, 2d, tcw, sm20, st20 | ✅ 100% | ✅ 100% (reprocessed 2026-04-18) | ✅ 100% |
+| **u10, v10, cape** | ✅ 100% | ⏳ reprocessing | **❌ 76.3%** (legacy bug) |
+| **swvl2** | ? | ⏳ reprocessing | **❌ 76.3%** (legacy bug) |
+| **tp** | ❌ never processed | ❌ never processed | **❌ 76.3%** (legacy bug) |
+
+Root cause: reproject() called with src_nodata=nan/dst_nodata=nan
+prevents bilinear edge extension. Fixed in unified
+slurm/process_era5_narval.sh (invariant: NO src_nodata/dst_nodata).
+
+Impact on past experiments:
+- **9ch training** (FWI/2t/fire_clim/2d/tcw/sm20/pop/slope/burn_age):
+  ✅ NOT affected (only uses fully-valid channels)
+- **13ch experiments** (+deep_soil/precip_def/NDVI/burn_count):
+  ❌ deep_soil and precip_def used 24%-nan data → Lift 4.81x suspect
+- **16ch experiments** (+u10/v10/CAPE):
+  ❌ all three used 24%-nan data → Lift 4.98x suspect
+
+Remediation plan (when needed for 13/16ch retraining):
+```bash
+# Delete bad 2018-2025 files
+rm data/era5_{u10,v10,cape,deep_soil,precip}/*_{2018..2025}*.tif
+# Re-resample from existing WGS84 source
+START_YEAR=2018 END_YEAR=2025 VARS=u10,v10,cape \
+  SKIP_STAGE1=1 sbatch slurm/process_era5_narval.sh
+START_YEAR=2018 END_YEAR=2025 VARS=swvl2 \
+  GRIB_DIR=data/era5_deep_soil SKIP_STAGE1=1 sbatch slurm/process_era5_narval.sh
+# Etc. for tp (after downloading missing 2000-2017 tp data)
+```
+
+---
+
 ## 7. Historical Convention Violations (Do Not Repeat)
 
 These past mistakes are preserved for reference:
