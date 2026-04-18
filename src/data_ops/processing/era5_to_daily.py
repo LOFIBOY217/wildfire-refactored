@@ -67,6 +67,7 @@ VARIABLE_MAP = {
     'v10': 'v10',     # 10m v-component of wind (fire spread direction)
     'tp': 'tp',       # total precipitation (for precip deficit)
     'cape': 'cape',   # convective available potential energy (lightning proxy)
+    'swvl2': 'swvl2', # volumetric soil water layer 2 (7-28cm, long-term drought)
 }
 
 # ERA5 stores these variables in Kelvin; convert to Celsius on output
