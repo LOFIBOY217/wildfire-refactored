@@ -99,14 +99,14 @@ if [ $PREFLIGHT_OK -eq 0 ]; then
 fi
 echo "  [OK] All critical files present for 2000-2017 sample dates"
 
-# --- VALIDATE ALL CHANNELS (with timeout; Lustre stat-walk is slow) ---
+# --- COMPREHENSIVE DATA AUDIT (replaces validate_all_channels 2026-04-18) ---
+# Old validator had false-positive rate ~64% (9/14) on our data + 40min runtime.
+# New audit: physics-based thresholds, 7-dimensional, ~162s.
 echo ""
-echo "=== Running full channel validation (5min timeout) ==="
-timeout 300 $PYTHON -u -m src.data_ops.validation.validate_all_channels \
-    --config configs/paths_narval.yaml \
-    --start_year 2000 \
-    --end_year 2025 || {
-    echo "  [WARN] validation timed out or failed (continue to smoke test anyway)"
+echo "=== Running comprehensive data audit ==="
+$PYTHON -u scripts/audit_data_complete.py \
+    --start-year 2000 --end-year 2025 --sample-year 2018 || {
+    echo "  [WARN] audit exited non-zero (continuing to smoke test)"
 }
 
 # --- SMOKE TEST: 9ch, tiny year-2000 range, 1 epoch ---

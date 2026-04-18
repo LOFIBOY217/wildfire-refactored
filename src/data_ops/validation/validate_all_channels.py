@@ -1,4 +1,29 @@
 """
+⚠️ DEPRECATED (2026-04-18) — use scripts/audit_data_complete.py instead.
+
+Why deprecated:
+  1. Fixed-threshold heuristics produce false positives on our data:
+     - Winter DMC/BUI → LZW-compressed small → flagged as "corrupt"
+       (881 DMC + 925 BUI false alarms on 2026-04-18 run)
+     - Sparse burn_age (NBAC only covers burned pixels) → "95% NaN" warning
+     - Spring NDVI snow mask → "84% NaN" flagged as "likely corrupt"
+     2026-04-18 run: 14 "failed" channels, 9/14 were false positives.
+  2. Lustre stat-walks all files → 40+ min runtime (smoke test added timeout=300 workaround).
+  3. Single-dimension (file integrity). Misses: distribution drift,
+     temporal gaps, cross-channel alignment, label integrity.
+
+Replacement: scripts/audit_data_complete.py
+  - 7 check sections (structural + value + temporal + spatial + drift + cross-channel + labels)
+  - Physics-based thresholds (burn_age allowed up to 50, etc.)
+  - Sampling approach → ~162 seconds runtime
+  - Clean PASS / WARN / FAIL per section
+
+  python scripts/audit_data_complete.py --start-year 2000 --end-year 2025
+
+This file is kept for git history. New code must use the replacement.
+
+---
+
 Comprehensive channel data validation.
 
 Checks for ALL training channels:

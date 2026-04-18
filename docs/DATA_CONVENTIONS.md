@@ -215,4 +215,5 @@ Before committing new data files:
 - [ ] Unit documented in this file (section 5)
 - [ ] Temporal coverage added to section 6
 - [ ] Loader has defensive nodata handling
-- [ ] Smoke-tested with `src/data_ops/validation/validate_all_channels.py`
+- [ ] Smoke-tested with `scripts/audit_data_complete.py` (the canonical
+      data validator — old `validate_all_channels.py` is deprecated)
