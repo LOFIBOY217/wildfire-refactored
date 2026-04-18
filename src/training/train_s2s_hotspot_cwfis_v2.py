@@ -876,7 +876,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 "resolution":  _m['resolution'],
             })
 
-            del probs, labels, prob_agg, label_agg, p, y, top_idx_w
+            # top_idx_w no longer exists (moved into compute_all_metrics)
+            del probs, labels, prob_agg, label_agg, p, y
             if (win_idx + 1) % 50 == 0 or (win_idx + 1) == len(sample_wins):
                 _n_done = len(per_win_metrics)
                 _avg_lift = np.mean([m["lift_k"] for m in per_win_metrics]) if per_win_metrics else 0
