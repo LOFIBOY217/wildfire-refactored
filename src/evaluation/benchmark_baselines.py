@@ -255,7 +255,8 @@ def load_data(config_path, pred_start_str, pred_end_str, in_days,
     print(f"  Val windows: {len(val_wins)}  (from {len(all_windows)} total)")
 
     return (fwi_patched, fire_patched, clim_patched,
-            all_dates, date_to_idx, val_wins, val_win_dates, n_patches)
+            all_dates, date_to_idx, val_wins, val_win_dates, n_patches,
+            (nph, npw))  # grid for 2D reconstruction in Lift@30km
 
 
 # ── Metric computation ─────────────────────────────────────────────────────
@@ -388,17 +389,15 @@ def eval_per_leadday(score_fn_daily, fire_patched, val_wins,
 
 
 def eval_per_window(score_fn, fire_patched, val_wins,
-                    k_values, n_sample_wins, name):
+                    k_values, n_sample_wins, name,
+                    grid=None, patch_size=16):
     """
     Per-window evaluation (correct full evaluation).
 
-    Each window is evaluated independently:
-      score_fn(win) -> (n_patches, P²) aggregated over lead days
-      label = max fire over all lead days in the window
-      Lift@K computed separately per window, then mean ± std reported.
-
-    K=5000 is always relative to a single window's pool (~6.14M pixels),
-    so results are comparable regardless of how many windows are used.
+    Args:
+        ...
+        grid: (nph, npw) patch grid for 2D reconstruction (needed for Lift@30km)
+        patch_size: P, patch edge length in pixels
     """
     rng = np.random.default_rng(0)
     if len(val_wins) > n_sample_wins:
@@ -411,12 +410,25 @@ def eval_per_window(score_fn, fire_patched, val_wins,
     t0 = time.time()
     for wi, win in enumerate(sample_wins):
         hs, he, ts, te = win
-        scores    = score_fn(win)
-        label_agg = fire_patched[ts:te, :, :].max(axis=0)
-        m = _compute_metrics(
-            scores.reshape(-1).astype(np.float32),
-            label_agg.reshape(-1).astype(np.float32),
-            k_values)
+        scores    = score_fn(win)                  # (n_patches, P²)
+        label_agg = fire_patched[ts:te, :, :].max(axis=0)  # (n_patches, P²)
+
+        # Reconstruct 2D for Lift@30km if grid provided.
+        spatial_shape = None
+        flat_scores = scores.reshape(-1).astype(np.float32)
+        flat_labels = label_agg.reshape(-1).astype(np.float32)
+        if grid is not None:
+            nph, npw = grid
+            P = patch_size
+            # (nph, npw, P, P) → (nph, P, npw, P) → (nph*P, npw*P)
+            s2d = scores.reshape(nph, npw, P, P).transpose(0, 2, 1, 3).reshape(nph*P, npw*P)
+            l2d = label_agg.reshape(nph, npw, P, P).transpose(0, 2, 1, 3).reshape(nph*P, npw*P)
+            flat_scores = s2d.ravel().astype(np.float32)
+            flat_labels = l2d.ravel().astype(np.float32)
+            spatial_shape = s2d.shape
+
+        m = _compute_metrics(flat_scores, flat_labels, k_values,
+                             spatial_shape=spatial_shape)
         per_win.append(m)
         if (wi + 1) % 50 == 0 or wi == len(sample_wins) - 1:
             lk = m.get(5000 if 5000 in k_values else k_values[0], {}).get("lift_k", 0.0)
@@ -436,13 +448,20 @@ def eval_per_window(score_fn, fire_patched, val_wins,
                 lift_k_std=float(np.std(lifts)),
                 precision_k=float(np.mean(precs)),
                 pr_auc=float(np.mean([r["pr_auc"] for r in valid])),
+                lift_coarse=float(np.mean([r["lift_coarse"] for r in valid])),
+                lift_coarse_std=float(np.std([r["lift_coarse"] for r in valid])),
+                bss=float(np.mean([r["bss"] for r in valid])),
+                f2=float(np.mean([r["f2"] for r in valid])),
+                mcc=float(np.mean([r["mcc"] for r in valid])),
                 n_wins_with_fire=len(valid),
                 n_fire=int(np.mean([r["n_fire"] for r in valid])),
                 baseline=float(np.mean([r["baseline"] for r in valid])),
             )
         else:
             summary[k] = dict(lift_k=0.0, lift_k_std=0.0, precision_k=0.0,
-                              pr_auc=0.0, n_wins_with_fire=0, n_fire=0, baseline=0.0)
+                              pr_auc=0.0, lift_coarse=0.0, lift_coarse_std=0.0,
+                              bss=0.0, f2=0.0, mcc=0.0,
+                              n_wins_with_fire=0, n_fire=0, baseline=0.0)
     return per_win, summary
 
 
@@ -531,7 +550,8 @@ def main():
     print("=" * 70)
 
     (fwi_patched, fire_patched, clim_patched,
-     all_dates, date_to_idx, val_wins, val_win_dates, n_patches) = load_data(
+     all_dates, date_to_idx, val_wins, val_win_dates, n_patches,
+     patch_grid) = load_data(
         args.config, args.pred_start, args.pred_end,
         args.in_days, args.lead_start, args.lead_end,
         args.patch_size, args.dilate_radius, args.fire_season_only)
@@ -605,7 +625,8 @@ def main():
             print(f"\n{'='*40}\nBaseline: {name}  [per-window]\n{'='*40}")
             per_win, summary = eval_per_window(
                 score_fns[name], fire_patched, val_wins, args.k_values,
-                args.n_sample_wins, name)
+                args.n_sample_wins, name,
+                grid=patch_grid, patch_size=args.patch_size)
             all_results[name] = {"per_win": per_win, "summary": summary}
 
     else:   # window mode (global pool, legacy)
@@ -654,6 +675,23 @@ def main():
                 row += f"  {v:8.2f}±{std:4.2f}x"
             print(row)
         print(f"\n  n_windows evaluated: {min(len(val_wins), args.n_sample_wins)}")
+
+        # NEW 2026-04-19: Lift@30km + BSS + F2 + MCC (coarsening-aware metrics)
+        print(f"\n{'='*70}")
+        print("SUMMARY — Mainstream rare-event metrics (at primary K)")
+        print(f"{'='*70}")
+        print(f"{'Baseline':<20} {'Lift@5000 (2km)':>18} {'Lift@30km':>15} "
+              f"{'BSS':>10} {'F2':>10} {'MCC':>10}")
+        print('-' * 85)
+        primary_k = 5000 if 5000 in args.k_values else args.k_values[0]
+        for name, res in all_results.items():
+            s = res["summary"][primary_k]
+            print(f"{name:<20} "
+                  f"{s.get('lift_k', 0):>12.3f}±{s.get('lift_k_std', 0):>3.2f}x "
+                  f"{s.get('lift_coarse', 0):>12.3f}x    "
+                  f"{s.get('bss', 0):>8.4f}  "
+                  f"{s.get('f2', 0):>8.4f}  "
+                  f"{s.get('mcc', 0):>8.4f}")
 
     elif args.eval_mode == "per_leadday":
         print("SUMMARY — Mean Lift@K across all lead days")
