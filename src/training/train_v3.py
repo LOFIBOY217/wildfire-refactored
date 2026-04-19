@@ -457,22 +457,30 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
                 "n_clusters": 0, "n_clusters_raw": n_clusters_raw,
                 "baseline": 0.0, "n_items": 0}
 
-    # Aggregate background into tiles of comparable size to fire clusters
+    # Aggregate background into SPATIALLY CONTIGUOUS tiles of comparable
+    # size to fire clusters. BUG FIX 2026-04-19: previous implementation
+    # shuffled bg pixels before tiling, meaning each "tile" was max of N
+    # random pixels from across the whole map. Fire clusters are N
+    # spatially-correlated pixels (max ≈ max of ~1-2 independent samples),
+    # but shuffled bg tiles ≈ max of N independent samples (much higher
+    # percentile of prob distribution). This gave bg tiles an unfair
+    # advantage → fire clusters ranked low → cluster Lift ≈ 0.
+    #
+    # Correct: use 2D spatial max-pool with tile side ≈ sqrt(median_size)
+    # so tiles are local regions (same statistical properties as clusters).
     median_size = max(int(np.median(cluster_sizes)), 1)
-    bg_probs = all_probs_2d[all_labels_2d == 0]
-    # Tile background: take max prob within each tile (same as fire clusters)
-    n_bg = len(bg_probs)
-    n_tiles = n_bg // median_size
-    if n_tiles > 0:
-        # Shuffle to avoid spatial bias in tile construction
-        rng = np.random.default_rng(42)
-        bg_shuffled = bg_probs.copy()
-        rng.shuffle(bg_shuffled)
-        # Trim to exact multiple of median_size, then reshape and take max
-        trimmed = bg_shuffled[:n_tiles * median_size].reshape(n_tiles, median_size)
-        bg_tile_scores = trimmed.max(axis=1)
+    tile_side = max(1, int(np.sqrt(median_size)))  # ≈ 3 for median_size ~10
+    H, W = all_probs_2d.shape
+    nth, ntw = H // tile_side, W // tile_side
+    if nth > 0 and ntw > 0:
+        trimmed_p = all_probs_2d[:nth * tile_side, :ntw * tile_side]
+        trimmed_l = all_labels_2d[:nth * tile_side, :ntw * tile_side]
+        tile_p = trimmed_p.reshape(nth, tile_side, ntw, tile_side).max(axis=(1, 3))
+        tile_l = trimmed_l.reshape(nth, tile_side, ntw, tile_side).max(axis=(1, 3))
+        bg_mask = (tile_l.ravel() == 0)
+        bg_tile_scores = tile_p.ravel()[bg_mask]
     else:
-        bg_tile_scores = bg_probs  # too few bg pixels, keep individual
+        bg_tile_scores = all_probs_2d[all_labels_2d == 0]  # fallback
 
     # Combine: fire clusters (label=1) + background tiles (label=0)
     all_scores = np.concatenate([np.array(cluster_scores, dtype=np.float32),
