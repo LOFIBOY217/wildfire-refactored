@@ -1553,9 +1553,16 @@ def main():
                         if yr in fire_clim_arrays:
                             frame[..., ch_idx] = fire_clim_arrays[yr]
                         else:
-                            # Use nearest available year (no leakage: nearest < yr preferred)
-                            nearest = min(fire_clim_arrays.keys(), key=lambda y: abs(y - yr))
-                            frame[..., ch_idx] = fire_clim_arrays[nearest]
+                            # BUG FIX 2026-04-19: must use STRICTLY PRIOR year to
+                            # prevent leakage. Old code used abs(y - yr) which could
+                            # pick a year > yr (includes target year's fires → leak).
+                            prior_years = [y for y in fire_clim_arrays.keys() if y <= yr]
+                            if prior_years:
+                                nearest = max(prior_years)  # greatest year ≤ target
+                                frame[..., ch_idx] = fire_clim_arrays[nearest]
+                            else:
+                                # No prior data → zeros (degenerate but safe)
+                                frame[..., ch_idx] = 0.0
                     else:
                         # Fallback to static mean map
                         frame[..., ch_idx] = static_arrays.get("fire_clim", np.zeros((H, W)))
