@@ -36,7 +36,8 @@ python3 -u -m src.evaluation.benchmark_baselines \
     --n_sample_wins 9999 \
     --pred_start 2022-05-01 \
     --pred_end 2025-10-31 \
-    --dilate_radius 14
+    --dilate_radius 14 \
+    --climatology_tif data/fire_clim_annual/fire_clim_upto_2022.tif
 
 echo ""
 echo "Done: $(date)"

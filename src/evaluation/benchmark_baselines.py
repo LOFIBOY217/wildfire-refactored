@@ -150,7 +150,7 @@ def _build_s2s_windows_calendar(all_dates, date_to_idx, in_days,
 
 def load_data(config_path, pred_start_str, pred_end_str, in_days,
               lead_start, lead_end, patch_size, dilate_radius,
-              fire_season_only=True):
+              fire_season_only=True, climatology_tif_override=None):
 
     from scipy.ndimage import binary_dilation
 
@@ -203,9 +203,9 @@ def load_data(config_path, pred_start_str, pred_end_str, in_days,
 
     # ── [3] Fire climatology ───────────────────────────────────────────
     clim_patched = None
-    clim_path = cfg.get("fire_climatology_tif")
+    clim_path = climatology_tif_override or cfg.get("fire_climatology_tif")
     if clim_path and os.path.exists(clim_path):
-        print(f"\n[3] Loading fire climatology...")
+        print(f"\n[3] Loading fire climatology from: {clim_path}")
         clim_arr     = np.nan_to_num(_read_tif(clim_path), nan=0.0)
         clim_patched = _patchify_frame(
             clim_arr[:Hc, :Wc, np.newaxis], P).astype(np.float16)
@@ -533,6 +533,10 @@ def main():
                              "so Lift@K is comparable across different pool sizes. "
                              "E.g. --k_ref_wins 20 when using full eval with 646 windows.")
     parser.add_argument("--fire_season_only", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--climatology_tif", type=str, default=None,
+                        help="Override climatology source. Default: cfg['fire_climatology_tif'] "
+                             "(static 2018-2021). For 2000-2025 fair comparison, pass "
+                             "data/fire_clim_annual/fire_clim_upto_2022.tif (22y, leak-free).")
     parser.add_argument("--output_csv",       default=None)
     args = parser.parse_args()
 
@@ -554,7 +558,8 @@ def main():
      patch_grid) = load_data(
         args.config, args.pred_start, args.pred_end,
         args.in_days, args.lead_start, args.lead_end,
-        args.patch_size, args.dilate_radius, args.fire_season_only)
+        args.patch_size, args.dilate_radius, args.fire_season_only,
+        climatology_tif_override=args.climatology_tif)
 
     # ── K scaling (proportional to pool size) ─────────────────────────
     # When using more windows than the reference (e.g. 646 vs 20), the pixel
