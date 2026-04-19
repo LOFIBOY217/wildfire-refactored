@@ -56,6 +56,14 @@ VARIANTS = {
         "output_pattern": "era5_swvl2_{year}_{month:02d}.grib",
         "output_dir_key": "deep_soil_dir",
     },
+    # Added 2026-04-19: tp 2000-2008 filling the main-variant gap.
+    # Main variant covers 2009+, but 2000-2008 was downloaded via a
+    # different pipeline that omitted total_precipitation.
+    "tp_only": {
+        "variables": ['total_precipitation'],
+        "output_pattern": "era5_tp_{year}_{month:02d}.grib",
+        "output_dir_key": "precip_dir",
+    },
 }
 
 
@@ -112,8 +120,9 @@ def split_monthly_grib_to_daily(monthly_grib, daily_dir, variant):
     daily_dir.mkdir(parents=True, exist_ok=True)
 
     # grib_copy splits by dataDate (YYYYMMDD)
-    # output pattern: era5_sfc_YYYY_MM_DD.grib or era5_swvl2_YYYY_MM_DD.grib
-    prefix = "era5_sfc" if variant == "main" else "era5_swvl2"
+    # output pattern: era5_sfc_YYYY_MM_DD.grib, era5_swvl2_YYYY_MM_DD.grib, era5_tp_YYYY_MM_DD.grib
+    prefix_map = {"main": "era5_sfc", "deep_soil": "era5_swvl2", "tp_only": "era5_tp"}
+    prefix = prefix_map.get(variant, "era5_sfc")
     # grib_copy uses named keys: [key] in output pattern
     tmp_pattern = str(daily_dir / f"{prefix}_tmp_[dataDate].grib")
 
