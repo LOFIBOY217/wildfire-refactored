@@ -48,6 +48,11 @@ DECODER=${DECODER:-s2s_legacy}
 IN_DAYS=${IN_DAYS:-7}
 FULL_VAL_FLAG=""
 [ "${FULL_VAL:-0}" = "1" ] && FULL_VAL_FLAG="--full_val"
+# Optional: skip cluster_eval (default: run it).
+# cluster_eval does a 2nd forward-pass over all windows → doubles runtime.
+# Set SKIP_CLUSTER=1 if Lift@30km from pixel eval is sufficient.
+CLUSTER_FLAG="--cluster_eval"
+[ "${SKIP_CLUSTER:-0}" = "1" ] && CLUSTER_FLAG=""
 
 echo "============================================="
 echo "  V3 Checkpoint Eval"
@@ -87,7 +92,7 @@ $PYTHON -u -m src.training.train_v3 \
     --val_lift_k 5000 \
     --val_lift_sample_wins 20 \
     --fire_season_only \
-    --cluster_eval \
+    $CLUSTER_FLAG \
     --decoder_ctx \
     --cache_dir "${CACHE_DIR:-$SCRATCH/meteo_cache/v3_full}" \
     --chunk_patches 2000 \
