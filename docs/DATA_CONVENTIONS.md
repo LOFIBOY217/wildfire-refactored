@@ -120,7 +120,7 @@ Example: `src/training/train_v3.py:_load_static_channel`.
 | sm20, swvl2 | volumetric (0-1) | As-is |
 | u10, v10 | m/s | As-is |
 | CAPE | J/kg | As-is |
-| tp | **mm/day** | Converted from m/day (× 1000) |
+| tp | **m/day** (storage) / **mm/day** (loader) | Stored as-is from ERA5; train_v3.py applies ×1000 at load time for precip_def channel |
 | NDVI | [-1, 1] | Dimensionless |
 | FWI/FFMC/DMC/DC/BUI | index | Van Wagner system (unitless) |
 | fire_clim | log1p(density) | Log-transformed hotspot density |
