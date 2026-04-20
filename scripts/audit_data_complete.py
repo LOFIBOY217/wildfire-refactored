@@ -66,7 +66,7 @@ PHYSICAL_RANGES = {
     'swvl2':      (-0.1, 1.1),
     'NDVI':       (-1.1, 1.1),
     'fire_clim':  (-0.1, 20),
-    'burn_age':   (-0.1, 20),
+    'burn_age':   (-0.1, 50),  # up to ~40y with pre-2000 hotspot history
     'burn_count': (-0.1, 20),
     'population': (-1, 20),
     'slope':      (-1, 90),
