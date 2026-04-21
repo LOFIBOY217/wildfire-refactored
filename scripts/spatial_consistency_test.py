@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 """
+⚠️ DEPRECATED (2026-04-21) — DO NOT USE.
+
+This script's r=14 dilation SATURATES spatial coverage (each hotspot
+after 28 km dilation covers ~300× more pixels than it should) and
+HIDES temporal drift rather than exposing it. Results showed nbac_only
+≈ 0.000 every year and other fractions nearly constant, making it
+look like there's no drift — but that's the dilation saturation, not
+the data. See the true drift test at:
+
+    scripts/polygon_detection_test.py      (raw-geometry sjoin, no dilation)
+
+Kept here only for historical reference. Delete if still unused
+2026-05-01.
+
+================================================================
+
 Spatial consistency test across years: CWFIS vs NFDB vs NBAC.
 
 For each year Y, rasterize the annual fire footprint from all three
