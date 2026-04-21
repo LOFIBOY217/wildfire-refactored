@@ -254,7 +254,12 @@ def main(argv=None):
     import time
     for Y in range(args.start_year, args.end_year + 1):
         t0 = time.time()
-        out_path = out_dir / f"fire_clim_nbac_upto_{Y}.tif"
+        # Use same base filename as legacy CWFIS files (fire_clim_upto_Y.tif).
+        # The output directory is what identifies this as NBAC-based, so
+        # downstream train_v3.py / benchmark_baselines.py can point
+        # --fire_clim_dir at data/fire_clim_annual_nbac/ and transparently
+        # pick up NBAC-source climatology files.
+        out_path = out_dir / f"fire_clim_upto_{Y}.tif"
         if out_path.exists():
             print(f"\n[SKIP] {out_path} exists")
             continue
