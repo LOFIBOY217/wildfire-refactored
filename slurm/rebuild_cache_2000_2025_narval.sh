@@ -1,8 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=wf-cache-2000
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=128G
+#SBATCH --mem=256G
 #SBATCH --time=1-12:00:00
+# Mem raised 128G → 256G after 9ch build OOM'd at transpose-end (2026-04-20).
+# Bigger channel sets (13/16) have proportionally bigger peak mem at transpose.
 #SBATCH --output=/scratch/jiaqi217/logs/cache_2000_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/cache_2000_%j.err
 #SBATCH --account=def-inghaw
