@@ -896,6 +896,23 @@ def main():
     ap.add_argument("--save_per_window_json", type=str, default=None,
                     help="Path to dump per-window val metrics as JSON "
                          "(Analysis 3: offline per-window breakdown)")
+    # --- Anti-drift label fusion (2026-04-21) ---
+    ap.add_argument("--label_fusion", action="store_true",
+                    help="Augment CWFIS hotspot labels with NBAC polygons + "
+                         "NFDB ignition points (anti-drift for 2000-2016 "
+                         "pre-VIIRS era where satellite detection was weaker)")
+    ap.add_argument("--nbac_path", type=str,
+                    default="data/burn_scars_raw/NBAC_1972to2024_shp.zip",
+                    help="Path to NBAC shapefile or zip")
+    ap.add_argument("--nbac_date_source", type=str, default="AG",
+                    choices=("AG", "HS"),
+                    help="NBAC polygon date source: AG (agency-reported, "
+                         "earlier) or HS (satellite hotspot, narrower)")
+    ap.add_argument("--nfdb_path", type=str,
+                    default="data/nfdb/NFDB_point.zip",
+                    help="Path to NFDB point shapefile or zip")
+    ap.add_argument("--nfdb_min_size_ha", type=float, default=0.0,
+                    help="Exclude NFDB fires smaller than this (default 0)")
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--lr_min", type=float, default=1e-6)
     ap.add_argument("--seed", type=int, default=42)
@@ -1353,17 +1370,29 @@ def main():
             np.save(stats_path, np.stack([meteo_means, meteo_stds]))
 
     # ----------------------------------------------------------------
-    # STEP 4  Load and rasterize CWFIS hotspots (same as V2)
+    # STEP 4  Load and rasterize fire labels
+    # ----------------------------------------------------------------
+    # Baseline: CWFIS satellite hotspots (as in V2 / 4y SOTA).
+    #
+    # Anti-drift fusion (2026-04-21): when --label_fusion is set, we also
+    # OR in NBAC polygon masks (1972+, Landsat-based, temporally stable)
+    # and NFDB ignition points (1946+, agency-reported, catches small
+    # fires MODIS missed pre-2012). This addresses the documented 636x
+    # CWFIS hotspot drift (Giglio 2016 / Schroeder 2014) by restoring
+    # small early-era fires that satellites underreported.
     # ----------------------------------------------------------------
     print(f"\n[STEP 4] Loading CWFIS hotspot records...")
     hotspot_df = load_hotspot_data(hotspot_csv)
     print(f"  Total records: {len(hotspot_df):,}")
 
     r = args.dilate_radius
+    fusion_tag = "_fused" if args.label_fusion else ""
     fire_cache_key = None
     if r > 0 and args.cache_dir:
-        fire_cache_key = os.path.join(args.cache_dir,
-                                      f"fire_dilated_r{r}_{aligned_dates[0]}_{aligned_dates[-1]}_{H}x{W}.npy")
+        fire_cache_key = os.path.join(
+            args.cache_dir,
+            f"fire_dilated_r{r}{fusion_tag}"
+            f"_{aligned_dates[0]}_{aligned_dates[-1]}_{H}x{W}.npy")
 
     if fire_cache_key and os.path.exists(fire_cache_key) and not args.overwrite:
         print(f"  Loading cached fire_stack: {fire_cache_key}")
@@ -1372,6 +1401,48 @@ def main():
             fire_stack = fire_stack[:T]
     else:
         fire_stack = rasterize_hotspots_batch(hotspot_df, aligned_dates, profile)
+
+        if args.label_fusion:
+            print(f"  [label_fusion] adding NFDB + NBAC sources...")
+            _pre_pos = int(fire_stack.sum())
+
+            # --- NFDB ignition points (1946+ reported fires) ---
+            try:
+                from src.data_ops.processing.rasterize_hotspots import (
+                    load_nfdb_as_hotspot_df,
+                )
+                nfdb_df = load_nfdb_as_hotspot_df(
+                    args.nfdb_path,
+                    min_size_ha=args.nfdb_min_size_ha,
+                )
+                print(f"  [NFDB] {len(nfdb_df):,} fires loaded "
+                      f"(size >= {args.nfdb_min_size_ha} ha)")
+                nfdb_stack = rasterize_hotspots_batch(
+                    nfdb_df, aligned_dates, profile)
+                np.maximum(fire_stack, nfdb_stack, out=fire_stack)
+                del nfdb_stack
+                _post_nfdb = int(fire_stack.sum())
+                print(f"  [NFDB] added {_post_nfdb - _pre_pos:,} positive pixels")
+                _pre_pos = _post_nfdb
+            except Exception as _e:
+                print(f"  [NFDB] FAILED (continuing without NFDB): {_e}")
+
+            # --- NBAC burn polygons (1972+ post-fire Landsat mapping) ---
+            try:
+                from src.data_ops.processing.rasterize_burn_polygons import (
+                    load_nbac, rasterize_nbac_batch,
+                )
+                nbac_gdf = load_nbac(args.nbac_path)
+                print(f"  [NBAC] {len(nbac_gdf):,} polygons loaded")
+                nbac_stack = rasterize_nbac_batch(
+                    nbac_gdf, aligned_dates, profile,
+                    date_source=args.nbac_date_source)
+                np.maximum(fire_stack, nbac_stack, out=fire_stack)
+                del nbac_stack
+                _post_nbac = int(fire_stack.sum())
+                print(f"  [NBAC] added {_post_nbac - _pre_pos:,} positive pixels")
+            except Exception as _e:
+                print(f"  [NBAC] FAILED (continuing without NBAC): {_e}")
         if r > 0:
             yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
             disk = (xx ** 2 + yy ** 2 <= r ** 2)
