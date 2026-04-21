@@ -90,6 +90,100 @@ def load_hotspot_data(hotspot_path):
     return df[['date', 'field_latitude', 'field_longitude']]
 
 
+def load_nfdb_as_hotspot_df(nfdb_shp_or_zip_path,
+                            min_size_ha=0.0,
+                            year_min=None, year_max=None,
+                            causes=None):
+    """
+    Load NFDB point shapefile and return in the same DataFrame format as
+    load_hotspot_data() so it can be fed into rasterize_hotspots_batch().
+
+    NFDB = Canadian National Fire Database (point version): 442k fires,
+    1930-2024, with reported ignition date + lat/lon + size + cause.
+    CRS is already EPSG:3978 in the source but we convert to lat/lon
+    (EPSG:4326) for uniform handling with the hotspot rasterizer.
+
+    Args:
+        nfdb_shp_or_zip_path: Path to NFDB .shp or .zip containing it.
+        min_size_ha: Exclude fires smaller than this (default 0 = include all).
+                     Useful to downweight small, noisy early records.
+        year_min, year_max: Optional year filter.
+        causes: Optional iterable of CAUSE codes to keep
+                (e.g. {"N", "H", "U"}). Default: all.
+
+    Returns:
+        DataFrame with columns: date, field_latitude, field_longitude.
+        date is datetime.date parsed from REP_DATE (or YEAR/MONTH/DAY
+        fallback if REP_DATE missing).
+    """
+    import zipfile as _zf
+
+    p = Path(nfdb_shp_or_zip_path)
+    if p.suffix.lower() == ".zip":
+        extract_dir = p.parent / (p.stem + "_extract")
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        shps = list(extract_dir.glob("*.shp"))
+        if not shps:
+            with _zf.ZipFile(p) as zf:
+                for name in zf.namelist():
+                    if name.endswith((".shp", ".shx", ".dbf", ".prj", ".cpg")):
+                        zf.extract(name, extract_dir)
+            shps = list(extract_dir.rglob("*.shp"))
+        if not shps:
+            raise RuntimeError(f"No .shp inside {p}")
+        shp = shps[0]
+    else:
+        shp = p
+
+    import geopandas as gpd
+    gdf = gpd.read_file(shp)
+
+    # Reproject to EPSG:4326 so _rasterize_points transformer works uniformly
+    if str(gdf.crs).lower() != "epsg:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+
+    # Build date column. Prefer REP_DATE; fallback to YEAR-MONTH-DAY.
+    if "REP_DATE" in gdf.columns:
+        d = pd.to_datetime(gdf["REP_DATE"], errors="coerce")
+    else:
+        d = pd.to_datetime({
+            "year": gdf.get("YEAR"),
+            "month": gdf.get("MONTH"),
+            "day": gdf.get("DAY"),
+        }, errors="coerce")
+    gdf = gdf.assign(_date=d)
+
+    # Filters
+    mask = gdf["_date"].notna()
+    if year_min is not None:
+        mask &= gdf["_date"].dt.year >= year_min
+    if year_max is not None:
+        mask &= gdf["_date"].dt.year <= year_max
+    if "SIZE_HA" in gdf.columns and min_size_ha > 0:
+        mask &= gdf["SIZE_HA"].fillna(0) >= min_size_ha
+    if causes is not None and "CAUSE" in gdf.columns:
+        mask &= gdf["CAUSE"].isin(set(causes))
+
+    gdf = gdf.loc[mask].copy()
+
+    # Latitude / longitude from geometry (since we reprojected)
+    lat = gdf.geometry.y.values
+    lon = gdf.geometry.x.values
+    date_arr = gdf["_date"].dt.date.values
+
+    # Prefer LATITUDE/LONGITUDE columns if present and geometry missing
+    if len(lat) == 0 and "LATITUDE" in gdf.columns:
+        lat = gdf["LATITUDE"].values
+        lon = gdf["LONGITUDE"].values
+
+    df = pd.DataFrame({
+        "date": date_arr,
+        "field_latitude": lat,
+        "field_longitude": lon,
+    })
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Rasterization helpers
 # ---------------------------------------------------------------------------
