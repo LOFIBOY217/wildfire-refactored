@@ -1424,7 +1424,7 @@ def main():
             if not args.include_prescribed and "PRESCRIBED" in nbac_gdf.columns:
                 _before = len(nbac_gdf)
                 nbac_gdf = nbac_gdf[
-                    nbac_gdf["PRESCRIBED"].fillna("n").str.lower() != "y"
+                    nbac_gdf["PRESCRIBED"].isna()  # 'true' = prescribed, NaN = wildfire (confirmed via audit 2026-04-21)
                 ].copy()
                 print(f"  [NBAC] excluded {_before - len(nbac_gdf)} prescribed burns")
             print(f"  [NBAC] {len(nbac_gdf):,} polygons (wildfires)")
