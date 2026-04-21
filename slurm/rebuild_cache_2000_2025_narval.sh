@@ -61,13 +61,22 @@ echo "  output: $CACHE_DIR"
 echo "  Node: $(hostname)  Time: $(date)"
 echo "============================================="
 
-# Run train_v3 with --epochs 0 to only build cache
+# Run train_v3 with --epochs 0 to only build cache.
+#
+# IMPORTANT: --lead_end 45 (NOT the default 46) is required so that the
+# cache key date-range matches what training will produce. Training uses
+# --decoder s2s_legacy, which train_v3.py hard-clamps lead_end to 45
+# (line ~992). Without this flag, cache aligns to pred_end + 46 + 5 days
+# = 2025-12-21 (T=9333) while training aligns to + 45 + 5 = 2025-12-20
+# (T=9332). That single-day mismatch makes training's cache lookup fail
+# and triggers a full 30h cache rebuild inside the training job.
 python3 -u -m src.training.train_v3 \
     --config configs/paths_narval.yaml \
     --run_name cache_build_2000_${N}ch \
     --data_start 2000-05-01 \
     --pred_start 2022-05-01 \
     --pred_end 2025-10-31 \
+    --lead_end 45 \
     --channels "$CHANNELS" \
     --decoder random \
     --batch_size 1024 \
