@@ -84,7 +84,8 @@ def build_nbac_nfdb(nbac_path: str, nfdb_path: str,
     print(f"  NBAC: {len(nbac):,} polygons loaded")
     if exclude_prescribed and "PRESCRIBED" in nbac.columns:
         _before = len(nbac)
-        nbac = nbac[nbac["PRESCRIBED"].isna()  # 'true' = prescribed, NaN = wildfire (audit 2026-04-21)].copy()
+        # NBAC PRESCRIBED: 'true' = prescribed burn, NaN = wildfire (audit 2026-04-21).
+        nbac = nbac[nbac["PRESCRIBED"].isna()].copy()
         print(f"  NBAC: dropped {_before - len(nbac)} prescribed polygons "
               f"({len(nbac):,} remain)")
     nbac_stack = rasterize_nbac_batch(nbac, dates, profile,
