@@ -49,7 +49,7 @@ import csv
 import glob
 import os
 import time
-from datetime import timedelta
+from datetime import date, timedelta
 
 import numpy as np
 import rasterio
@@ -150,7 +150,8 @@ def _build_s2s_windows_calendar(all_dates, date_to_idx, in_days,
 
 def load_data(config_path, pred_start_str, pred_end_str, in_days,
               lead_start, lead_end, patch_size, dilate_radius,
-              fire_season_only=True, climatology_tif_override=None):
+              fire_season_only=True, climatology_tif_override=None,
+              fire_label_npy=None):
 
     from scipy.ndimage import binary_dilation
 
@@ -213,30 +214,64 @@ def load_data(config_path, pred_start_str, pred_end_str, in_days,
               f"nonzero={np.count_nonzero(clim_patched)}")
 
     # ── [4] Fire ground truth ──────────────────────────────────────────
-    print(f"\n[4] Loading hotspot data...")
-    from src.data_ops.processing.rasterize_hotspots import (
-        load_hotspot_data, rasterize_hotspots_batch)
-
-    hotspot_df = load_hotspot_data(cfg["hotspot_csv"])
-    print(f"  Records: {len(hotspot_df):,}")
-
     with rasterio.open(sample_path) as src:
         profile = src.profile
 
-    fire_stack = rasterize_hotspots_batch(hotspot_df, all_dates, profile)
-    print(f"  Rasterized: {int(fire_stack.sum()):,} hotspot pixels")
+    if fire_label_npy:
+        # New path (post 2026-04-21): load pre-built label stack with
+        # provenance. Use this for NBAC+NFDB fusion labels.
+        print(f"\n[4] Loading pre-built fire-label stack: {fire_label_npy}")
+        label_full = np.load(fire_label_npy, mmap_mode="r")
+        print(f"  shape={label_full.shape}  dtype={label_full.dtype}  "
+              f"positive_rate={label_full.mean():.4%}")
+        # label_full is indexed by the date range it was built on. We need
+        # to slice to match all_dates. Assume label_full was built on a
+        # superset starting at an earlier/equal date and extending through
+        # at least pred_end. User must ensure this.
+        json_path = str(fire_label_npy).rsplit(".", 1)[0] + ".json"
+        if os.path.exists(json_path):
+            import json as _json
+            with open(json_path) as f:
+                prov = _json.load(f)
+            label_start = date.fromisoformat(prov["date_range"][0])
+        else:
+            print(f"  [WARN] no sidecar JSON at {json_path}; "
+                  f"assuming labels start at all_dates[0]")
+            label_start = all_dates[0]
+        # Slice label_full to our all_dates range
+        start_offset = (all_dates[0] - label_start).days
+        if start_offset < 0:
+            raise RuntimeError(
+                f"Label stack starts at {label_start} but benchmark "
+                f"needs data from {all_dates[0]} (label doesn't cover)")
+        fire_stack = np.array(
+            label_full[start_offset:start_offset + T])
+        print(f"  sliced [{start_offset}:{start_offset+T}] → "
+              f"{fire_stack.shape}  dilated_positive={int(fire_stack.sum()):,}")
+        # No further dilation (pre-built label already dilated)
+    else:
+        # Legacy path: build from CWFIS hotspot CSV
+        print(f"\n[4] Loading hotspot data (legacy CWFIS path)...")
+        from src.data_ops.processing.rasterize_hotspots import (
+            load_hotspot_data, rasterize_hotspots_batch)
 
-    if dilate_radius > 0:
-        print(f"  Dilating fire labels: radius={dilate_radius} px...")
-        y_grid, x_grid = np.ogrid[-dilate_radius:dilate_radius + 1,
-                                  -dilate_radius:dilate_radius + 1]
-        kernel = (x_grid ** 2 + y_grid ** 2) <= dilate_radius ** 2
-        for t_idx in range(T):
-            if fire_stack[t_idx].any():
-                fire_stack[t_idx] = binary_dilation(
-                    fire_stack[t_idx], structure=kernel).astype(np.uint8)
-            if t_idx % 500 == 0:
-                print(f"    frame {t_idx}/{T}")
+        hotspot_df = load_hotspot_data(cfg["hotspot_csv"])
+        print(f"  Records: {len(hotspot_df):,}")
+
+        fire_stack = rasterize_hotspots_batch(hotspot_df, all_dates, profile)
+        print(f"  Rasterized: {int(fire_stack.sum()):,} hotspot pixels")
+
+        if dilate_radius > 0:
+            print(f"  Dilating fire labels: radius={dilate_radius} px...")
+            y_grid, x_grid = np.ogrid[-dilate_radius:dilate_radius + 1,
+                                      -dilate_radius:dilate_radius + 1]
+            kernel = (x_grid ** 2 + y_grid ** 2) <= dilate_radius ** 2
+            for t_idx in range(T):
+                if fire_stack[t_idx].any():
+                    fire_stack[t_idx] = binary_dilation(
+                        fire_stack[t_idx], structure=kernel).astype(np.uint8)
+                if t_idx % 500 == 0:
+                    print(f"    frame {t_idx}/{T}")
 
     print("  Patchifying fire labels...")
     fire_patched = np.zeros((T, n_patches, out_dim), dtype=np.uint8)
@@ -537,6 +572,10 @@ def main():
                         help="Override climatology source. Default: cfg['fire_climatology_tif'] "
                              "(static 2018-2021). For 2000-2025 fair comparison, pass "
                              "data/fire_clim_annual/fire_clim_upto_2022.tif (22y, leak-free).")
+    parser.add_argument("--fire_label_npy", type=str, default=None,
+                        help="Pre-built fire-label .npy from scripts/build_fire_labels.py. "
+                             "Post 2026-04-21 NBAC+NFDB labels. "
+                             "If omitted, builds from CWFIS hotspots (legacy).")
     parser.add_argument("--output_csv",       default=None)
     args = parser.parse_args()
 
@@ -559,7 +598,8 @@ def main():
         args.config, args.pred_start, args.pred_end,
         args.in_days, args.lead_start, args.lead_end,
         args.patch_size, args.dilate_radius, args.fire_season_only,
-        climatology_tif_override=args.climatology_tif)
+        climatology_tif_override=args.climatology_tif,
+        fire_label_npy=args.fire_label_npy)
 
     # ── K scaling (proportional to pool size) ─────────────────────────
     # When using more windows than the reference (e.g. 646 vs 20), the pixel
