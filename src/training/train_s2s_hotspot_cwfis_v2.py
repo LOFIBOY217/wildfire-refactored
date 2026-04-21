@@ -682,7 +682,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         # --- Mainstream rare-event eval additions (2026-04-17) ---
                         hw=None, grid=None,
                         coarsen_factor=15,      # 15 × 2km = 30km grid
-                        coarsen_k=None):         # top-K in coarse space (default: k / factor²)
+                        coarsen_k=None,          # top-K in coarse space (default: k / factor²)
+                        save_per_window_json=None):  # Analysis 3: dump per-window metrics
     """
     Per-window ranking metrics on a random sample of validation windows.
 
@@ -857,6 +858,10 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 coarsen_factor=coarsen_factor)
 
             per_win_metrics.append({
+                "date":        str(win_date) if win_date is not None else None,
+                "win_idx":     int(win_idx),
+                "hs": int(hs), "he": int(he),
+                "ts": int(ts), "te": int(te),
                 "lift_k":      _m['lift_k'],
                 "precision_k": _m['precision_k'],
                 "recall_k":    _m['recall_k'],
@@ -910,6 +915,22 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
 
     result["n_fire"]    = total_n_fire        # override with total count
     result["n_windows"] = len(per_win_metrics)
+
+    # Analysis 3 (2026-04-21): dump per-window metrics as JSON for offline
+    # analysis (bottom-K windows, monthly/geographic breakdown, etc.)
+    if save_per_window_json is not None:
+        import json as _json
+        _p = str(save_per_window_json)
+        with open(_p, "w") as _f:
+            _json.dump({
+                "k": int(k),
+                "n_sample_wins": int(n_sample_wins),
+                "n_windows_with_fire": len(per_win_metrics),
+                "per_window": per_win_metrics,
+                "summary": {kk: float(vv) for kk, vv in result.items()
+                            if isinstance(vv, (int, float, np.floating))},
+            }, _f, indent=2, default=str)
+        print(f"  [per-window JSON] saved to {_p}")
 
     return result
 

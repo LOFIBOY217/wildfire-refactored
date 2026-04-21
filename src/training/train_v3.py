@@ -537,7 +537,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                            cluster_eval=False, cluster_min_size=1,
                            hw=None, grid=None, full_val=False,
                            per_lead_eval=False,
-                           decoder_ctx_fn=None):
+                           decoder_ctx_fn=None,
+                           save_per_window_json=None):
     """V3 validation: standard pixel-level metrics + optional cluster/per-lead."""
     # PROBE: validate full forward pass with fake tensors BEFORE running all windows.
     # Catches shape mismatches (like missing decoder_ctx_fn) in <1 second.
@@ -575,6 +576,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
         decoder_ctx_fn=decoder_ctx_fn,
         # 2026-04-17: forward hw/grid so coarsened Lift (30km) works
         hw=hw, grid=grid,
+        # 2026-04-21 Analysis 3: per-window metrics dump
+        save_per_window_json=save_per_window_json,
     )
 
     result = dict(pixel_metrics)
@@ -890,6 +893,9 @@ def main():
     ap.add_argument("--batch_size", type=int, default=128)
     ap.add_argument("--num_workers", type=int, default=4)
     ap.add_argument("--val_max_batches", type=int, default=500)
+    ap.add_argument("--save_per_window_json", type=str, default=None,
+                    help="Path to dump per-window val metrics as JSON "
+                         "(Analysis 3: offline per-window breakdown)")
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--lr_min", type=float, default=1e-6)
     ap.add_argument("--seed", type=int, default=42)
@@ -2132,6 +2138,7 @@ def main():
             hw=hw, grid=grid, full_val=args.full_val,
             per_lead_eval=args.per_lead_eval,
             decoder_ctx_fn=_eval_ctx_fn,
+            save_per_window_json=args.save_per_window_json,
         )
         # ═════════════════════════════════════════════════════════════════
         # BUSINESS SUMMARY CARD — what matters for financial risk ranking.
@@ -2312,6 +2319,13 @@ def main():
                 hw=hw, grid=grid, full_val=args.full_val,
                 per_lead_eval=args.per_lead_eval,
                 decoder_ctx_fn=_val_ctx_fn,
+                # 2026-04-21: per-window JSON is only dumped at final
+                # epoch (mid-training val would overwrite useful dumps).
+                save_per_window_json=(
+                    args.save_per_window_json
+                    if args.save_per_window_json
+                    and epoch == args.epochs else None
+                ),
             )
             val_lift_k = _m["lift_k"]
             val_prec_k = _m["precision_k"]
