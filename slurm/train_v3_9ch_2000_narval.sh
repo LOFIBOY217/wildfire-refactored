@@ -82,6 +82,57 @@ if [ ! -d "$CACHE_DIR_2000" ] || [ -z "$(ls -A "$CACHE_DIR_2000" 2>/dev/null)" ]
     exit 1
 fi
 
+# ----------------------------------------------------------------
+# Copy meteo cache to local SSD (added 2026-04-22)
+#
+# Lustre random read on /scratch is ~5 MB/s for memmap chunked reads
+# (observed via `cat /proc/<pid>/io` in run 59724826). Local SSD is
+# ~500 MB/s. Without this copy, --load_train_to_ram alone takes 6+
+# hours on Lustre vs ~5 min on SSD. After load, training is also
+# faster because val + decoder_ctx still hit the meteo file.
+#
+# Falls back to Lustre if local SSD lacks space. Narval GPU nodes
+# have 14T local SSD as of 2026-04-22, so copy almost always works.
+# ----------------------------------------------------------------
+LOCAL_METEO="$LOCAL_CACHE/meteo"
+mkdir -p "$LOCAL_METEO"
+SRC_BYTES=$(du -sb "$CACHE_DIR_2000" | awk '{print $1}')
+SRC_GB=$((SRC_BYTES / 1024 / 1024 / 1024))
+AVAIL_KB=$(df --output=avail "$SLURM_TMPDIR" | tail -1)
+AVAIL_GB=$((AVAIL_KB / 1024 / 1024))
+NEEDED_GB=$((SRC_GB * 12 / 10))    # +20% margin
+echo "=== meteo cache copy decision ==="
+echo "  source       : $CACHE_DIR_2000 (${SRC_GB} GB)"
+echo "  SSD avail    : ${AVAIL_GB} GB"
+echo "  need (1.2x)  : ${NEEDED_GB} GB"
+
+if [ "$AVAIL_GB" -gt "$NEEDED_GB" ]; then
+    echo "  decision     : COPY to local SSD"
+    t0=$SECONDS
+    for f in "$CACHE_DIR_2000"/*; do
+        [ -f "$f" ] || continue
+        fname=$(basename "$f")
+        sz=$(du -h "$f" | cut -f1)
+        echo "  copy $fname ($sz)"
+        cp "$f" "$LOCAL_METEO/" || {
+            echo "  ERROR: copy $fname failed -- aborting copy, falling back to Lustre"
+            rm -rf "$LOCAL_METEO"
+            break
+        }
+    done
+    if [ -d "$LOCAL_METEO" ]; then
+        echo "  copy total   : $((SECONDS - t0))s"
+        ls -lh "$LOCAL_METEO/"
+        TRAIN_CACHE_DIR="$LOCAL_METEO"
+    else
+        TRAIN_CACHE_DIR="$CACHE_DIR_2000"
+    fi
+else
+    echo "  decision     : insufficient SSD space, use Lustre directly"
+    TRAIN_CACHE_DIR="$CACHE_DIR_2000"
+fi
+echo "  TRAIN_CACHE_DIR = $TRAIN_CACHE_DIR"
+
 # Hard guard: Plan A requires NBAC-based fire_clim dir to exist before training.
 # If the dir is missing, we'd silently fall back to CWFIS fire_clim — wasting 3 days.
 if [ ! -d "$SCRATCH/wildfire-refactored/data/fire_clim_annual_nbac" ] || \
@@ -111,7 +162,7 @@ $PYTHON -u -m src.training.train_v3 \
     --d_model 256 --nhead 8 --enc_layers 4 --dec_layers 4 --patch_size 16 \
     --dilate_radius 14 --val_lift_k 5000 --val_lift_sample_wins 20 \
     --fire_season_only --cluster_eval --decoder_ctx --load_train_to_ram \
-    --cache_dir "$CACHE_DIR_2000" --chunk_patches 2000 --num_workers 4 \
+    --cache_dir "$TRAIN_CACHE_DIR" --chunk_patches 2000 --num_workers 4 \
     --log_interval 200 --skip_forecast \
     --label_fusion --nfdb_min_size_ha 1.0 \
     --fire_clim_dir data/fire_clim_annual_nbac \
