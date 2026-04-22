@@ -238,16 +238,30 @@ def load_data(config_path, pred_start_str, pred_end_str, in_days,
             print(f"  [WARN] no sidecar JSON at {json_path}; "
                   f"assuming labels start at all_dates[0]")
             label_start = all_dates[0]
-        # Slice label_full to our all_dates range
-        start_offset = (all_dates[0] - label_start).days
-        if start_offset < 0:
-            raise RuntimeError(
-                f"Label stack starts at {label_start} but benchmark "
-                f"needs data from {all_dates[0]} (label doesn't cover)")
-        fire_stack = np.array(
-            label_full[start_offset:start_offset + T])
-        print(f"  sliced [{start_offset}:{start_offset+T}] → "
-              f"{fire_stack.shape}  dilated_positive={int(fire_stack.sum()):,}")
+        # Build fire_stack matching all_dates length. For dates outside the
+        # label's coverage range, fill with zeros (those are usually pre-val
+        # filler dates that aren't actually evaluated).
+        H_lbl, W_lbl = label_full.shape[1], label_full.shape[2]
+        fire_stack = np.zeros((T, H_lbl, W_lbl), dtype=np.uint8)
+        n_filled = 0
+        n_skipped_pre = 0
+        n_skipped_post = 0
+        from datetime import timedelta as _td
+        for i, d in enumerate(all_dates):
+            offset = (d - label_start).days
+            if offset < 0:
+                n_skipped_pre += 1
+                continue
+            if offset >= label_full.shape[0]:
+                n_skipped_post += 1
+                continue
+            fire_stack[i] = label_full[offset]
+            n_filled += 1
+        print(f"  filled {n_filled} / {T} days from label  "
+              f"(pre-coverage zeros: {n_skipped_pre}, "
+              f"post-coverage zeros: {n_skipped_post})")
+        print(f"  fire_stack: shape={fire_stack.shape}  "
+              f"dilated_positive={int(fire_stack.sum()):,}")
         # No further dilation (pre-built label already dilated)
     else:
         # Legacy path: build from CWFIS hotspot CSV
