@@ -62,6 +62,12 @@ if [ ! -d "$CACHE_DIR_2000" ] || [ -z "$(ls -A "$CACHE_DIR_2000" 2>/dev/null)" ]
     exit 1
 fi
 
+if [ ! -d "$SCRATCH/wildfire-refactored/data/fire_clim_annual_nbac" ] || \
+   [ -z "$(ls -A "$SCRATCH/wildfire-refactored/data/fire_clim_annual_nbac" 2>/dev/null)" ]; then
+    echo "ERROR: data/fire_clim_annual_nbac is missing — Plan A requires NBAC fire_clim."
+    exit 1
+fi
+
 echo "============================================="
 echo "  V3 13ch x enc${ENC} x 2000-2025"
 echo "  Run name: $RUN_NAME"

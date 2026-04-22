@@ -62,10 +62,21 @@ if [ ! -d "$CACHE_DIR_2000" ] || [ -z "$(ls -A "$CACHE_DIR_2000" 2>/dev/null)" ]
     exit 1
 fi
 
+# Hard guard: Plan A requires NBAC-based fire_clim dir to exist before training.
+# If the dir is missing, we'd silently fall back to CWFIS fire_clim — wasting 3 days.
+if [ ! -d "$SCRATCH/wildfire-refactored/data/fire_clim_annual_nbac" ] || \
+   [ -z "$(ls -A "$SCRATCH/wildfire-refactored/data/fire_clim_annual_nbac" 2>/dev/null)" ]; then
+    echo "ERROR: data/fire_clim_annual_nbac is missing or empty."
+    echo "Build NBAC fire_clim first: sbatch slurm/make_fire_clim_nbac_narval.sh"
+    exit 1
+fi
+
 echo "============================================="
 echo "  V3 9ch x enc${ENC} x 2000-2025 (fair-comparison baseline)"
 echo "  Run name: $RUN_NAME"
 echo "  Cache: $CACHE_DIR_2000"
+echo "  ★★★ LABEL: NBAC + NFDB (Plan A, post 2026-04-21 fix) ★★★"
+echo "  ★★★ FIRE_CLIM: data/fire_clim_annual_nbac (NBAC-derived) ★★★"
 echo "============================================="
 
 $PYTHON -u -m src.training.train_v3 \
