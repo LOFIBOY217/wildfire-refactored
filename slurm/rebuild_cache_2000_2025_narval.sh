@@ -40,16 +40,28 @@ export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/
 export PYTHONUNBUFFERED=1
 
 N=${CACHE_CHANNELS:-9}
+DATA_START="${DATA_START:-2000-05-01}"   # train start
+PRED_START="${PRED_START:-2022-05-01}"   # train/val cutoff
+PRED_END="${PRED_END:-2025-10-31}"        # val end
+
+# Cache dir tag: short label distinguishing date range
+# - default 2000-05-01 → 2025-10-31 → "2000" (Phase 2/3 22y)
+# - DATA_START=2018-05-01 → "4y_2018"     (Phase 2 isolated label-effect)
+case "$DATA_START" in
+    2000-05-01) TAG="2000" ;;
+    2018-05-01) TAG="4y_2018" ;;
+    *)          TAG="custom_${DATA_START//-/}" ;;
+esac
 
 if [ "$N" == "16" ]; then
     CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,deep_soil,precip_def,u10,v10,CAPE,NDVI,population,slope,burn_age,burn_count"
-    CACHE_DIR="$SCRATCH/meteo_cache/v3_full_2000"
+    CACHE_DIR="$SCRATCH/meteo_cache/v3_full_${TAG}"
 elif [ "$N" == "13" ]; then
     CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,deep_soil,precip_def,NDVI,population,slope,burn_age,burn_count"
-    CACHE_DIR="$SCRATCH/meteo_cache/v3_13ch_2000"
+    CACHE_DIR="$SCRATCH/meteo_cache/v3_13ch_${TAG}"
 elif [ "$N" == "9" ]; then
     CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
-    CACHE_DIR="$SCRATCH/meteo_cache/v3_9ch_2000"
+    CACHE_DIR="$SCRATCH/meteo_cache/v3_9ch_${TAG}"
 else
     echo "Unknown CACHE_CHANNELS=$N"; exit 1
 fi
@@ -57,9 +69,10 @@ fi
 mkdir -p "$CACHE_DIR"
 
 echo "============================================="
-echo "  Rebuild V3 Cache — 2000-2025 training data (${N}ch)"
-echo "  channels: $CHANNELS"
-echo "  output: $CACHE_DIR"
+echo "  Rebuild V3 Cache (${N}ch)"
+echo "  date range:  $DATA_START → $PRED_END  (TAG=$TAG)"
+echo "  channels:    $CHANNELS"
+echo "  output:      $CACHE_DIR"
 echo "  Node: $(hostname)  Time: $(date)"
 echo "============================================="
 
@@ -74,10 +87,10 @@ echo "============================================="
 # and triggers a full 30h cache rebuild inside the training job.
 python3 -u -m src.training.train_v3 \
     --config configs/paths_narval.yaml \
-    --run_name cache_build_2000_${N}ch \
-    --data_start 2000-05-01 \
-    --pred_start 2022-05-01 \
-    --pred_end 2025-10-31 \
+    --run_name cache_build_${TAG}_${N}ch \
+    --data_start "$DATA_START" \
+    --pred_start "$PRED_START" \
+    --pred_end "$PRED_END" \
     --lead_end 45 \
     --channels "$CHANNELS" \
     --decoder random \

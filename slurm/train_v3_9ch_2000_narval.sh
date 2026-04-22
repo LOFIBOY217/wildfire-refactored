@@ -35,6 +35,25 @@
 
 set -uo pipefail
 ENC=${ENC:?Must set ENC (one of 14, 21, 28, 35)}
+RANGE=${RANGE:-22y}   # 22y (2000-05-01) or 4y (2018-05-01)
+
+# Map RANGE → date_start + cache dir + run-name tag
+case "$RANGE" in
+    22y)
+        DATA_START=2000-05-01
+        CACHE_TAG=2000
+        RUN_TAG=2000
+        ;;
+    4y)
+        DATA_START=2018-05-01
+        CACHE_TAG=4y_2018
+        RUN_TAG=4y_2018
+        ;;
+    *)
+        echo "ERROR: unknown RANGE=$RANGE (expected '22y' or '4y')"
+        exit 1
+        ;;
+esac
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
@@ -53,12 +72,13 @@ mkdir -p "$LOCAL_CACHE"
 copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
 
 CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
-CACHE_DIR_2000="$SCRATCH/meteo_cache/v3_9ch_2000"
-RUN_NAME="v3_9ch_enc${ENC}_2000"
+CACHE_DIR_2000="$SCRATCH/meteo_cache/v3_9ch_${CACHE_TAG}"
+RUN_NAME="v3_9ch_enc${ENC}_${RUN_TAG}"
 
 if [ ! -d "$CACHE_DIR_2000" ] || [ -z "$(ls -A "$CACHE_DIR_2000" 2>/dev/null)" ]; then
     echo "ERROR: $CACHE_DIR_2000 is empty or missing."
-    echo "Run cache build first: CACHE_CHANNELS=9 sbatch slurm/rebuild_cache_2000_2025_narval.sh"
+    echo "Run cache build first:"
+    echo "  CACHE_CHANNELS=9 DATA_START=$DATA_START sbatch slurm/rebuild_cache_2000_2025_narval.sh"
     exit 1
 fi
 
@@ -72,7 +92,7 @@ if [ ! -d "$SCRATCH/wildfire-refactored/data/fire_clim_annual_nbac" ] || \
 fi
 
 echo "============================================="
-echo "  V3 9ch x enc${ENC} x 2000-2025 (fair-comparison baseline)"
+echo "  V3 9ch x enc${ENC} x RANGE=${RANGE}  (data_start=$DATA_START)"
 echo "  Run name: $RUN_NAME"
 echo "  Cache: $CACHE_DIR_2000"
 echo "  ★★★ LABEL: NBAC + NFDB (Plan A, post 2026-04-21 fix) ★★★"
@@ -82,7 +102,7 @@ echo "============================================="
 $PYTHON -u -m src.training.train_v3 \
     --config configs/paths_narval.yaml \
     --run_name "$RUN_NAME" \
-    --data_start 2000-05-01 --pred_start 2022-05-01 --pred_end 2025-10-31 \
+    --data_start "$DATA_START" --pred_start 2022-05-01 --pred_end 2025-10-31 \
     --channels "$CHANNELS" --in_days "$ENC" \
     --decoder s2s_legacy --s2s_cache "$LOCAL_CACHE/s2s_decoder_cache.dat" --s2s_max_issue_lag 3 \
     --loss_fn focal --focal_alpha 0.25 --focal_gamma 2.0 \
