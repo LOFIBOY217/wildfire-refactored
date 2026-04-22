@@ -81,7 +81,18 @@ $PYTHON -u -m src.training.train_v3 \
     --dilate_radius 14 --val_lift_k 5000 --val_lift_sample_wins 20 \
     --fire_season_only --cluster_eval --decoder_ctx --load_train_to_ram \
     --cache_dir "$CACHE_DIR_2000" --chunk_patches 2000 --num_workers 4 \
-    --log_interval 200 --skip_forecast
+    --log_interval 200 --skip_forecast \
+    --label_fusion --nfdb_min_size_ha 1.0 \
+    --fire_clim_dir data/fire_clim_annual_nbac \
+    --save_per_window_json "$SCRATCH/wildfire-refactored/outputs/${RUN_NAME}_per_window.json"
+
+# 2026-04-21 Plan A defaults:
+#   --label_fusion           → use NBAC+NFDB labels (post LABEL_DECISION_2026_04_21.md)
+#   --nfdb_min_size_ha 1.0   → drop <1ha NFDB micro-fires (noise reduction)
+#   --fire_clim_dir nbac dir → use NBAC-derived fire_clim feature (no CWFIS drift)
+#   --save_per_window_json   → enables filtering 2025 windows post-hoc (val period
+#                              still includes 2025 due to cache constraint, but
+#                              we'll exclude in analysis since NBAC only ships through 2024)
 
 PY_EXIT=$?
 echo "=== Done: $(date) exit=$PY_EXIT ==="

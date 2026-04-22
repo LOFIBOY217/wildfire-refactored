@@ -81,7 +81,10 @@ $PYTHON -u -m src.training.train_v3 \
     --dilate_radius 14 --val_lift_k 5000 --val_lift_sample_wins 20 \
     --fire_season_only --cluster_eval --decoder_ctx --load_train_to_ram \
     --cache_dir "$CACHE_DIR_2000" --chunk_patches 2000 --num_workers 4 \
-    --log_interval 200 --skip_forecast
+    --log_interval 200 --skip_forecast \
+    --label_fusion --nfdb_min_size_ha 1.0 \
+    --fire_clim_dir data/fire_clim_annual_nbac \
+    --save_per_window_json "$SCRATCH/wildfire-refactored/outputs/${RUN_NAME}_per_window.json"
 
 PY_EXIT=$?
 echo "=== Done: $(date) exit=$PY_EXIT ==="
