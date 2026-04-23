@@ -30,12 +30,29 @@ copy_venv() {
     ts "  Dest        : $dst"
 
     # Step 1: Ensure tar exists on Lustre (one-time creation)
-    # Validate existing tar (must be > 1MB to be a real venv)
+    # Validate existing tar:
+    #   (a) must be > 1MB (corrupt/truncated check)
+    #   (b) must be newer than the newest file inside the source venv
+    #       (staleness check — added 2026-04-22 after run 59719579 failed:
+    #        tar from Mar 28 was missing geopandas installed Apr 18, but
+    #        cache logic only checked existence + size, silently reused
+    #        the old tar and lost a 4y training run)
     if [ -f "$tar_path" ]; then
         local existing_sz=$(stat --format="%s" "$tar_path" 2>/dev/null || echo 0)
         if [ "$existing_sz" -lt 1048576 ]; then
             ts "  [tar] Existing archive too small (${existing_sz} bytes) — likely corrupt, removing"
             rm -f "$tar_path"
+        else
+            local tar_mtime=$(stat --format="%Y" "$tar_path" 2>/dev/null || echo 0)
+            # newest mtime in the venv (any package install bumps a file mtime)
+            local venv_newest=$(find "$src" -type f -printf '%T@\n' 2>/dev/null | sort -nr | head -1 | cut -d. -f1)
+            venv_newest=${venv_newest:-0}
+            if [ "$tar_mtime" -lt "$venv_newest" ]; then
+                local tar_age=$(date -d @$tar_mtime '+%Y-%m-%d %H:%M' 2>/dev/null || echo "unknown")
+                local venv_age=$(date -d @$venv_newest '+%Y-%m-%d %H:%M' 2>/dev/null || echo "unknown")
+                ts "  [tar] STALE: tar from $tar_age, venv updated $venv_age — rebuilding"
+                rm -f "$tar_path"
+            fi
         fi
     fi
 
