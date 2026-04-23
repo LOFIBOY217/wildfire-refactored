@@ -180,19 +180,29 @@ def main():
         sys.exit("ERROR: climatology_tif required for logreg baseline")
     clim_per_patch = clim_p.mean(axis=1).astype(np.float32)  # (n_patches,)
 
-    slope_path = cfg.get("slope_tif", "data/static/slope.tif")
+    # Slope lives at {terrain_dir}/slope.tif
+    terrain_dir = cfg.get("terrain_dir", "data/terrain")
+    slope_path = os.path.join(terrain_dir, "slope.tif")
+    if not os.path.exists(slope_path):
+        sys.exit(f"ERROR: slope TIF missing: {slope_path}")
     slope_arr = _load_static_patched(slope_path, Hc, Wc, P)
     slope_per_patch = slope_arr.mean(axis=1).astype(np.float32)
 
-    # Daily channels: 2t (era5_t2m_dir or era5_2t_dir) + sm20 (era5_sm_dir)
+    # Daily ERA5 channels: observation_dir has per-variable subdirs (2t/, sm20/)
+    # containing per-date TIFs like 2t_YYYYMMDD.tif
     print("\n  Loading daily channels (2t, sm20)...")
-    t2_dir = cfg.get("era5_2t_dir") or cfg.get("era5_t2m_dir")
-    sm_dir = cfg.get("era5_sm20_dir") or cfg.get("era5_sm_dir")
-    if not t2_dir or not sm_dir:
-        sys.exit(f"ERROR: era5_2t_dir / era5_sm20_dir not in config; "
+    obs_root = cfg.get("observation_dir")
+    if not obs_root:
+        sys.exit(f"ERROR: observation_dir not in config; "
                  f"available keys: {sorted(cfg.keys())}")
+    t2_dir = os.path.join(obs_root, "2t")
+    sm_dir = os.path.join(obs_root, "sm20")
+    for d in (t2_dir, sm_dir):
+        if not os.path.isdir(d):
+            sys.exit(f"ERROR: ERA5 subdir missing: {d}")
     t2_idx = _build_file_index(t2_dir)
     sm_idx = _build_file_index(sm_dir)
+    print(f"  2t: {len(t2_idx)} days  sm20: {len(sm_idx)} days")
     t2_p = _load_daily_channel(t2_idx, all_dates, Hc, Wc, P, "2t")
     sm_p = _load_daily_channel(sm_idx, all_dates, Hc, Wc, P, "sm20")
 
