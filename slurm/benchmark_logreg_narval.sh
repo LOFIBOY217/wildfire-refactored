@@ -28,7 +28,7 @@ export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/
 export PYTHONUNBUFFERED=1
 
 # 22y NBAC+NFDB label stack (built by scripts/build_fire_labels.py)
-LABEL_NPY="$SCRATCH/wildfire-refactored/outputs/fire_labels_nbac_nfdb_2000-2024.npy"
+LABEL_NPY="$SCRATCH/wildfire-refactored/data/fire_labels/fire_labels_nbac_nfdb_2000-05-01_2025-12-21_2281x2709_r14.npy"
 CLIM_TIF="$SCRATCH/wildfire-refactored/data/fire_clim_annual_nbac/fire_clim_upto_2022.tif"
 
 if [ ! -f "$LABEL_NPY" ]; then
