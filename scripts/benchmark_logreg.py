@@ -46,8 +46,8 @@ sys.path.insert(0, str(ROOT))
 import rasterio  # noqa: E402
 
 from src.evaluation.benchmark_baselines import (  # noqa: E402
-    _load_data, _build_file_index, _read_tif, _patchify_frame,
-    eval_per_window,
+    load_data, _build_file_index, _read_tif, _patchify_frame,
+    _build_s2s_windows_calendar, eval_per_window,
 )
 
 
@@ -137,7 +137,7 @@ def main():
 
     # Reuse benchmark_baselines loader for FWI / fire_label / climatology
     (fwi_p, fire_p, clim_p, all_dates, date_to_idx,
-     val_wins, val_win_dates, n_patches, grid) = _load_data(
+     val_wins, val_win_dates, n_patches, grid) = load_data(
         args.config, args.pred_start, args.pred_end,
         args.in_days, args.lead_start, args.lead_end,
         args.patch_size, args.dilate_radius,
@@ -146,7 +146,6 @@ def main():
     )
 
     # All windows (need train_wins separately)
-    from src.evaluation.benchmark_baselines import _build_s2s_windows_calendar
     all_windows = _build_s2s_windows_calendar(
         all_dates, date_to_idx, args.in_days, args.lead_start, args.lead_end)
     pred_start = date.fromisoformat(args.pred_start)
