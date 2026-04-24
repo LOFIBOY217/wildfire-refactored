@@ -1,7 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=wf-logreg-baseline
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=200G
+#SBATCH --mem=400G
+# 200G -> 400G after 59782192 OOM'd loading sm20 day 3000/5350: each
+# daily channel stack (T*n_patches*P*P*2 bytes) ~ 65 GB; with 2t + sm20
+# + FWI + fire_label ~ 227 GB > 200 GB cap. 400G covers all 5 channels
+# plus logreg fit + scoring.
 #SBATCH --time=0-06:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/logreg_baseline_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/logreg_baseline_%j.err

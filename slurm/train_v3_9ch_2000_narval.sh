@@ -2,7 +2,12 @@
 #SBATCH --job-name=wf-v3-9ch-2000
 #SBATCH --gpus-per-node=1
 #SBATCH --time=3-00:00:00
-#SBATCH --mem=500G
+#SBATCH --mem=750G
+# 500G -> 750G after 22y jobs OOM'd (2026-04-23): with 22y train data
+# the fire_season-filtered T indices are ~4678 (vs ~826 for 4y), giving
+# meteo_train ~ 4678 * 23998 * 2304 * 2 bytes = 517 GB just for the
+# RAM-loaded train tensor, which exceeded the 500G cgroup limit.
+# 750G safely covers train tensor + model + workers + page cache.
 #SBATCH --output=/scratch/jiaqi217/logs/train_v3_9ch_2000_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/train_v3_9ch_2000_%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
