@@ -258,20 +258,24 @@ def main():
             w = csv.writer(f)
             if new_file:
                 w.writerow(["baseline", "k", "lift_k", "precision_k",
-                            "recall_k", "csi_k", "ets_k", "pr_auc",
-                            "tp", "n_fire", "baseline_rate"])
+                            "lift_coarse", "bss", "f2", "pr_auc",
+                            "n_wins_with_fire", "n_fire", "baseline"])
+            # NOTE 2026-04-24: eval_per_window returns dicts keyed by
+            # `lift_k`, `precision_k`, `pr_auc`, `lift_coarse`, `bss`, `f2`,
+            # `mcc`, `n_fire`, `baseline` (not `lift`, `precision`, etc.).
+            # Earlier version wrote NaN for everything because of the mismatch.
             for k, row in summary.items():
                 w.writerow([
                     "logreg", k,
-                    f"{row.get('lift', float('nan')):.4f}",
-                    f"{row.get('precision', float('nan')):.6f}",
-                    f"{row.get('recall', float('nan')):.6f}",
-                    f"{row.get('csi', float('nan')):.6f}",
-                    f"{row.get('ets', float('nan')):.6f}",
+                    f"{row.get('lift_k', float('nan')):.4f}",
+                    f"{row.get('precision_k', float('nan')):.6f}",
+                    f"{row.get('lift_coarse', float('nan')):.4f}",   # event-level
+                    f"{row.get('bss', float('nan')):.6f}",
+                    f"{row.get('f2', float('nan')):.6f}",
                     f"{row.get('pr_auc', float('nan')):.6f}",
-                    int(row.get('tp', 0)),
+                    int(row.get('n_wins_with_fire', 0)),
                     int(row.get('n_fire', 0)),
-                    f"{row.get('baseline_rate', float('nan')):.8f}",
+                    f"{row.get('baseline', float('nan')):.8f}",
                 ])
         print(f"\n  appended to {args.output_csv}")
 

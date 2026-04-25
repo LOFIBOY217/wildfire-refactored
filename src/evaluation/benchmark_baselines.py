@@ -560,7 +560,8 @@ def main():
         description="Compute Lift@K for baseline fire prediction methods")
     parser.add_argument("--config",    required=True)
     parser.add_argument("--baseline",  nargs="+",
-                        choices=["fwi_oracle", "climatology"],
+                        choices=["fwi_oracle", "climatology", "persistence",
+                                 "fwi_threshold"],
                         default=["fwi_oracle", "climatology"])
     parser.add_argument("--eval_mode", choices=["per_leadday", "window", "per_window"],
                         default="per_window",
@@ -672,9 +673,30 @@ def main():
         def _clim_win(win):
             return clim_patched.astype(np.float32)
 
+        def _persistence_win(win):
+            """Persistence: yesterday's fire frequency = today's prediction.
+            Score per patch = mean fire density over the encoder window
+            [hs, he), broadcast to (n_patches, P²). Captures 'where things
+            were burning recently → likely to keep burning'."""
+            hs, he, ts, te = win
+            # fire_patched shape: (T, n_patches, P*P) uint8
+            recent = fire_patched[hs:he].astype(np.float32).mean(axis=0)
+            return recent  # (n_patches, P²)
+
+        def _fwi_threshold_win(win):
+            """Operational FWI threshold mimic: linear in FWI but capped.
+            Same shape as _fwi_win but uses mean (not max) — represents the
+            'sustained high FWI = high risk' rule of thumb."""
+            hs, he, ts, te = win
+            return np.nan_to_num(
+                fwi_patched[:, ts:te, :].astype(np.float32), nan=0.0
+            ).mean(axis=1)
+
         score_fns = {
-            "fwi_oracle":  _fwi_win,
-            "climatology": _clim_win,
+            "fwi_oracle":   _fwi_win,
+            "climatology":  _clim_win,
+            "persistence":  _persistence_win,
+            "fwi_threshold": _fwi_threshold_win,
         }
 
         for name in args.baseline:
