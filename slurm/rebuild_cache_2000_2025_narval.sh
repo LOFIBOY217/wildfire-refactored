@@ -49,6 +49,7 @@ PRED_END="${PRED_END:-2025-10-31}"        # val end
 # - DATA_START=2018-05-01 → "4y_2018"     (Phase 2 isolated label-effect)
 case "$DATA_START" in
     2000-05-01) TAG="2000" ;;
+    2014-05-01) TAG="12y_2014" ;;     # 2026-04-24: middle ground, 282GB train RAM
     2018-05-01) TAG="4y_2018" ;;
     *)          TAG="custom_${DATA_START//-/}" ;;
 esac

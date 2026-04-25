@@ -40,7 +40,7 @@
 
 set -uo pipefail
 ENC=${ENC:?Must set ENC (one of 14, 21, 28, 35)}
-RANGE=${RANGE:-22y}   # 22y (2000-05-01) or 4y (2018-05-01)
+RANGE=${RANGE:-22y}   # 22y / 12y / 4y
 
 # Map RANGE → date_start + cache dir + run-name tag
 case "$RANGE" in
@@ -49,13 +49,19 @@ case "$RANGE" in
         CACHE_TAG=2000
         RUN_TAG=2000
         ;;
+    12y)                                  # 2026-04-24: middle ground.
+        DATA_START=2014-05-01             # ~282 GB train RAM, fits 400G alloc.
+        CACHE_TAG=12y_2014                # Schedules on standard 510G GPU
+        RUN_TAG=12y_2014                  # nodes (vs 22y needing 1TB nodes).
+        ;;                                # Override --mem via:
+                                          #   sbatch --mem=400G ...
     4y)
         DATA_START=2018-05-01
         CACHE_TAG=4y_2018
         RUN_TAG=4y_2018
         ;;
     *)
-        echo "ERROR: unknown RANGE=$RANGE (expected '22y' or '4y')"
+        echo "ERROR: unknown RANGE=$RANGE (expected '22y', '12y' or '4y')"
         exit 1
         ;;
 esac
