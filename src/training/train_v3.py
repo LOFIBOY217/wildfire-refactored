@@ -2090,8 +2090,32 @@ def main():
         else:
             t_indices = np.arange(train_T_max + 1, dtype=np.int32)
 
-        print(f"  Copying train data to RAM...")
-        meteo_train = np.array(meteo_patched[:, t_indices, :])
+        # 2026-04-25: chunked copy. The naive
+        #     meteo_train = np.array(meteo_patched[:, t_indices, :])
+        # forces a single fancy-indexed copy that, for 22y data
+        # (4678 fire-season T indices × 23998 patches × 2304 dim × 2 bytes
+        # = 517 GB), peaks at ~750-800 GB RSS because:
+        #   (a) numpy materializes the full output in one allocation,
+        #   (b) memmap pages from the 962 GB source file accumulate
+        #       in OS page cache (cgroup-counted on local SSD),
+        #   (c) cgroup OOM-kills the process before page eviction.
+        # 22y enc14 (59815513) and enc21 (59815514) both died here at
+        # 750 G alloc. Allocating the destination empty + filling chunk-
+        # by-chunk keeps the working set per iteration small (~22 GB),
+        # so page cache cycles naturally and peak stays ~580-650 GB.
+        n_p = meteo_patched.shape[0]
+        n_t = len(t_indices)
+        n_d = meteo_patched.shape[2]
+        bytes_per_chunk = 1000 * n_t * n_d * 2 / 1e9
+        print(f"  Copying train data to RAM (chunked, "
+              f"{n_p} patches in chunks of 1000 ≈ {bytes_per_chunk:.1f} GB/chunk)...")
+        meteo_train = np.empty((n_p, n_t, n_d), dtype=np.float16)
+        chunk_size = 1000
+        for c0 in range(0, n_p, chunk_size):
+            c1 = min(c0 + chunk_size, n_p)
+            meteo_train[c0:c1] = meteo_patched[c0:c1, t_indices, :]
+            if (c0 // chunk_size) % 5 == 0 or c1 == n_p:
+                print(f"    chunk {c0:>6}-{c1:>6} / {n_p}")
         print(f"  [OK] {meteo_train.nbytes/1e9:.1f} GB in RAM")
 
     train_ds = S2SHotspotDatasetMixed(
