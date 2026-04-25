@@ -683,7 +683,11 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         hw=None, grid=None,
                         coarsen_factor=15,      # 15 × 2km = 30km grid
                         coarsen_k=None,          # top-K in coarse space (default: k / factor²)
-                        save_per_window_json=None):  # Analysis 3: dump per-window metrics
+                        save_per_window_json=None,  # Analysis 3: dump per-window metrics
+                        save_window_scores_dir=None):  # 2026-04-24: dump raw
+                                # per-pixel scores so we can recompute novel-
+                                # ignition lift / per-region / per-month etc.
+                                # offline without re-running model inference.
     """
     Per-window ranking metrics on a random sample of validation windows.
 
@@ -827,6 +831,25 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
             # Aggregate across lead days
             prob_agg  = probs.max(axis=1)            # (n_patches, P²)  max risk over window
             label_agg = labels.max(axis=0)           # (n_patches, P²)  uint8
+
+            # 2026-04-24: optionally dump per-window per-pixel scores so we
+            # can compute alternative lift definitions (novel-ignition, by
+            # region, by month, by lookback window) offline without re-
+            # running expensive model inference.
+            if save_window_scores_dir is not None:
+                os.makedirs(save_window_scores_dir, exist_ok=True)
+                _date_str = (str(win_date) if win_date is not None
+                             else f"win{win_idx:04d}")
+                _out = os.path.join(save_window_scores_dir,
+                                    f"window_{win_idx:04d}_{_date_str}.npz")
+                np.savez_compressed(
+                    _out,
+                    prob_agg=prob_agg.astype(np.float16),   # (n_patches, P²)
+                    label_agg=label_agg.astype(np.uint8),   # (n_patches, P²)
+                    hs=hs, he=he, ts=ts, te=te,
+                    win_date=str(win_date) if win_date is not None else "",
+                    win_idx=win_idx,
+                )
 
             p = prob_agg.reshape(-1)
             y = label_agg.reshape(-1).astype(np.float32)

@@ -538,7 +538,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                            hw=None, grid=None, full_val=False,
                            per_lead_eval=False,
                            decoder_ctx_fn=None,
-                           save_per_window_json=None):
+                           save_per_window_json=None,
+                           save_window_scores_dir=None):
     """V3 validation: standard pixel-level metrics + optional cluster/per-lead."""
     # PROBE: validate full forward pass with fake tensors BEFORE running all windows.
     # Catches shape mismatches (like missing decoder_ctx_fn) in <1 second.
@@ -578,6 +579,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
         hw=hw, grid=grid,
         # 2026-04-21 Analysis 3: per-window metrics dump
         save_per_window_json=save_per_window_json,
+        # 2026-04-24: per-pixel score dump for offline novel-ignition eval
+        save_window_scores_dir=save_window_scores_dir,
     )
 
     result = dict(pixel_metrics)
@@ -896,6 +899,14 @@ def main():
     ap.add_argument("--save_per_window_json", type=str, default=None,
                     help="Path to dump per-window val metrics as JSON "
                          "(Analysis 3: offline per-window breakdown)")
+    ap.add_argument("--save_window_scores_dir", type=str, default=None,
+                    help="Directory to dump per-window per-pixel model scores "
+                         "as compressed .npz. Use with --eval_checkpoint to "
+                         "save raw scores from a trained model so we can "
+                         "compute alternative lift definitions (novel-ignition, "
+                         "per-region, per-month) offline without re-running "
+                         "model inference. Each window dumps "
+                         "window_NNNN_DATE.npz with prob_agg + label_agg.")
     # --- Anti-drift label fusion (2026-04-21, revised after polygon-detection test) ---
     ap.add_argument("--label_fusion", action="store_true",
                     help="Switch fire labels from CWFIS hotspots to NBAC "
@@ -2243,6 +2254,7 @@ def main():
             per_lead_eval=args.per_lead_eval,
             decoder_ctx_fn=_eval_ctx_fn,
             save_per_window_json=args.save_per_window_json,
+            save_window_scores_dir=args.save_window_scores_dir,
         )
         # ═════════════════════════════════════════════════════════════════
         # BUSINESS SUMMARY CARD — what matters for financial risk ranking.
