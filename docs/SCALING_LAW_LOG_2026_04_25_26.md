@@ -316,3 +316,115 @@ the unified metric panel (Lift@K + Lift@30km + ROC-AUC + PR-AUC + Brier
    submitting GPU jobs. Took longer because of cache copy + queue.
 
 These corrections strengthen the work; they are not weaknesses to hide.
+
+---
+
+## 10. Deferred work — 13ch retrain (decided 2026-04-26)
+
+**Decision**: defer 13-channel retraining to a future paper / extension.
+Current 9ch results are sufficient for the first paper.
+
+**13ch = 9ch + 4 vegetation/water channels we know we need**:
+
+```
+Existing 9ch:  FWI, 2t, fire_clim, 2d, tcw, sm20, population, slope, burn_age
+Add for 13ch:  NDVI, deep_soil, precip_def, burn_count
+```
+
+| Channel | Type | Why we want it |
+|---|---|---|
+| `NDVI` | Vegetation | Direct measure of greenness / fuel state — strongest single vegetation signal in the wildfire literature |
+| `deep_soil` (sm 1-2 m, swvl2) | Slow water | Captures multi-month drought; complements shallow `sm20` |
+| `precip_def` | Drought index | Cumulative precipitation deficit — operational drought metric |
+| `burn_count` | Fire history | Total burns over period (vs `burn_age` which is "years since last") |
+
+**Infra is fully built — only the compute is missing**:
+
+| Piece | Status |
+|---|---|
+| Cache build script (`slurm/rebuild_cache_2000_2025_narval.sh`) | ✅ Already supports `CACHE_CHANNELS=13` |
+| Train script (`slurm/train_v3_13ch_*.sh`) | ✅ Exists in repo |
+| Data on disk (NDVI, swvl2, precip TIFs) | ✅ Reprojected, audited, drift-stable |
+| `train_v3.py` channel handling | ✅ Drives off `--channels` arg |
+| `fire_dilated` cache (NBAC+NFDB) | ✅ Already pre-built (commits `d833720`, C-step `b5e2338` for 22y) |
+| Chunked train-RAM copy | ✅ Already in `train_v3.py:2094` (commit `4b53991`) — handles 13ch peak too |
+| Full-eval / save_scores pipeline | ✅ Same scripts work, just different `--channels` |
+| LR-scaling fix | ⚠️ Use `--lr 5e-5` for 22y (per Section 6 finding) |
+
+**Compute estimate** (with all the fixes from this period):
+
+```
+13ch cache 22y:    ~30h CPU (one-time)
+13ch cache 12y:    ~15h CPU (one-time, can reuse pre-built dilated label)
+13ch cache 4y:      ~6h CPU (one-time)
+
+13ch × 4 enc × 22y:   4 × ~10h GPU = 40h
+13ch × 4 enc × 12y:   4 × ~6h  GPU = 24h
+13ch × 4 enc × 4y:    4 × ~3h  GPU = 12h
+
+13ch full save_scores × 12 models: 12 × ~1.5h = 18h GPU
+
+Total: ~3-4 days wall time on Narval (with usual queueing).
+```
+
+**Why defer**:
+- 9ch alone already delivers the core paper claims (drift discovery,
+  novel-ignition metric, scaling-law plot, +128% over climatology)
+- NeurIPS D&B 2026 deadline ~early June — 13ch ablation eats 3-4 weeks
+  including bug-fix cycles
+- 13ch is a **channel ablation**, not a fundamentally different result
+- Reviewer expects future-work section; 13ch fits there cleanly
+
+**When to come back** (priority order):
+1. After 9ch scaling-law data is fully analyzed (12y/22y both done)
+2. If the scaling-law plot shows a flat line at the 22y point (suggests
+   model is data-limited, not capacity-limited → channel boost may help)
+3. Before any extension paper or v2 submission
+4. Or whenever a reviewer asks "did you try NDVI?"
+
+**Concrete reactivation steps** (when ready):
+
+```bash
+# 1. Build 13ch caches (CPU jobs, run in parallel)
+CACHE_CHANNELS=13 DATA_START=2000-05-01 sbatch slurm/rebuild_cache_2000_2025_narval.sh
+CACHE_CHANNELS=13 DATA_START=2014-05-01 sbatch slurm/rebuild_cache_2000_2025_narval.sh
+CACHE_CHANNELS=13 DATA_START=2018-05-01 sbatch slurm/rebuild_cache_2000_2025_narval.sh
+
+# 2. Pre-build dilated NBAC+NFDB labels for new ranges (saves dilation time)
+#    -- only 4y/12y need new build; 22y already has it from C-step
+#    Use scripts/build_fire_labels.py and copy into cache dir as
+#    fire_dilated_r14_nbac_nfdb_*.npy
+
+# 3. After caches done, submit 12 trainings:
+for ENC in 14 21 28 35; do
+  RANGE=22y ENC=$ENC sbatch --mem=750G slurm/train_v3_13ch_2000_narval.sh
+  RANGE=12y ENC=$ENC sbatch --mem=400G slurm/train_v3_13ch_2000_narval.sh
+  RANGE=4y  ENC=$ENC sbatch --mem=400G slurm/train_v3_13ch_2000_narval.sh
+done
+
+# 4. After training, run full-eval save_scores and compute_full_metrics
+#    on each — same pipeline as 9ch
+```
+
+**Decision rationale recorded by user 2026-04-26**:
+> "NDVI, deep_soil, precip_def — these I think are definitely needed.
+> Record this; doesn't have to be done now, but I think it should be
+> completed since our infra is already built."
+
+→ This deferral is intentional, not forgotten. Re-open at any time.
+
+## 11. Deferred work — 16ch retrain (much lower priority)
+
+```
+13ch + u10 + v10 + CAPE = 16ch
+```
+
+- u10/v10 (wind) — should help flame spread but model predicts
+  ignition not spread; might add modest signal
+- CAPE (atmospheric instability / lightning proxy) — should help
+  lightning-caused ignitions
+- All three reprojected and clean as of 2026-04-19 (post nan-edge bug fix)
+
+**Defer until 13ch ablation result is known**. If 13ch gives meaningful
+lift over 9ch → 16ch worth trying. If 13ch is flat → 16ch unlikely to
+help and not worth ~2 more weeks of compute.

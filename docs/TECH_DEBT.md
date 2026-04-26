@@ -3,6 +3,10 @@
 Items here are known imperfect designs that work for now but should be
 revisited when their cost-of-inaction grows.
 
+Deferred *experiments* (not design debt) live in
+`docs/SCALING_LAW_LOG_2026_04_25_26.md` Section 10-11 — currently
+13ch / 16ch retrains are deferred there with full reactivation steps.
+
 ---
 
 ## 1. Label-source switch is a feature flag, not a Plugin / Strategy Pattern
