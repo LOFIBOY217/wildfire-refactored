@@ -468,6 +468,15 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
     #
     # Correct: use 2D spatial max-pool with tile side ≈ sqrt(median_size)
     # so tiles are local regions (same statistical properties as clusters).
+    #
+    # KNOWN BIAS (2026-04-26 audit): tile_side is based on MEDIAN cluster size,
+    # which under-sizes tiles when the size distribution is heavy-tailed (1
+    # mega-fire of 10000 px + 100 small fires of 10 px → median 10, tile_side 3).
+    # In that regime the mega-fire's max(prob) is computed over 10000 px while
+    # bg tiles see only 9 px, giving the mega-fire a structural advantage
+    # in the ranking. Acceptable for now (operational interpretation: "mega-
+    # fires deserve more weight"). For an ablation, replace median with
+    # 75th percentile or weight by cluster size.
     median_size = max(int(np.median(cluster_sizes)), 1)
     tile_side = max(1, int(np.sqrt(median_size)))  # ≈ 3 for median_size ~10
     H, W = all_probs_2d.shape
@@ -664,9 +673,16 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                     # V3 decoder_ctx augmentation (must match training-time augment)
                     if decoder_ctx_fn is not None:
                         xb_dec = decoder_ctx_fn(xb_dec, cs, ce)
+                    # 2026-04-26 audit fix: previously called model(xb_enc, xb_dec)
+                    # without patch_ids. Safe when use_patch_embed=False (default,
+                    # patch_ids defaults to None inside the model), but a latent bug
+                    # if use_patch_embed is ever enabled. Mirror the pixel-level eval
+                    # path so the two stay in sync.
+                    _cl_chunk_patch_ids = (torch.arange(cs, ce, device=device)
+                                            if use_patch_embed else None)
                     with torch.autocast(device_type=device.type, dtype=torch.float16,
                                         enabled=(device.type == "cuda")):
-                        logits = model(xb_enc, xb_dec)
+                        logits = model(xb_enc, xb_dec, _cl_chunk_patch_ids)
                     prob_chunks.append(torch.sigmoid(logits.float()).cpu().numpy())
 
                 probs = np.concatenate(prob_chunks, axis=0)   # (n_patches, dec_days, P²)
@@ -691,6 +707,17 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                     cl_nclusters.append(cm["n_clusters"])
 
         if cl_lifts:
+            # 2026-04-26 audit: also report n_clusters-weighted mean. The
+            # default unweighted mean treats every window equally regardless
+            # of how many fire events it has; weighted mean values windows
+            # with more fires more — closer to "lift averaged over all fires".
+            cl_lifts_arr = np.asarray(cl_lifts, dtype=np.float64)
+            cl_n_arr = np.asarray(cl_nclusters, dtype=np.float64)
+            if cl_n_arr.sum() > 0:
+                result["cluster_lift_k_weighted"] = float(
+                    (cl_lifts_arr * cl_n_arr).sum() / cl_n_arr.sum())
+            else:
+                result["cluster_lift_k_weighted"] = 0.0
             result["cluster_lift_k"] = float(np.mean(cl_lifts))
             result["cluster_lift_k_std"] = float(np.std(cl_lifts))
             result["cluster_precision_k"] = float(np.mean(cl_precs))
