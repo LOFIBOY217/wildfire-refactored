@@ -2,7 +2,7 @@
 #SBATCH --job-name=wf-save-scores-full
 #SBATCH --gpus-per-node=1
 #SBATCH --time=0-08:00:00
-#SBATCH --mem=750G
+#SBATCH --mem=400G
 #SBATCH --output=/scratch/jiaqi217/logs/save_scores_full_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/save_scores_full_%j.err
 #SBATCH --account=def-inghaw
