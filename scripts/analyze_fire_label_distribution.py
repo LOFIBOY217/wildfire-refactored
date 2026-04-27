@@ -64,18 +64,37 @@ sys.path.insert(0, str(ROOT))
 # ── helpers ───────────────────────────────────────────────────────────────
 
 def parse_nbac_date(date_val):
-    """NBAC AG_SDATE/EDATE can be string 'YYYYMMDD' or datetime; return date or None."""
+    """NBAC AG_SDATE/EDATE can be: string 'YYYYMMDD', pandas Timestamp,
+    numpy datetime64, NaT, or None. Returns date or None.
+
+    2026-04-27 fix: previous version called date(year, month, day) without
+    casting; some shapefile readers return float-typed year/month/day on
+    NaT-like values (e.g., numpy NaN coerced through datetime), causing
+    TypeError. Wrap each branch in try-except + explicit int() casts."""
     if date_val is None:
         return None
-    if hasattr(date_val, 'year'):  # datetime-like
-        return date(date_val.year, date_val.month, date_val.day)
-    s = str(date_val).strip()
-    if not s or s in ('nan', 'None', '0', '00000000'):
-        return None
+    # Pandas / numpy Timestamp-like
+    if hasattr(date_val, 'year') and hasattr(date_val, 'month') and hasattr(date_val, 'day'):
+        try:
+            y, m, d = int(date_val.year), int(date_val.month), int(date_val.day)
+            if 1900 <= y <= 2100 and 1 <= m <= 12 and 1 <= d <= 31:
+                return date(y, m, d)
+        except (TypeError, ValueError):
+            pass  # fall through to string parsing
+    # String parsing: 'YYYYMMDD' or 'YYYY-MM-DD'
     try:
-        if len(s) >= 8 and s[:8].isdigit():
-            y, m, d = int(s[:4]), int(s[4:6]), int(s[6:8])
-            return date(y, m, d)
+        s = str(date_val).strip()
+    except Exception:
+        return None
+    if not s or s.lower() in ('nan', 'nat', 'none', '0', '00000000', '<na>'):
+        return None
+    # Strip non-digits (e.g., '-' in '2018-05-01')
+    digits = ''.join(c for c in s if c.isdigit())
+    try:
+        if len(digits) >= 8:
+            y, m, d = int(digits[:4]), int(digits[4:6]), int(digits[6:8])
+            if 1900 <= y <= 2100 and 1 <= m <= 12 and 1 <= d <= 31:
+                return date(y, m, d)
     except (ValueError, IndexError):
         pass
     return None
