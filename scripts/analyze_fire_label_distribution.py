@@ -118,7 +118,6 @@ def analyze_nbac(nbac_shapefile, exclude_prescribed=True):
     # Exclude prescribed burns if column exists
     if exclude_prescribed and "PRESCRIBED" in nbac.columns:
         before = len(nbac)
-        # PRESCRIBED can be string 'true'/'false' or boolean
         mask = nbac["PRESCRIBED"].astype(str).str.lower().isin(["true", "1", "yes"])
         nbac = nbac[~mask].copy()
         print(f"  excluded {before - len(nbac)} prescribed burns")
@@ -130,9 +129,8 @@ def analyze_nbac(nbac_shapefile, exclude_prescribed=True):
             size_col = c
             break
     if size_col is None:
-        # Compute from geometry (project to equal-area first)
         print(f"  [warn] no size column; computing from geometry")
-        nbac_eq = nbac.to_crs("EPSG:3978")  # Canada Lambert (equal-area)
+        nbac_eq = nbac.to_crs("EPSG:3978")
         nbac["_area_ha"] = nbac_eq.geometry.area / 10000
         size_col = "_area_ha"
     print(f"  size column: {size_col}")
@@ -145,19 +143,139 @@ def analyze_nbac(nbac_shapefile, exclude_prescribed=True):
             break
     print(f"  date column: {date_col}")
 
+    # Find jurisdiction column (Section 1: per-province)
+    juris_col = None
+    for c in ("AGENCY", "JURISDIC", "JURISDICT", "PROV", "JURISDICTION"):
+        if c in nbac.columns:
+            juris_col = c
+            break
+    print(f"  jurisdiction column: {juris_col}")
+
     rows = []
     for _, r in nbac.iterrows():
         ha = float(r[size_col]) if r[size_col] is not None else 0.0
         if ha <= 0:
             continue
         d = parse_nbac_date(r[date_col]) if date_col else None
+        juris = str(r[juris_col]).strip() if juris_col and r[juris_col] is not None else "?"
         rows.append({
             "ha": ha,
             "year": d.year if d else None,
             "month": d.month if d else None,
+            "jurisdiction": juris,
         })
     print(f"  parsed {len(rows)} valid fires")
     return rows
+
+
+# ── Section 1: per-province ───────────────────────────────────────────────
+
+# NBAC AGENCY codes → readable province names (per CFS documentation)
+# https://cwfis.cfs.nrcan.gc.ca/datamart
+AGENCY_MAP = {
+    "BCA": "BC (British Columbia)",
+    "AB":  "AB (Alberta)",
+    "ABT": "AB (Alberta)",
+    "SK":  "SK (Saskatchewan)",
+    "SKA": "SK (Saskatchewan)",
+    "MB":  "MB (Manitoba)",
+    "MBA": "MB (Manitoba)",
+    "ON":  "ON (Ontario)",
+    "ONA": "ON (Ontario)",
+    "QC":  "QC (Quebec)",
+    "QCA": "QC (Quebec)",
+    "NB":  "NB (New Brunswick)",
+    "NBA": "NB (New Brunswick)",
+    "NS":  "NS (Nova Scotia)",
+    "NSA": "NS (Nova Scotia)",
+    "PE":  "PE (PEI)",
+    "PEA": "PE (PEI)",
+    "NL":  "NL (Newfoundland)",
+    "NLA": "NL (Newfoundland)",
+    "YT":  "YT (Yukon)",
+    "YTA": "YT (Yukon)",
+    "NT":  "NT (NWT)",
+    "NTA": "NT (NWT)",
+    "NU":  "NU (Nunavut)",
+    "NUA": "NU (Nunavut)",
+    "PC":  "PC (Parks Canada)",
+    "PCA": "PC (Parks Canada)",
+}
+
+
+def per_province(fires):
+    by_juris = {}
+    for f in fires:
+        j = AGENCY_MAP.get(f["jurisdiction"], f["jurisdiction"])
+        d = by_juris.setdefault(j, {"count": 0, "total_ha": 0.0,
+                                     "max_ha": 0.0, "mega_count": 0})
+        d["count"] += 1
+        d["total_ha"] += f["ha"]
+        if f["ha"] > d["max_ha"]:
+            d["max_ha"] = f["ha"]
+        if f["ha"] >= 100000:
+            d["mega_count"] += 1
+    return by_juris
+
+
+# ── Section 3: Power-law fit ─────────────────────────────────────────────
+
+def fit_powerlaw_mle(values, x_min=100.0):
+    """Continuous power-law MLE: P(x) ~ x^(-α) for x >= x_min.
+    Returns alpha estimate + standard error + KS goodness-of-fit."""
+    arr = np.asarray(values, dtype=float)
+    arr = arr[arr >= x_min]
+    n = len(arr)
+    if n < 50:
+        return {"alpha": float('nan'), "sigma": float('nan'),
+                "x_min": x_min, "n": n, "ks_d": float('nan')}
+    alpha = 1 + n / np.sum(np.log(arr / x_min))
+    sigma = (alpha - 1) / np.sqrt(n)
+    # KS distance: empirical CDF vs theoretical power-law CDF
+    sorted_arr = np.sort(arr)
+    emp_cdf = np.arange(1, n + 1) / n
+    theo_cdf = 1 - (sorted_arr / x_min) ** (1 - alpha)
+    ks_d = float(np.max(np.abs(emp_cdf - theo_cdf)))
+    return {"alpha": float(alpha), "sigma": float(sigma),
+            "x_min": x_min, "n": n, "ks_d": ks_d}
+
+
+# ── Section 4: Train vs Val KS test ───────────────────────────────────────
+
+def ks_two_sample(a, b):
+    """KS test on two samples. Returns D + asymptotic p-value."""
+    a = np.sort(np.asarray(a, dtype=float))
+    b = np.sort(np.asarray(b, dtype=float))
+    if len(a) == 0 or len(b) == 0:
+        return float('nan'), float('nan')
+    all_v = np.concatenate([a, b])
+    cdf_a = np.searchsorted(a, all_v, side="right") / len(a)
+    cdf_b = np.searchsorted(b, all_v, side="right") / len(b)
+    D = float(np.max(np.abs(cdf_a - cdf_b)))
+    en = np.sqrt(len(a) * len(b) / (len(a) + len(b)))
+    p = 2 * np.exp(-2 * (en * D) ** 2)
+    return D, max(0.0, min(1.0, p))
+
+
+def train_val_ks(fires, splits):
+    """For each train range, KS test fire-size distribution vs val (2022-2024).
+    splits = {'4y': (2018, 2021), '12y': (2014, 2021), '22y': (2000, 2021)}.
+    Val = 2022-2024 always."""
+    val_sizes = [f["ha"] for f in fires
+                  if f["year"] is not None and 2022 <= f["year"] <= 2024]
+    out = {}
+    for name, (y0, y1) in splits.items():
+        train_sizes = [f["ha"] for f in fires
+                        if f["year"] is not None and y0 <= f["year"] <= y1]
+        D, p = ks_two_sample(train_sizes, val_sizes)
+        out[name] = {
+            "n_train": len(train_sizes), "n_val": len(val_sizes),
+            "train_mean": float(np.mean(train_sizes)) if train_sizes else 0,
+            "val_mean": float(np.mean(val_sizes)) if val_sizes else 0,
+            "D": D, "p": p,
+            "verdict": "DIFFERENT (p<0.05)" if p < 0.05 else "same",
+        }
+    return out
 
 
 def percentile_table(values, pcts=(50, 75, 90, 95, 99, 99.5, 99.9)):
@@ -395,7 +513,69 @@ def main():
         for r in pixel_rows:
             wr.writerow(r)
 
-    # Quadrant
+    # ── Section 1: Per-province ───────────────────────────────────────
+    prov = per_province(nbac_fires)
+    md.append("### Per-province / per-jurisdiction (NBAC)\n")
+    md.append("| Jurisdiction | n_fires | total_ha (M) | max_fire_ha | mega_count |")
+    md.append("|---|---|---|---|---|")
+    prov_rows = []
+    for j in sorted(prov, key=lambda x: -prov[x]["total_ha"]):
+        d = prov[j]
+        md.append(f"| {j} | {d['count']:,} | {d['total_ha']/1e6:.2f} | "
+                  f"{d['max_ha']:,.0f} | {d['mega_count']} |")
+        prov_rows.append({"jurisdiction": j, **d})
+    md.append("")
+    with open(os.path.join(args.output_dir, "fire_per_province.csv"), "w") as f:
+        wr = csv.DictWriter(f, fieldnames=["jurisdiction", "count", "total_ha", "max_ha", "mega_count"])
+        wr.writeheader()
+        for r in prov_rows:
+            wr.writerow(r)
+
+    # ── Section 3: Power-law fit ──────────────────────────────────────
+    md.append("### Power-law (Pareto) fit on fire size distribution\n")
+    md.append("Tests claim that fire sizes are heavy-tailed: P(size > x) ~ x^(-α).\n")
+    md.append("| x_min (ha) | n fires used | α (exponent) | std err | KS-D vs power-law |")
+    md.append("|---|---|---|---|---|")
+    pl_rows = []
+    for x_min in (10, 100, 1000, 10000):
+        pl = fit_powerlaw_mle(sizes, x_min=x_min)
+        md.append(f"| {x_min:,} | {pl['n']:,} | {pl['alpha']:.3f} | "
+                  f"{pl['sigma']:.3f} | {pl['ks_d']:.3f} |")
+        pl_rows.append({"x_min": x_min, **pl})
+    md.append("\nInterpretation:")
+    md.append("- α ≈ 1.5–2.5 = typical heavy-tailed wildfire distribution (power law)")
+    md.append("- α > 3   = lighter tail (less extreme)")
+    md.append("- KS-D < 0.05 indicates good fit to power-law\n")
+    with open(os.path.join(args.output_dir, "fire_powerlaw_fit.csv"), "w") as f:
+        wr = csv.DictWriter(f, fieldnames=["x_min", "alpha", "sigma", "n", "ks_d"])
+        wr.writeheader()
+        for r in pl_rows:
+            wr.writerow(r)
+
+    # ── Section 4: Train vs Val KS test ──────────────────────────────
+    md.append("### Train vs Val distribution (KS test on fire sizes)\n")
+    md.append("Tests whether the 4y/12y/22y train data and 2022-2024 val data come from the same distribution.\n")
+    splits = {"4y (2018-2021)": (2018, 2021),
+              "12y (2014-2021)": (2014, 2021),
+              "22y (2000-2021)": (2000, 2021)}
+    ks_results = train_val_ks(nbac_fires, splits)
+    md.append("| Train range | n_train | n_val | mean_train (ha) | mean_val (ha) | KS-D | p-value | Verdict |")
+    md.append("|---|---|---|---|---|---|---|---|")
+    ks_rows = []
+    for name, r in ks_results.items():
+        md.append(f"| {name} | {r['n_train']:,} | {r['n_val']:,} | "
+                  f"{r['train_mean']:,.0f} | {r['val_mean']:,.0f} | "
+                  f"{r['D']:.3f} | {r['p']:.4f} | {r['verdict']} |")
+        ks_rows.append({"train_range": name, **r})
+    md.append("")
+    with open(os.path.join(args.output_dir, "train_val_ks.csv"), "w") as f:
+        wr = csv.DictWriter(f, fieldnames=["train_range", "n_train", "n_val",
+                                            "train_mean", "val_mean", "D", "p", "verdict"])
+        wr.writeheader()
+        for r in ks_rows:
+            wr.writerow(r)
+
+    # Quadrant (existing)
     quad = quadrant_analysis(nbac_fires)
     md.append("### Quadrant: size × time\n")
     sizes_order = ["tiny (<100 ha)", "small (100-1k ha)", "medium (1k-10k ha)",
