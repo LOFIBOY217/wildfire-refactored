@@ -163,8 +163,9 @@ def analyze_nbac(nbac_shapefile, exclude_prescribed=True):
     print(f"  date column: {date_col}")
 
     # Find jurisdiction column (Section 1: per-province)
+    # 2026-04-27 fix: real NBAC schema uses ADMIN_AREA, not AGENCY
     juris_col = None
-    for c in ("AGENCY", "JURISDIC", "JURISDICT", "PROV", "JURISDICTION"):
+    for c in ("ADMIN_AREA", "AGENCY", "JURISDIC", "JURISDICT", "PROV", "JURISDICTION"):
         if c in nbac.columns:
             juris_col = c
             break
@@ -189,35 +190,39 @@ def analyze_nbac(nbac_shapefile, exclude_prescribed=True):
 
 # ── Section 1: per-province ───────────────────────────────────────────────
 
-# NBAC AGENCY codes → readable province names (per CFS documentation)
-# https://cwfis.cfs.nrcan.gc.ca/datamart
+# NBAC AGENCY/ADMIN_AREA codes → readable province names
+# (NBAC docs: https://cwfis.cfs.nrcan.gc.ca/datamart)
+# 2026-04-27 fix: real NBAC schema uses ADMIN_AREA with 2-letter codes
 AGENCY_MAP = {
+    # 2-letter province / territory codes (ADMIN_AREA)
+    "BC": "BC (British Columbia)",
+    "AB": "AB (Alberta)",
+    "SK": "SK (Saskatchewan)",
+    "MB": "MB (Manitoba)",
+    "ON": "ON (Ontario)",
+    "QC": "QC (Quebec)",
+    "NB": "NB (New Brunswick)",
+    "NS": "NS (Nova Scotia)",
+    "PE": "PE (PEI)",
+    "NL": "NL (Newfoundland)",
+    "YT": "YT (Yukon)",
+    "NT": "NT (NWT)",
+    "NU": "NU (Nunavut)",
+    "PC": "PC (Parks Canada)",
+    # Legacy AGENCY-style 3-letter codes (kept as fallback)
     "BCA": "BC (British Columbia)",
-    "AB":  "AB (Alberta)",
     "ABT": "AB (Alberta)",
-    "SK":  "SK (Saskatchewan)",
     "SKA": "SK (Saskatchewan)",
-    "MB":  "MB (Manitoba)",
     "MBA": "MB (Manitoba)",
-    "ON":  "ON (Ontario)",
     "ONA": "ON (Ontario)",
-    "QC":  "QC (Quebec)",
     "QCA": "QC (Quebec)",
-    "NB":  "NB (New Brunswick)",
     "NBA": "NB (New Brunswick)",
-    "NS":  "NS (Nova Scotia)",
     "NSA": "NS (Nova Scotia)",
-    "PE":  "PE (PEI)",
     "PEA": "PE (PEI)",
-    "NL":  "NL (Newfoundland)",
     "NLA": "NL (Newfoundland)",
-    "YT":  "YT (Yukon)",
     "YTA": "YT (Yukon)",
-    "NT":  "NT (NWT)",
     "NTA": "NT (NWT)",
-    "NU":  "NU (Nunavut)",
     "NUA": "NU (Nunavut)",
-    "PC":  "PC (Parks Canada)",
     "PCA": "PC (Parks Canada)",
 }
 

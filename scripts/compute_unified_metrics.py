@@ -149,14 +149,16 @@ def mcc_at_k(score_flat, label_flat, k):
     order = np.argsort(score_flat)[::-1]
     pred = np.zeros(n, dtype=np.uint8)
     pred[order[:k]] = 1
-    tp = int(((pred == 1) & (label_flat == 1)).sum())
-    tn = int(((pred == 0) & (label_flat == 0)).sum())
-    fp = int(((pred == 1) & (label_flat == 0)).sum())
-    fn = int(((pred == 0) & (label_flat == 1)).sum())
-    den = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
-    if den == 0:
+    # Cast to float64 to avoid int overflow on multiplications of
+    # ~6M × ~6M × ~6M × ~6M which exceeds int64 capacity
+    tp = float(((pred == 1) & (label_flat == 1)).sum())
+    tn = float(((pred == 0) & (label_flat == 0)).sum())
+    fp = float(((pred == 1) & (label_flat == 0)).sum())
+    fn = float(((pred == 0) & (label_flat == 1)).sum())
+    den_sq = (tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)
+    if den_sq <= 0:
         return 0.0
-    return (tp * tn - fp * fn) / den
+    return (tp * tn - fp * fn) / np.sqrt(den_sq)
 
 
 def roc_auc(score, label):
