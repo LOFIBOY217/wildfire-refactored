@@ -217,21 +217,60 @@ then 2000 (d=0.90).
 
 ---
 
-## 6. Cosine-LR hypothesis test (queued)
+## 6. Cosine-LR hypothesis test — DISCONFIRMED (2026-04-27)
 
 **Hypothesis**: if 22y overfit is driven by 5.5× over-training (not data
 mismatch), then halving the LR + lowering eta_min should restore the
 expected scaling benefit.
 
-Submitted (job 59894250): 22y enc28 with `--lr 5e-5 --lr_min 1e-7`
+**Submitted** (job 59894250): 22y enc28 with `--lr 5e-5 --lr_min 1e-7`
 (default cosine schedule already on; only the LR range is compressed).
+Comparison target: original 22y enc28 (lift 5.59 ep1, 3.81 ep2).
 
-Will compare against original 22y enc28 (lift 5.59 ep1, 3.81 ep2).
-
-**Predicted outcome**:
+**Predicted outcome (a priori)**:
 - ep2 lift drop should be much smaller
 - final best lift should be ≥ 5.83 (matching or beating 4y SOTA)
 - if so → confirms LR-rescale diagnosis, not climate-shift
+
+**Observed outcome** (2026-04-27, 15h47m runtime, quick eval 20 win / 15 with fire):
+
+| Run                       | Lift@5000          | Lift@30km | ROC-AUC | Notes |
+|---------------------------|--------------------|-----------|---------|-------|
+| 22y enc28 default LR (ep1)| 5.59               | —         | —       | from §4 |
+| **22y enc28 cosine-lower**| **5.484** [3.78, 7.49] | 3.97 [2.35, 6.37] | 0.894 | this experiment |
+| 4y enc28                  | 5.83               | —         | —       | original SOTA target |
+
+→ **No improvement.** Cosine-lower 22y enc28 lands at the same level as
+default-LR 22y enc28, NOT at the expected ≥ 5.83.
+
+**Conclusion**: LR-rescaling is NOT the driver of the 22y plateau.
+The hypothesis is **disconfirmed**. Whatever causes 22y to underperform
+4y on Pixel Lift is something else — candidates that remain:
+1. Distribution shift (val 2022-2025 differs from train 2000-2017 more
+   than from train 2018-2021) — partially supported by §5 KS results
+   showing ALL three ranges differ from val (p<0.05), but val differs
+   *less* from 4y than from 22y on `n_fires_per_year`.
+2. Heavier-tailed older data adds noise without signal for current
+   architecture (fixed PFC capacity).
+3. Cluster Lift goes up with 22y (+46% per memory) — so the model IS
+   learning something new from older data, just not pixel-level rank.
+
+**Decision**: do NOT pursue further LR-tuning experiments on 22y until
+full-eval (604-window) numbers come back. Quick-eval 20 win has CIs
+[3.78, 7.49] which overlap heavily with both 4y and default-22y; this
+disconfirmation rests on point estimates and could be wrong at the
+event-level. Re-evaluate after full save_scores completes (job 59957346).
+
+**Causation chain (corrected)**:
+```
+"22y plateau on Pixel Lift"
+   ?→ LR over-training under cosine schedule (hypothesized §6)
+   ✗  cosine-lower experiment shows same lift → ruled out
+   ?→ distribution shift between old training years and val period
+       (partially supported by §5 KS results)
+   ?→ Cluster Lift gains may indicate the model learns event-level
+       structure from old years but not pixel rank (worth dedicated test)
+```
 
 ---
 
@@ -287,6 +326,24 @@ QUEUED:
   12y × 4 train (afterok cache)
 ```
 
+### Update 2026-04-27
+```
+DONE (since 04-26):
+  22y enc28 default-LR train
+  22y enc35 train
+  12y × 4 train (all 4 ranges complete)
+  22y enc28 cosine-lower train (15h47m, Lift@5000 = 5.48 quick eval — see §6)
+  Logreg complete (enc14: 2.69x total, 2.38x novel_30d)
+  Fire-label distribution stats v4 (per-province, power-law, train/val KS)
+  Per-window save_scores: 4y enc14/21/28 (3 of 12 done)
+
+RUNNING / QUEUED (2026-04-27 ~21:30 UTC):
+  9 save_scores PD jobs resubmitted with --mem=400G
+    (was 750G, fit only on 1024G nodes → 21h wait;
+     now fits on 510G standard A100 nodes → "Priority" reason)
+  unified_metrics 4y enc14 (12h walltime, replaces 2h timeout v2)
+```
+
 When all done, run `compute_full_metrics.py` per save_scores dir for
 the unified metric panel (Lift@K + Lift@30km + ROC-AUC + PR-AUC + Brier
 + F1/F2/MCC, model + climatology + persistence × total + novel_7d/30d/90d).
@@ -300,10 +357,13 @@ the unified metric panel (Lift@K + Lift@30km + ROC-AUC + PR-AUC + Brier
    only fire_pixels has weak trend. Lesson: do not present specific
    numbers without verification, even in casual analogies.
 
-2. **Over-attributed 22y overfit to data non-iid** — actual cause is
-   training-schedule mismatch (LR not rescaled for 5.5× more updates)
-   plus inherent temporal autocorrelation in fire data. Climate shift
-   is a secondary at most.
+2. **Over-attributed 22y overfit to data non-iid** — initially blamed on
+   training-schedule mismatch (LR not rescaled for 5.5× more updates).
+   The cosine-LR experiment (§6) **disconfirmed** this: 22y enc28 with
+   lr=5e-5 / lr_min=1e-7 produced Lift@5000 = 5.48, no better than
+   default LR. Real driver of 22y plateau is still unidentified;
+   distribution shift between old training years and val period
+   (§5 KS results) is now the leading hypothesis, but unconfirmed.
 
 3. **Earlier persistence Lift = 17 panic** — almost concluded the
    model was worse than trivial baseline before realizing this was a
