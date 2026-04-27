@@ -227,27 +227,54 @@ In contrast, **Pixel Lift answers a per-pixel question** ("how dense is the flag
 
 ---
 
-## 12. Our Empirical Numbers (as of 2026-04-26)
+## 12. Origin and Related Work — What's Borrowed, What's Ours
 
-| Method | Lift@5000 (pixel) | Cluster Lift |
-|---|---|---|
-| persistence | 17.1× *(artifact)* | ~3× *(artifact dissolves)* |
-| climatology | 5.1× | ~3× *(awaiting full eval)* |
-| logreg | 2.7× *(on 4y enc14 windows)* | TBD |
-| **4y enc28** *(SOTA pixel)* | **5.83** | 5.62 ± 1.11 |
-| **22y enc14** *(SOTA cluster)* | 5.73 | **8.33 ± 1.35** ★ |
+**This metric is not novel in concept.** Event-level skill scoring (each fire = 1 unit, regardless of size) has multiple precedents in adjacent fields. We list the antecedents honestly and specify what is genuinely our contribution.
 
-Critical pattern across all encoder lengths:
+### 12.1 Direct conceptual antecedents
 
-| ENC | 4y Cluster | 22y Cluster | Δ |
+| Field | Metric / method | Key shared idea | Reference |
 |---|---|---|---|
-| 14 | 5.62 ± 1.11 | **8.33 ± 1.35** | **+48%** |
-| 21 | 5.23 ± 0.78 | **7.95 ± 1.47** | **+52%** |
-| 28 | 5.73 ± 1.86 | **8.00 ± 1.56** | **+40%** |
-| 35 | 5.50 ± 1.71 | **8.00 ± 1.06** | **+45%** |
-| **avg** | **5.52** | **8.07** | **+46%** ★ |
+| Computer vision | **mAP** (mean Average Precision) | Each detected object = 1 ranking unit; IoU matching not pixel-wise | Everingham et al. 2010 (PASCAL VOC) |
+| Atmospheric forecast verification | **MODE** (Method for Object-Based Diagnostic Evaluation) | Identify forecast objects via thresholding, score each as a unit | Davis et al. 2006 (NOAA) |
+| Atmospheric forecast verification | **SAL** (Structure, Amplitude, Location) | Decomposes object-level forecast skill into 3 components | Wernli et al. 2008 |
+| Atmospheric forecast verification | **FSS** (Fractions Skill Score) | Spatial pooling at multiple scales | Roberts & Lean 2008 |
+| Spatial criminology | **PAI** (Predictive Accuracy Index) | Hit rate / area share = mathematically a spatial Lift | Chainey, Tompson & Uhlig 2008 |
+| Information retrieval | **NDCG@K** | Each retrieved item = 1 ranking unit, position-discounted | Järvelin & Kekäläinen 2002 |
+| Ecology / niche modeling | Object-based accuracy | Rare-event scoring per occurrence not per cell | various 2010s |
 
-CIs do not overlap → statistically significant. **Pixel Lift cannot see this gain** (4y ≈ 22y on pixel ≈ 5.7); cluster lift is the metric that surfaces the data-scaling benefit.
+The CONCEPT — "treat each spatial event as one voting unit, max-pool the model's score over its footprint, rank against background units of comparable size" — was already standard in three of these communities (atmospheric, criminology, computer vision) by the early 2010s.
+
+### 12.2 What is genuinely our contribution
+
+We did NOT invent cluster-level scoring. What we did do:
+
+1. **Apply event-level scoring to NBAC polygon labels** in the Canadian wildfire ML setting, where (to our knowledge) it has not been explicitly published. Existing wildfire ML papers (TeleViT 2024; FireCastNet 2025; ECMWF PoF 2025; Pourmohamad 2026; CanadaFireSat 2025) report pixel-level metrics or AUC; none report cluster lift.
+
+2. **Specify the recipe** to handle a particular pathology — the persistence-baseline polygon artifact (see Section 5). Specifically:
+   - 8-connectivity for cluster definition
+   - max-pool per cluster (vs mean-pool, sum-pool)
+   - `tile_side = √(median cluster size)` for background tiling
+   - `K_eff = max(3 × n_clusters, 50)` adaptive K
+   - `min_cluster_size = 1` (preserve NFDB ignition points)
+
+   Each choice is justified in the code (`train_v3.py:419-521`) and validated in unit tests (`tests/test_cluster_lift.py`).
+
+3. **Document the polygon-artifact diagnostic** — that pixel-level lift is inflated to 17× by trivial persistence under NBAC labels, and that cluster-level evaluation collapses this to ~3×. To our knowledge this specific diagnostic has not been previously published for fire forecasting.
+
+### 12.3 Honest framing for paper
+
+**Suggested wording**:
+> "Drawing on object-based forecast verification (Davis et al. 2006, MODE; Roberts & Lean 2008, FSS; Wernli et al. 2008, SAL) and the PAI metric in spatial criminology (Chainey et al. 2008), we adapt event-level lift evaluation for NBAC polygon-based wildfire labels. Our specific implementation — 8-connectivity clustering with max-pooled per-event scoring and √(median size) background tiling — is designed to neutralize the persistence-baseline polygon artifact identified in Section X."
+
+Key things this wording does:
+- Credits prior art explicitly (avoids reviewer "you didn't cite obvious work" criticism)
+- Specifies our actual contribution (the algorithm + the artifact-resistance angle)
+- Avoids overclaiming ("we propose a novel cluster lift metric" would be inaccurate)
+
+### 12.4 Cross-domain Lift benchmarks
+
+For interpretation of the resulting numbers (e.g., whether our cluster lift of 8.0 is "good"), see [`01_pixel_lift_k.md`](01_pixel_lift_k.md) Section 12, which discusses cross-domain reference values and the "% of practical ceiling" framing. The same reasoning applies: cluster lift of 8.0 sits in the "PAI ≥ 10 publishable" / "screening Lift@10% ≥ 4× clinically actionable" zone of comparable spatial-event prediction tasks.
 
 ---
 
