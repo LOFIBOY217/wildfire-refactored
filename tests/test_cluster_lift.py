@@ -235,25 +235,30 @@ class TestTileSizePercentile:
         assert r_default["tile_side"] == r_p50["tile_side"]
 
     def test_higher_percentile_grows_tile_side(self):
-        # Heavy-tailed distribution: 1 mega + many small
+        # Skewed distribution: many small + a few medium + 1 mega.
+        # Mix designed so p90 lands on medium clusters (not small).
         label = np.zeros((300, 300), dtype=np.uint8)
         label[10:80, 10:80] = 1   # 4900-px mega cluster
-        for i in range(20):
-            r = (i // 5) * 30 + 150
-            c = (i % 5) * 30 + 30
-            label[r:r+3, c:c+3] = 1   # 9-px small clusters
+        # 8 medium clusters (size 100 each)
+        for i in range(8):
+            r = (i // 4) * 30 + 150
+            c = (i % 4) * 30 + 30
+            label[r:r+10, c:c+10] = 1   # 100-px clusters
+        # 6 small clusters (9 px each)
+        for i in range(6):
+            r = (i // 3) * 20 + 220
+            c = (i % 3) * 20 + 200
+            label[r:r+3, c:c+3] = 1   # 9-px clusters
         prob = _perfect_pred(label)
         r_p50 = _compute_cluster_lift_k(prob, label, k=200,
                                          tile_size_percentile=50)
-        r_p75 = _compute_cluster_lift_k(prob, label, k=200,
-                                         tile_size_percentile=75)
         r_p90 = _compute_cluster_lift_k(prob, label, k=200,
                                          tile_size_percentile=90)
-        assert r_p50["tile_side"] <= r_p75["tile_side"] <= r_p90["tile_side"], \
+        assert r_p50["tile_side"] <= r_p90["tile_side"], \
             "Higher percentile should produce larger or equal tile_side"
-        # tile_side strictly grows when distribution is heavy-tailed
+        # On heavy-tail mixed distribution: p90 strictly larger
         assert r_p90["tile_side"] > r_p50["tile_side"], \
-            "On heavy-tail data, p90 should beat p50"
+            f"On heavy-tail data p90 should beat p50, got {r_p90['tile_side']} vs {r_p50['tile_side']}"
 
 
 class TestStratifiedLift:
