@@ -239,15 +239,15 @@ class TestTileSizePercentile:
         # Mix designed so p90 lands on medium clusters (not small).
         label = np.zeros((300, 300), dtype=np.uint8)
         label[10:80, 10:80] = 1   # 4900-px mega cluster
-        # 8 medium clusters (size 100 each)
-        for i in range(8):
-            r = (i // 4) * 30 + 150
-            c = (i % 4) * 30 + 30
+        # 4 medium clusters (size 100 each)
+        for i in range(4):
+            r = (i // 2) * 30 + 150
+            c = (i % 2) * 30 + 30
             label[r:r+10, c:c+10] = 1   # 100-px clusters
-        # 6 small clusters (9 px each)
-        for i in range(6):
-            r = (i // 3) * 20 + 220
-            c = (i % 3) * 20 + 200
+        # 12 small clusters (9 px each)
+        for i in range(12):
+            r = (i // 4) * 20 + 220
+            c = (i % 4) * 20 + 100
             label[r:r+3, c:c+3] = 1   # 9-px clusters
         prob = _perfect_pred(label)
         r_p50 = _compute_cluster_lift_k(prob, label, k=200,
