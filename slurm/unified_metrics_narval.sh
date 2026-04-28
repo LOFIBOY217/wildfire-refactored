@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=wf-unified
 #SBATCH --time=1-00:00:00
-#SBATCH --mem=200G
-#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --cpus-per-task=2
 #SBATCH --output=/scratch/jiaqi217/logs/unified_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/unified_%j.err
 #SBATCH --account=def-inghaw
