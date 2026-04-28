@@ -221,5 +221,98 @@ class TestPerfectPredictorLiftAboveOne:
         assert oracle_r["recall_k"] >= random_r["recall_k"]
 
 
+class TestTileSizePercentile:
+    def test_default_is_median_backward_compat(self):
+        # Default should match prior behavior (50th percentile = median)
+        label = np.zeros((200, 200), dtype=np.uint8)
+        label[10:20, 10:20] = 1   # 100-px cluster
+        label[50:55, 50:55] = 1   # 25-px cluster
+        prob = _perfect_pred(label)
+        r_default = _compute_cluster_lift_k(prob, label, k=50)
+        r_p50 = _compute_cluster_lift_k(prob, label, k=50,
+                                         tile_size_percentile=50)
+        assert r_default["lift_k"] == r_p50["lift_k"]
+        assert r_default["tile_side"] == r_p50["tile_side"]
+
+    def test_higher_percentile_grows_tile_side(self):
+        # Heavy-tailed distribution: 1 mega + many small
+        label = np.zeros((300, 300), dtype=np.uint8)
+        label[10:80, 10:80] = 1   # 4900-px mega cluster
+        for i in range(20):
+            r = (i // 5) * 30 + 150
+            c = (i % 5) * 30 + 30
+            label[r:r+3, c:c+3] = 1   # 9-px small clusters
+        prob = _perfect_pred(label)
+        r_p50 = _compute_cluster_lift_k(prob, label, k=200,
+                                         tile_size_percentile=50)
+        r_p75 = _compute_cluster_lift_k(prob, label, k=200,
+                                         tile_size_percentile=75)
+        r_p90 = _compute_cluster_lift_k(prob, label, k=200,
+                                         tile_size_percentile=90)
+        assert r_p50["tile_side"] <= r_p75["tile_side"] <= r_p90["tile_side"], \
+            "Higher percentile should produce larger or equal tile_side"
+        # tile_side strictly grows when distribution is heavy-tailed
+        assert r_p90["tile_side"] > r_p50["tile_side"], \
+            "On heavy-tail data, p90 should beat p50"
+
+
+class TestStratifiedLift:
+    def test_returns_three_size_bins(self):
+        label = np.zeros((300, 300), dtype=np.uint8)
+        # 1 small (size 9), 1 medium (size 400), 1 large (size 4900)
+        label[10:13, 10:13] = 1            # 9 px
+        label[50:70, 50:70] = 1            # 400 px
+        label[150:220, 150:220] = 1        # 4900 px
+        prob = _perfect_pred(label)
+        r = _compute_cluster_lift_k(prob, label, k=200,
+                                     return_stratified=True)
+        assert "lift_k_small" in r
+        assert "lift_k_medium" in r
+        assert "lift_k_large" in r
+        assert r["n_clusters_small"] == 1
+        assert r["n_clusters_medium"] == 1
+        assert r["n_clusters_large"] == 1
+
+    def test_no_stratified_when_flag_off(self):
+        label = np.zeros((100, 100), dtype=np.uint8)
+        label[10:20, 10:20] = 1
+        prob = _perfect_pred(label)
+        r = _compute_cluster_lift_k(prob, label, k=50)
+        assert "lift_k_small" not in r
+        assert "lift_k_medium" not in r
+        assert "lift_k_large" not in r
+
+    def test_perfect_predictor_lifts_all_bins(self):
+        label = np.zeros((300, 300), dtype=np.uint8)
+        label[10:13, 10:13] = 1
+        label[50:70, 50:70] = 1
+        label[150:220, 150:220] = 1
+        prob = _perfect_pred(label)
+        r = _compute_cluster_lift_k(prob, label, k=200,
+                                     return_stratified=True)
+        # Perfect predictor: all three bins should have lift > 1
+        for bin_name in ["small", "medium", "large"]:
+            v = r[f"lift_k_{bin_name}"]
+            if v == v:  # not nan
+                assert v > 1.0, f"{bin_name} bin lift {v} should be > 1.0"
+
+    def test_empty_bin_returns_nan(self):
+        # Only small clusters; medium/large bins should be NaN
+        label = np.zeros((100, 100), dtype=np.uint8)
+        for i in range(10):
+            r = (i // 3) * 20 + 10
+            c = (i % 3) * 20 + 10
+            label[r, c] = 1   # 1-px
+        prob = _perfect_pred(label)
+        r = _compute_cluster_lift_k(prob, label, k=50,
+                                     return_stratified=True,
+                                     min_cluster_size=1)
+        assert r["n_clusters_small"] >= 1
+        assert r["n_clusters_medium"] == 0
+        assert r["n_clusters_large"] == 0
+        assert r["lift_k_medium"] != r["lift_k_medium"]  # nan check
+        assert r["lift_k_large"] != r["lift_k_large"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

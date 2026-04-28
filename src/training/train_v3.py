@@ -416,7 +416,9 @@ def _sample_hard_negatives(neg_flat, fire_clim_per_patch, n_patches,
 # Cluster-level evaluation
 # ------------------------------------------------------------------ #
 
-def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
+def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k,
+                            min_cluster_size=1, tile_size_percentile=50,
+                            return_stratified=False):
     """
     Compute Lift@K with fire-cluster de-duplication.
 
@@ -426,16 +428,25 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
 
     Each fire cluster: score = max(prob over cluster pixels), label = 1
     Each background tile: score = max(prob over tile pixels), label = 0
-    Tile size = median fire cluster size (so items are comparable).
+    Tile size = percentile of fire cluster size (so items are comparable).
 
     Args:
         all_probs_2d: (H, W) float32 — predicted probabilities
         all_labels_2d: (H, W) uint8 — binary fire labels
         k: top-K cutoff
         min_cluster_size: ignore clusters smaller than this
+        tile_size_percentile: percentile of cluster_sizes used to size bg
+            tiles. Default 50 (median, backward compatible). Set to 75
+            or 90 to reduce the heavy-tail bias toward mega-fires (larger
+            bg tiles → fairer max-pool comparison).
+        return_stratified: if True, also compute lift_k separately on
+            small / medium / large clusters (size bins <100 / 100-1000 /
+            >1000 px) to expose where the lift comes from.
 
     Returns:
         dict with lift_k, precision_k, recall_k, n_clusters, etc.
+        If return_stratified, also includes lift_k_small / _medium / _large
+        keys (NaN if no clusters in that bin).
     """
     structure = np.ones((3, 3), dtype=bool)
     cluster_map, n_clusters_raw = ndimage_label(all_labels_2d, structure=structure)
@@ -455,7 +466,8 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
     if n_clusters == 0:
         return {"lift_k": 0.0, "precision_k": 0.0, "recall_k": 0.0,
                 "n_clusters": 0, "n_clusters_raw": n_clusters_raw,
-                "baseline": 0.0, "n_items": 0}
+                "baseline": 0.0, "n_items": 0,
+                "k_eff": 0, "median_cluster_size": 0, "cl_pr_auc": 0.0}
 
     # Aggregate background into SPATIALLY CONTIGUOUS tiles of comparable
     # size to fire clusters. BUG FIX 2026-04-19: previous implementation
@@ -466,19 +478,19 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
     # percentile of prob distribution). This gave bg tiles an unfair
     # advantage → fire clusters ranked low → cluster Lift ≈ 0.
     #
-    # Correct: use 2D spatial max-pool with tile side ≈ sqrt(median_size)
+    # Correct: use 2D spatial max-pool with tile side ≈ sqrt(p-th percentile size)
     # so tiles are local regions (same statistical properties as clusters).
     #
-    # KNOWN BIAS (2026-04-26 audit): tile_side is based on MEDIAN cluster size,
-    # which under-sizes tiles when the size distribution is heavy-tailed (1
-    # mega-fire of 10000 px + 100 small fires of 10 px → median 10, tile_side 3).
-    # In that regime the mega-fire's max(prob) is computed over 10000 px while
-    # bg tiles see only 9 px, giving the mega-fire a structural advantage
-    # in the ranking. Acceptable for now (operational interpretation: "mega-
-    # fires deserve more weight"). For an ablation, replace median with
-    # 75th percentile or weight by cluster size.
-    median_size = max(int(np.median(cluster_sizes)), 1)
-    tile_side = max(1, int(np.sqrt(median_size)))  # ≈ 3 for median_size ~10
+    # PARAMETERIZED 2026-04-28: tile_size_percentile (default 50 = median for
+    # backward compat). Median under-sizes tiles when cluster sizes are
+    # heavy-tailed (1 mega-fire 10000 px + many small fires 10 px → median
+    # 10 → tile_side 3 → mega-fire's max-pool over 10000 px structurally
+    # beats bg tiles' max-pool over 9 px). Setting percentile=75 or 90
+    # increases bg tile size and mitigates this bias. Use the
+    # _stratified output to verify lift holds across cluster size bins.
+    pct_size = max(int(np.percentile(cluster_sizes, tile_size_percentile)), 1)
+    median_size = max(int(np.median(cluster_sizes)), 1)  # always reported
+    tile_side = max(1, int(np.sqrt(pct_size)))
     H, W = all_probs_2d.shape
     nth, ntw = H // tile_side, W // tile_side
     if nth > 0 and ntw > 0:
@@ -492,7 +504,9 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
         bg_tile_scores = all_probs_2d[all_labels_2d == 0]  # fallback
 
     # Combine: fire clusters (label=1) + background tiles (label=0)
-    all_scores = np.concatenate([np.array(cluster_scores, dtype=np.float32),
+    cluster_scores_arr = np.array(cluster_scores, dtype=np.float32)
+    cluster_sizes_arr = np.array(cluster_sizes, dtype=np.int64)
+    all_scores = np.concatenate([cluster_scores_arr,
                                  bg_tile_scores.astype(np.float32)])
     all_labels_arr = np.concatenate([np.ones(n_clusters, dtype=np.float32),
                                      np.zeros(len(bg_tile_scores), dtype=np.float32)])
@@ -516,7 +530,7 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
     except Exception:
         cl_pr_auc = 0.0
 
-    return {
+    out = {
         "lift_k": lift_k,
         "precision_k": precision_k,
         "recall_k": recall_k,
@@ -526,8 +540,46 @@ def _compute_cluster_lift_k(all_probs_2d, all_labels_2d, k, min_cluster_size=1):
         "n_items": n_total,
         "k_eff": k_eff,
         "median_cluster_size": median_size,
+        "tile_size_percentile": tile_size_percentile,
+        "tile_side": tile_side,
         "cl_pr_auc": cl_pr_auc,
     }
+
+    # ── Stratified lift by cluster-size bin (diagnostic) ──────────────
+    # Splits clusters into small/medium/large, computes lift on each
+    # bin against the SAME background tile pool. Exposes whether the
+    # overall lift comes uniformly across sizes or is dominated by one
+    # bin (e.g. mega-fires). This addresses the heavy-tail bias by
+    # showing where the gain actually is, even when median tile_side
+    # is used.
+    if return_stratified:
+        bins = [(0, 100, "small"),
+                (100, 1000, "medium"),
+                (1000, np.inf, "large")]
+        bg_scores_arr = bg_tile_scores.astype(np.float32)
+        n_bg = len(bg_scores_arr)
+        for lo, hi, name in bins:
+            mask = (cluster_sizes_arr >= lo) & (cluster_sizes_arr < hi)
+            n_bin = int(mask.sum())
+            if n_bin == 0:
+                out[f"lift_k_{name}"] = float("nan")
+                out[f"n_clusters_{name}"] = 0
+                continue
+            bin_scores = cluster_scores_arr[mask]
+            bin_all_scores = np.concatenate([bin_scores, bg_scores_arr])
+            bin_all_labels = np.concatenate([np.ones(n_bin, dtype=np.float32),
+                                              np.zeros(n_bg, dtype=np.float32)])
+            bin_n_total = len(bin_all_scores)
+            bin_k_eff = min(k, bin_n_total, max(3 * n_bin, 50))
+            bin_top_idx = np.argpartition(bin_all_scores, -bin_k_eff)[-bin_k_eff:]
+            bin_tp = float(bin_all_labels[bin_top_idx].sum())
+            bin_base = n_bin / bin_n_total
+            bin_prec = bin_tp / bin_k_eff
+            bin_lift = bin_prec / bin_base if bin_base > 0 else 0.0
+            out[f"lift_k_{name}"] = bin_lift
+            out[f"n_clusters_{name}"] = n_bin
+
+    return out
 
 
 # ------------------------------------------------------------------ #
