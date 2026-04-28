@@ -417,6 +417,24 @@ def main():
     # CSV output dict per method
     rows_per_method = {m: [] for m in methods}
 
+    # ── Incremental writer (defends against timeout) ──────────────────
+    def _flush_partials(prefix_suffix=""):
+        os.makedirs(os.path.dirname(args.output_prefix) or ".", exist_ok=True)
+        for method, rows in rows_per_method.items():
+            if not rows:
+                continue
+            per_path = f"{args.output_prefix}_{method}{prefix_suffix}.csv"
+            fieldnames = sorted({k for r in rows for k in r.keys()})
+            fieldnames = (["win_date", "n_total_label"]
+                          + [k for k in fieldnames
+                             if k not in ("win_date", "n_total_label")])
+            with open(per_path, "w") as f:
+                wr = csv.DictWriter(f, fieldnames=fieldnames,
+                                    extrasaction="ignore")
+                wr.writeheader()
+                for r in rows:
+                    wr.writerow(r)
+
     for fi, fpath in enumerate(files):
         z = np.load(fpath)
         prob = z["prob_agg"].astype(np.float32)        # (n_patches, P²)
@@ -493,6 +511,10 @@ def main():
         if (fi + 1) % 25 == 0 or fi == 0:
             print(f"  done {fi+1}/{len(files)} windows  "
                   f"({len(methods)} methods × ~{len(args.k_values)*5+30} cols each)")
+        # Flush partial CSVs every 50 windows so timeouts don't lose everything
+        if (fi + 1) % 50 == 0:
+            _flush_partials("_partial")
+            print(f"  [flush] partial CSVs written (fi={fi+1})")
 
     # ── Write CSVs + summaries ────────────────────────────────────────
     os.makedirs(os.path.dirname(args.output_prefix) or ".", exist_ok=True)

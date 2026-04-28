@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=wf-unified
-#SBATCH --time=0-12:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --mem=200G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/unified_%j.log
