@@ -1861,12 +1861,21 @@ def main():
     # ----------------------------------------------------------------
     # STEP 7  Patchify fire labels
     # ----------------------------------------------------------------
+    # CRITICAL BUG FIX 2026-04-29: fire_patched cache filename did NOT
+    # include fusion_tag. Result: a previous run with --label_fusion=False
+    # (CWFIS-only) would create fire_patched.dat that subsequent runs
+    # with --label_fusion=True silently REUSE, despite the dilated-label
+    # source differing. This corrupted ALL 4y/12y training+eval (they
+    # used CWFIS labels even though commands had --label_fusion).
+    # 22y was unaffected because no .dat file pre-existed.
+    # Fix: include fusion_tag in fire_patched cache filename, matching
+    # the fire_dilated cache name convention.
     print(f"\n[STEP 7] Pre-computing fire patches...")
     fire_gb = T * n_patches * out_dim / 1e9
     fire_cache_path = None
     if args.cache_dir:
         fire_cache_path = os.path.join(args.cache_dir,
-                                       f"fire_patched_v3_r{args.dilate_radius}"
+                                       f"fire_patched_v3_r{args.dilate_radius}{fusion_tag}"
                                        f"_{aligned_dates[0]}_{aligned_dates[-1]}"
                                        f"_{T}x{n_patches}x{out_dim}.dat")
 
