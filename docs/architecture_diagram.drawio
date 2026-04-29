@@ -1,0 +1,277 @@
+<mxfile host="app.diagrams.net" agent="claude" version="24.0.0">
+  <diagram name="Wildfire Transformer Architecture" id="wildfire-arch">
+    <mxGraphModel dx="2200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===== TITLE ===== -->
+        <mxCell id="title" value="Wildfire Prediction Transformer (8.5M params, lead 14-46d)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="600" y="20" width="900" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ===== HYPERPARAM BOX (top right) ===== -->
+        <mxCell id="hp-box" value="Hyperparameters&#10;━━━━━━━━&#10;patch_size: 16×16&#10;d_model: 256&#10;nhead: 8&#10;enc_layers: 4&#10;dec_layers: 4&#10;dim_ff: 1024&#10;encoder_days: 21&#10;decoder_days: 33&#10;dilate_radius: 14&#10;total params: 8.5M" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#9E9E9E;align=left;verticalAlign=top;fontSize=10;fontFamily=Courier New" vertex="1" parent="1">
+          <mxGeometry x="1900" y="60" width="240" height="200" as="geometry" />
+        </mxCell>
+
+        <!-- ===== STAGE 1: INPUT — Canada map + patchify ===== -->
+        <mxCell id="stage1-label" value="① Spatial Input" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="280" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Canada map approximation (rough outline rect) -->
+        <mxCell id="canada-map" value="Canada grid&#10;(2281 × 2709)&#10;EPSG:3978" style="shape=mscae/Canada;rounded=0;whiteSpace=wrap;html=1;fillColor=#B3E5FC;strokeColor=#0277BD;fontSize=9;fontStyle=0;align=center" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="160" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- Patchify arrow -->
+        <mxCell id="patchify-arrow" style="endArrow=classic;html=1;strokeWidth=2;fontSize=9" edge="1" parent="1" source="canada-map" target="patch-grid">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="220" y="180" as="sourcePoint" />
+            <mxPoint x="270" y="180" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="240" y="180" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="patchify-label" value="patchify 16×16" style="text;html=1;align=center;fontSize=9;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="200" y="155" width="100" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- 4x4 patch grid (16 small squares, 4 highlighted as tokens) -->
+        <mxCell id="patch-grid" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#37474F;fontSize=8" vertex="1" parent="1">
+          <mxGeometry x="270" y="120" width="120" height="120" as="geometry" />
+        </mxCell>
+        <!-- 16 small patches in 4x4 grid, scattered colors to convey "patches" -->
+        <mxCell id="p11" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="270" y="120" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p12" value="" style="rounded=0;fillColor=#FFF3E0;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="300" y="120" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p13" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="330" y="120" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p14" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="360" y="120" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p21" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="270" y="150" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p22" value="" style="rounded=0;fillColor=#FFCDD2;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="300" y="150" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p23" value="" style="rounded=0;fillColor=#FFF3E0;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="330" y="150" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p24" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="360" y="150" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p31" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="270" y="180" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p32" value="" style="rounded=0;fillColor=#FFF3E0;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="300" y="180" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p33" value="" style="rounded=0;fillColor=#FFCDD2;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="330" y="180" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p34" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="360" y="180" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p41" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="270" y="210" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p42" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="300" y="210" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p43" value="" style="rounded=0;fillColor=#E0F7FA;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="330" y="210" width="30" height="30" as="geometry"/></mxCell>
+        <mxCell id="p44" value="" style="rounded=0;fillColor=#FFCDD2;strokeColor=#37474F" vertex="1" parent="1"><mxGeometry x="360" y="210" width="30" height="30" as="geometry"/></mxCell>
+
+        <mxCell id="patch-label" value="23,998 patches&#10;(red = highlighted tokens)" style="text;html=1;align=center;fontSize=9;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="270" y="245" width="120" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ===== STAGE 2: CHANNEL TOKENIZATION (ClimaX-style) ===== -->
+        <mxCell id="stage2-label" value="② Channel Tokenization" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="430" y="80" width="240" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- 9 channel input list -->
+        <mxCell id="ch-box" value="9 input channels:&#10;━━━━━━━━&#10;FWI&#10;2t (temperature)&#10;fire_clim&#10;2d (dewpoint)&#10;tcw (water vapor)&#10;sm20 (soil moist)&#10;population&#10;slope&#10;burn_age" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B3E5FC;strokeColor=#0277BD;align=left;verticalAlign=top;fontSize=9;fontFamily=Courier New" vertex="1" parent="1">
+          <mxGeometry x="430" y="110" width="160" height="200" as="geometry" />
+        </mxCell>
+
+        <!-- linear embed block -->
+        <mxCell id="linear-embed" value="Patch Embed&#10;Linear: 16²·9 → 256" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;align=center;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="610" y="170" width="140" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="embed-arrow" style="endArrow=classic;html=1;strokeWidth=2" edge="1" parent="1" source="ch-box" target="linear-embed">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== STAGE 3: ENCODER ===== -->
+        <mxCell id="stage3-label" value="③ Encoder (× 4 layers)" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="800" y="80" width="240" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Tensor shape annotation (encoder input) -->
+        <mxCell id="enc-shape" value="[B, 21, 256]&#10;21 days × 256-d" style="text;html=1;align=center;fontSize=8;fontStyle=2;fontColor=#555555" vertex="1" parent="1">
+          <mxGeometry x="760" y="120" width="100" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="enc-bracket" value="× 4" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#E65100;dashed=1;fontSize=14;fontStyle=1;fontColor=#E65100" vertex="1" parent="1">
+          <mxGeometry x="800" y="150" width="240" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="enc-x4-label" value="× 4" style="text;html=1;align=center;fontSize=14;fontStyle=1;fontColor=#E65100" vertex="1" parent="1">
+          <mxGeometry x="990" y="155" width="40" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Encoder MHSA -->
+        <mxCell id="enc-mhsa" value="Multi-Head Self-Attn&#10;8 heads, d=256" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCC80;strokeColor=#E65100;align=center;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="820" y="185" width="200" height="50" as="geometry" />
+        </mxCell>
+        <!-- Add+LN 1 -->
+        <mxCell id="enc-ln1" value="Add &amp; LayerNorm" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;align=center;fontSize=9" vertex="1" parent="1">
+          <mxGeometry x="820" y="245" width="200" height="30" as="geometry" />
+        </mxCell>
+        <!-- FFN -->
+        <mxCell id="enc-ffn" value="FFN&#10;Linear 256→1024→256, GELU" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCC80;strokeColor=#E65100;align=center;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="820" y="285" width="200" height="50" as="geometry" />
+        </mxCell>
+        <!-- Add+LN 2 -->
+        <mxCell id="enc-ln2" value="Add &amp; LayerNorm" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;align=center;fontSize=9" vertex="1" parent="1">
+          <mxGeometry x="820" y="345" width="200" height="30" as="geometry" />
+        </mxCell>
+        <!-- residual connections inside encoder -->
+        <mxCell id="enc-res1" style="endArrow=none;html=1;dashed=1;strokeWidth=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5" edge="1" parent="1" source="enc-mhsa" target="enc-ln1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="810" y="210"/><mxPoint x="810" y="260"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Linear from embed → encoder -->
+        <mxCell id="embed-to-enc" style="endArrow=classic;html=1;strokeWidth=2" edge="1" parent="1" source="linear-embed" target="enc-mhsa">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== STAGE 4: DECODER INPUTS (parallel branches) ===== -->
+        <mxCell id="stage4-label" value="④ Decoder Inputs (dual-path ablation)" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="1080" y="80" width="280" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- S2S forecast (top branch) -->
+        <mxCell id="s2s-input" value="S2S Forecast Features&#10;(ECMWF, 33 days × 5 vars)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B3E5FC;strokeColor=#0277BD;align=center;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1080" y="120" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s2s-embed" value="Forecast Embed&#10;Linear → 256d&#10;+ GELU + LayerNorm" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;align=center;fontSize=9" vertex="1" parent="1">
+          <mxGeometry x="1080" y="195" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- decoder_ctx (bottom branch — parallel ablation path) -->
+        <mxCell id="ctx-input" value="decoder_ctx (ablation)&#10;static + temporal context&#10;fire_clim, slope, doy ..." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#6A1B9A;align=center;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1080" y="285" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ctx-embed" value="Context Embed&#10;Linear → 256d&#10;+ GELU + LayerNorm" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#6A1B9A;align=center;fontSize=9" vertex="1" parent="1">
+          <mxGeometry x="1080" y="360" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s2s-to-embed" style="endArrow=classic;html=1" edge="1" parent="1" source="s2s-input" target="s2s-embed">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctx-to-embed" style="endArrow=classic;html=1" edge="1" parent="1" source="ctx-input" target="ctx-embed">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ⊕ Add operator -->
+        <mxCell id="dec-add" value="⊕" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#37474F;fontSize=18;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1310" y="290" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="add-label" value="dual-path&#10;summation" style="text;html=1;align=center;fontSize=8;fontStyle=2;fontColor=#666666" vertex="1" parent="1">
+          <mxGeometry x="1290" y="335" width="80" height="25" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s2s-to-add" style="endArrow=classic;html=1" edge="1" parent="1" source="s2s-embed" target="dec-add">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctx-to-add" style="endArrow=classic;html=1" edge="1" parent="1" source="ctx-embed" target="dec-add">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== STAGE 5: DECODER ===== -->
+        <mxCell id="stage5-label" value="⑤ Decoder (× 4 layers)" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="1380" y="80" width="240" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dec-shape" value="[B, 33, 256]&#10;33 days × 256-d" style="text;html=1;align=center;fontSize=8;fontStyle=2;fontColor=#555555" vertex="1" parent="1">
+          <mxGeometry x="1380" y="120" width="100" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dec-bracket" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#6A1B9A;dashed=1" vertex="1" parent="1">
+          <mxGeometry x="1380" y="155" width="240" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="dec-x4-label" value="× 4" style="text;html=1;align=center;fontSize=14;fontStyle=1;fontColor=#6A1B9A" vertex="1" parent="1">
+          <mxGeometry x="1570" y="160" width="40" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Decoder Self-Attn -->
+        <mxCell id="dec-sa" value="Masked Self-Attn&#10;8 heads, d=256" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CE93D8;strokeColor=#6A1B9A;align=center;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1400" y="190" width="200" height="50" as="geometry" />
+        </mxCell>
+        <!-- Decoder Cross-Attn (gets memory from encoder) -->
+        <mxCell id="dec-ca" value="Cross-Attn&#10;Q ← decoder, K/V ← encoder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CE93D8;strokeColor=#6A1B9A;align=center;fontSize=10;strokeWidth=2" vertex="1" parent="1">
+          <mxGeometry x="1400" y="250" width="200" height="50" as="geometry" />
+        </mxCell>
+        <!-- Decoder FFN -->
+        <mxCell id="dec-ffn" value="FFN&#10;Linear 256→1024→256, GELU" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#CE93D8;strokeColor=#6A1B9A;align=center;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1400" y="310" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="dec-ln" value="Add &amp; LayerNorm (×3 internal)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#6A1B9A;align=center;fontSize=9" vertex="1" parent="1">
+          <mxGeometry x="1400" y="370" width="200" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Add → decoder -->
+        <mxCell id="add-to-dec" style="endArrow=classic;html=1;strokeWidth=2" edge="1" parent="1" source="dec-add" target="dec-sa">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== ENCODER MEMORY → DECODER CROSS-ATTN ===== -->
+        <mxCell id="memory-arrow" style="endArrow=classic;html=1;strokeWidth=3;strokeColor=#FF5722;exitX=1;exitY=0.5;entryX=0;entryY=0.5;curved=1" edge="1" parent="1" source="enc-ln2" target="dec-ca">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1300" y="480"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="memory-label" value="encoder memory&#10;[B, 21, 256]" style="text;html=1;align=center;fontSize=9;fontStyle=2;fontColor=#FF5722" vertex="1" parent="1">
+          <mxGeometry x="1100" y="490" width="180" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ===== STAGE 6: OUTPUT HEAD ===== -->
+        <mxCell id="stage6-label" value="⑥ Output Head" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="1660" y="80" width="180" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out-proj" value="Linear&#10;256 → P² (=256)&#10;+ Sigmoid" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A5D6A7;strokeColor=#2E7D32;align=center;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1660" y="200" width="160" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dec-to-out" style="endArrow=classic;html=1;strokeWidth=2" edge="1" parent="1" source="dec-ln" target="out-proj">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== STAGE 7: OUTPUT — 3 daily fire prob maps ===== -->
+        <mxCell id="stage7-label" value="⑦ Output: 33 daily fire-prob maps (lead 14-46d, showing 3)" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="1660" y="320" width="380" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- 3 output maps stacked horizontally with label -->
+        <mxCell id="out-day14" value="Day +14" style="shape=mscae/Canada;rounded=0;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#C62828;fontSize=9;align=center;verticalAlign=bottom" vertex="1" parent="1">
+          <mxGeometry x="1660" y="360" width="100" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="out-day30" value="Day +30" style="shape=mscae/Canada;rounded=0;whiteSpace=wrap;html=1;fillColor=#EF9A9A;strokeColor=#C62828;fontSize=9;align=center;verticalAlign=bottom" vertex="1" parent="1">
+          <mxGeometry x="1770" y="360" width="100" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="out-day46" value="Day +46" style="shape=mscae/Canada;rounded=0;whiteSpace=wrap;html=1;fillColor=#E57373;strokeColor=#C62828;fontSize=9;align=center;verticalAlign=bottom" vertex="1" parent="1">
+          <mxGeometry x="1880" y="360" width="100" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out-arrow1" style="endArrow=classic;html=1" edge="1" parent="1" source="out-proj" target="out-day14">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="out-caption" value="(red intensity = predicted fire probability per pixel)" style="text;html=1;align=center;fontSize=9;fontStyle=2;fontColor=#666666" vertex="1" parent="1">
+          <mxGeometry x="1660" y="465" width="320" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ===== LEGEND (bottom-left) ===== -->
+        <mxCell id="legend-box" value="Legend" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#9E9E9E;align=left;verticalAlign=top;fontSize=10;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="40" y="600" width="500" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="lg-input" value="" style="rounded=0;fillColor=#B3E5FC;strokeColor=#0277BD" vertex="1" parent="1"><mxGeometry x="60" y="640" width="20" height="20" as="geometry"/></mxCell>
+        <mxCell id="lg-input-l" value="Input data (geophysical fields, S2S forecasts)" style="text;html=1;fontSize=10;align=left;verticalAlign=middle" vertex="1" parent="1"><mxGeometry x="90" y="640" width="380" height="20" as="geometry"/></mxCell>
+        <mxCell id="lg-enc" value="" style="rounded=0;fillColor=#FFCC80;strokeColor=#E65100" vertex="1" parent="1"><mxGeometry x="60" y="670" width="20" height="20" as="geometry"/></mxCell>
+        <mxCell id="lg-enc-l" value="Encoder (history, 21 days × 9 channels → memory)" style="text;html=1;fontSize=10;align=left;verticalAlign=middle" vertex="1" parent="1"><mxGeometry x="90" y="670" width="380" height="20" as="geometry"/></mxCell>
+        <mxCell id="lg-dec" value="" style="rounded=0;fillColor=#CE93D8;strokeColor=#6A1B9A" vertex="1" parent="1"><mxGeometry x="60" y="700" width="20" height="20" as="geometry"/></mxCell>
+        <mxCell id="lg-dec-l" value="Decoder (forecast horizon, 33 days × cross-attention)" style="text;html=1;fontSize=10;align=left;verticalAlign=middle" vertex="1" parent="1"><mxGeometry x="90" y="700" width="380" height="20" as="geometry"/></mxCell>
+        <mxCell id="lg-out" value="" style="rounded=0;fillColor=#A5D6A7;strokeColor=#2E7D32" vertex="1" parent="1"><mxGeometry x="60" y="730" width="20" height="20" as="geometry"/></mxCell>
+        <mxCell id="lg-out-l" value="Output projection + per-pixel fire probability" style="text;html=1;fontSize=10;align=left;verticalAlign=middle" vertex="1" parent="1"><mxGeometry x="90" y="730" width="380" height="20" as="geometry"/></mxCell>
+
+        <mxCell id="lg-mem-l" value="━━━ thick orange = encoder memory (cross-attn key/value)" style="text;html=1;fontSize=10;align=left;verticalAlign=middle;fontColor=#FF5722" vertex="1" parent="1"><mxGeometry x="90" y="755" width="400" height="20" as="geometry"/></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
