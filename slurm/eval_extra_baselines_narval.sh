@@ -6,7 +6,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/extra_baselines_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/extra_baselines_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Run persistence + fwi_threshold baselines on NEW NBAC labels.

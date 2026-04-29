@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/dl_ndvi_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/dl_ndvi_%j.err
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Download MODIS NDVI HDF4 files for all years (2018-2024)

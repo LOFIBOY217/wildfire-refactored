@@ -6,7 +6,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/ensemble_eval_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/ensemble_eval_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Persistence × climatology ensemble across alpha = {0, 0.25, 0.5, 0.75, 1.0}

@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/eval_s2s_tri_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/eval_s2s_tri_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Evaluates Trillium jobs 390268/390277 (s2s_decoder_s2s_v3_1gpu, 12 epochs, heavy reg)

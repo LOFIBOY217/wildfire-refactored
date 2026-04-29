@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/eval_random_tri_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/eval_random_tri_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Evaluates Trillium job 389031 (random_decoder_reg_1gpu, 12 epochs, heavy reg)

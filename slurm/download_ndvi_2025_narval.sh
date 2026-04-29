@@ -6,7 +6,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/ndvi_dl_2025_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/ndvi_dl_2025_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Download MODIS MOD13A2 NDVI HDF4 granules for 2025 (Canada bbox)

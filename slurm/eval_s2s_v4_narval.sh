@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/eval_s2s_v4_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/eval_s2s_v4_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Ensure $SCRATCH is set (may be unset if submitted from non-login SSH session)

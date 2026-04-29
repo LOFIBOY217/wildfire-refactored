@@ -6,7 +6,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/hotspot_2017_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/hotspot_2017_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # ----------------------------------------------------------------

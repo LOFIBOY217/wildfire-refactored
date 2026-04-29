@@ -6,7 +6,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/prebuild_12y_dilated_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/prebuild_12y_dilated_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Pre-build the 12y NBAC+NFDB dilated label file and place it in the

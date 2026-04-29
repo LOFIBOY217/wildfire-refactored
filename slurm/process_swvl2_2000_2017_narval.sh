@@ -11,7 +11,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/proc_swvl2_2000_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/proc_swvl2_2000_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # ----------------------------------------------------------------

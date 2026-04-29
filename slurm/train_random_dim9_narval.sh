@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/train_rnd_d9_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_rnd_d9_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Ablation: random decoder with dec_dim=9 (same as s2s_legacy)

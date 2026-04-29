@@ -6,7 +6,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/ndvi_proc_2025_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/ndvi_proc_2025_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Process 2025 MODIS MOD13A2 HDF4 → daily NDVI TIFs on FWI grid (EPSG:3978)

@@ -6,7 +6,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/fire_clim_nbac_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/fire_clim_nbac_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # ----------------------------------------------------------------

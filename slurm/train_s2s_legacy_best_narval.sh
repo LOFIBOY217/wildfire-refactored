@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/train_s2s_best_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_s2s_best_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Best-effort s2s_legacy run:

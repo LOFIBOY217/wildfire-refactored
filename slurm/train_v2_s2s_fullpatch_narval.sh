@@ -10,7 +10,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/train_s2s_fp_%j.out
 #SBATCH --error=/scratch/jiaqi217/logs/train_s2s_fp_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Ensure module command is available (may be missing in non-login shells)

@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/proc_ndvi_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/proc_ndvi_%j.err
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Process MODIS HDF4 → daily NDVI TIFs on FWI grid (2018-2024)

@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/jiaqi217/logs/proc_soil_tp_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/proc_soil_tp_%j.err
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # ----------------------------------------------------------------

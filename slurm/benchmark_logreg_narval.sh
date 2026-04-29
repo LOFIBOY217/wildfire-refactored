@@ -10,7 +10,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/logreg_baseline_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/logreg_baseline_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Logistic regression baseline on NEW NBAC+NFDB labels.

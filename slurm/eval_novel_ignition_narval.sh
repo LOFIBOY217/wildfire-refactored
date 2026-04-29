@@ -6,7 +6,7 @@
 #SBATCH --output=/scratch/jiaqi217/logs/novel_eval_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/novel_eval_%j.err
 #SBATCH --account=def-inghaw
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 
 # Re-eval baselines under novel-ignition metric (operationally meaningful).

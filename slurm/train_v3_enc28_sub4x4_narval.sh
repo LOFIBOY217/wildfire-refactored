@@ -5,7 +5,7 @@
 #SBATCH --mem=500G
 #SBATCH --output=/scratch/jiaqi217/logs/train_v3_enc28_sub4x4_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/train_v3_enc28_sub4x4_%j.err
-#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-type=FAIL
 #SBATCH --mail-user=jiaaqii.huang@mail.utoronto.ca
 #SBATCH --account=def-inghaw
 
