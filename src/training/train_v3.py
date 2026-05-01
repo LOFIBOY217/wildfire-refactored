@@ -1058,9 +1058,36 @@ def main():
     ap.add_argument("--mlp_dec_embed", action="store_true")
     ap.add_argument("--random_encoder", action="store_true")
 
+    # W&B (experiment tracking) — optional, no-op if not set
+    ap.add_argument("--wandb_project", type=str, default=None,
+                    help="W&B project name. If unset, W&B disabled. "
+                         "On HPC compute nodes, set WANDB_MODE=offline in env.")
+    ap.add_argument("--wandb_tags", type=str, default="",
+                    help="Comma-separated W&B tags (e.g. '9ch,enc14,4y_2018').")
+
     args = ap.parse_args()
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+
+    # ── W&B init (optional) ─────────────────────────────────────────────
+    _wandb = None
+    if args.wandb_project:
+        try:
+            import wandb as _wandb
+            tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+            _wandb.init(
+                project=args.wandb_project,
+                name=args.run_name,
+                tags=tags,
+                config={k: v for k, v in vars(args).items()
+                        if isinstance(v, (int, float, str, bool, type(None)))},
+                resume="allow",
+            )
+            print(f"  [wandb] initialized project={args.wandb_project} "
+                  f"name={args.run_name}")
+        except Exception as e:
+            print(f"  [wandb] disabled (init failed: {e})")
+            _wandb = None
 
     # ----------------------------------------------------------------
     # Parse active channels
@@ -2588,6 +2615,27 @@ def main():
         if cluster_str:
             print(f"  {cluster_str}")
 
+        # ── W&B per-epoch log ──────────────────────────────────────────
+        if _wandb is not None:
+            log_dict = {
+                "epoch": epoch,
+                "train/loss": float(train_loss),
+                "val/lift_k": float(val_lift_k),
+                "val/prec_k": float(val_prec_k),
+                "val/roc_auc": float(val_roc_auc),
+                "val/brier": float(val_brier),
+                "epoch_time_min": float(epoch_time / 60),
+                "lr": float(optimizer.param_groups[0]['lr']),
+            }
+            if args.cluster_eval and "cluster_lift_k" in _m:
+                log_dict["val/cluster_lift_k"] = float(_m["cluster_lift_k"])
+                log_dict["val/cluster_recall_k"] = float(_m.get("cluster_recall_k", 0))
+                log_dict["val/n_clusters"] = float(_m.get("n_clusters", 0))
+            try:
+                _wandb.log(log_dict, step=epoch)
+            except Exception as e:
+                print(f"  [wandb] log failed: {e}")
+
         scheduler.step()
 
         is_new_best = (not args.skip_val) and (val_lift_k > best_val_lift_k)
@@ -2625,6 +2673,13 @@ def main():
     print(f"  Best Lift@{args.val_lift_k}: {best_val_lift_k:.2f}x")
     print(f"  Checkpoint: {best_ckpt}")
     print(f"{'='*70}")
+
+    if _wandb is not None:
+        try:
+            _wandb.summary["best_val_lift_k"] = float(best_val_lift_k)
+            _wandb.finish()
+        except Exception:
+            pass
 
     mem_guard.shutdown()
 
