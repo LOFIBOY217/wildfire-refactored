@@ -941,6 +941,18 @@ def main():
     ap.add_argument("--hard_neg_fraction", type=float, default=0.5,
                     help="Fraction of negatives sampled proportional to fire_clim (0=uniform).")
 
+    # 2026-04-30: recency-weighted training (climate non-stationarity mitigation)
+    # Down-weight older training windows: weight = exp(-(base_year - window_year) / tau)
+    # tau=0 disables (default). Typical values: tau=6,10,15 (smaller=stronger recency bias).
+    # Motivation: Jain 2022 NCC, Buch 2023 GMD show recent fire data more relevant.
+    # Empirical: Weyn 2020 JAMES +4-7% with tau~10y on weather forecasting.
+    ap.add_argument("--recency_tau", type=float, default=0.0,
+                    help="Exponential decay time constant (years) for sample weighting. "
+                         "0 = disabled (default, equal weight). E.g. tau=10 → window from "
+                         "10y ago weighted exp(-1)=0.37 vs current year weighted 1.0.")
+    ap.add_argument("--recency_base_year", type=int, default=2024,
+                    help="Reference year for recency weighting (weight peaks at base_year).")
+
     # V3: decoder context augmentation
     ap.add_argument("--decoder_ctx", action="store_true",
                     help="Augment decoder input with static spatial context + lead time.\n"
@@ -2243,6 +2255,39 @@ def main():
         s2s_full_cache=s2s_full_cache,
     )
 
+    # ── Recency-weighted sampling (2026-04-30) ──────────────────────────
+    # Pre-compute per-sample weight = exp(-(base_year - window_year) / tau)
+    # Wrapped dataset returns (x_enc, x_dec, y, patch_id, weight) when tau > 0.
+    # Loss applies the weight per-sample.
+    sample_weights_arr = None
+    if args.recency_tau > 0:
+        # window_dates are str like "2018-08-15" — extract year
+        win_years = np.array([int(d[:4]) for d in train_window_dates_eff], dtype=np.float32)
+        # sample weight indexed by all_pairs_eff[:, 0] (= win_idx)
+        win_weights = np.exp(-(args.recency_base_year - win_years) / args.recency_tau)
+        # Normalize so mean(w) = 1 (preserves loss scale)
+        win_weights = win_weights / win_weights.mean()
+        sample_weights_arr = win_weights[all_pairs_eff[:, 0]]
+        print(f"  [recency] tau={args.recency_tau}, base_year={args.recency_base_year}")
+        print(f"  [recency] window years: {int(win_years.min())}-{int(win_years.max())}")
+        print(f"  [recency] weight range: {win_weights.min():.3f}-{win_weights.max():.3f}")
+        print(f"  [recency] sample weights mean={sample_weights_arr.mean():.3f} "
+              f"(should be 1.0 by normalization)")
+
+        # Wrapper that adds sample_weight as 5th element
+        from torch.utils.data import Dataset as _TorchDataset
+        _base_train_ds = train_ds
+        _sw_tensor = torch.from_numpy(sample_weights_arr).float()
+
+        class _RecencyWeightedDS(_TorchDataset):
+            def __len__(self):
+                return len(_base_train_ds)
+            def __getitem__(self, idx):
+                out = _base_train_ds[idx]   # 4-tuple
+                return out + (_sw_tensor[idx],)
+
+        train_ds = _RecencyWeightedDS()
+
     _prefetch = 4 if args.num_workers > 0 else None
     _persistent = args.num_workers > 0
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
@@ -2456,7 +2501,15 @@ def main():
         train_loss = 0.0
         train_samples = 0
 
-        for batch_idx, (xb_enc, xb_dec, yb, patch_ids) in enumerate(train_dl):
+        for batch_idx, batch in enumerate(train_dl):
+            # Backward-compatible: 4-tuple (no recency) or 5-tuple (with recency weight)
+            if args.recency_tau > 0:
+                xb_enc, xb_dec, yb, patch_ids, sw = batch
+                sw = sw.to(device, dtype=torch.float32, non_blocking=True)
+            else:
+                xb_enc, xb_dec, yb, patch_ids = batch
+                sw = None
+
             xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
             xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
             if args.random_encoder:
@@ -2477,7 +2530,16 @@ def main():
             with torch.autocast(device_type=device.type, dtype=torch.float16,
                                 enabled=amp_enabled):
                 logits = model(xb_enc, xb_dec, _pids)
-                loss = criterion(logits, yb)
+                if sw is not None and args.loss_fn == "focal":
+                    # Per-sample loss, then weighted mean
+                    # FocalBCELoss with reduction='sample_mean' returns shape (B,)
+                    _orig_red = criterion.reduction
+                    criterion.reduction = "sample_mean"
+                    per_sample_loss = criterion(logits, yb)
+                    criterion.reduction = _orig_red
+                    loss = (per_sample_loss * sw).mean()
+                else:
+                    loss = criterion(logits, yb)
 
             if not torch.isfinite(loss):
                 optimizer.zero_grad()

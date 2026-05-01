@@ -33,10 +33,12 @@ class FocalBCELoss(nn.Module):
     """
 
     def __init__(self, alpha: float = 0.25, gamma: float = 2.0,
-                 pos_weight: torch.Tensor | None = None):
+                 pos_weight: torch.Tensor | None = None,
+                 reduction: str = "mean"):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.reduction = reduction  # "mean" | "none" | "sample_mean"
         # Store pos_weight as a buffer so it moves with .to(device)
         if pos_weight is not None:
             self.register_buffer("pos_weight", pos_weight)
@@ -64,7 +66,14 @@ class FocalBCELoss(nn.Module):
             pw = targets * (self.pos_weight - 1.0) + 1.0
             loss = loss * pw
 
-        return loss.mean()
+        # 2026-04-30: support per-sample weighting (e.g. recency-weighted training)
+        # "sample_mean" reduces over non-batch dims only, returning shape (B,)
+        if self.reduction == "none":
+            return loss
+        elif self.reduction == "sample_mean":
+            return loss.flatten(1).mean(dim=1)   # (B,)
+        else:
+            return loss.mean()
 
 
 class ApproxNDCGLoss(nn.Module):
