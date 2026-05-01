@@ -74,6 +74,11 @@ export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
 export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Compiler/gcccore/proj/9.4.1/share/proj
 export PYTHONUNBUFFERED=1
 
+# W&B (offline mode for HPC compute nodes; sync'd from login node post-run)
+export WANDB_MODE=offline
+export WANDB_ENTITY=jiaaqii-huang-university-of-toronto
+export WANDB_DIR=$SCRATCH/wandb_offline
+
 source slurm/lib_copy_cache.sh
 copy_venv $SCRATCH/venv-wildfire
 $PYTHON -c "import torch; print('torch:', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
@@ -177,7 +182,9 @@ $PYTHON -u -m src.training.train_v3 \
     --log_interval 200 --skip_forecast \
     --label_fusion --nfdb_min_size_ha 1.0 \
     --fire_clim_dir data/fire_clim_annual_nbac \
-    --save_per_window_json "$SCRATCH/wildfire-refactored/outputs/${RUN_NAME}_per_window.json"
+    --save_per_window_json "$SCRATCH/wildfire-refactored/outputs/${RUN_NAME}_per_window.json" \
+    --wandb_project wildfire-s2s \
+    --wandb_tags "9ch,enc${ENC},${RUN_TAG},${RANGE}"
 
 # 2026-04-21 Plan A defaults:
 #   --label_fusion           → use NBAC+NFDB labels (post LABEL_DECISION_2026_04_21.md)
@@ -189,4 +196,15 @@ $PYTHON -u -m src.training.train_v3 \
 
 PY_EXIT=$?
 echo "=== Done: $(date) exit=$PY_EXIT ==="
+
+# W&B sync (offline runs need explicit sync to upload). Compute nodes
+# don't have internet; this attempts sync from inside the job. If it
+# fails (no net), runs sit in $WANDB_DIR/wandb/ and can be sync'd
+# later from login node via:  wandb sync $SCRATCH/wandb_offline/wandb/
+if command -v wandb >/dev/null 2>&1; then
+    echo "=== W&B offline sync attempt ==="
+    $PYTHON -m wandb sync --include-globs "*${RUN_NAME}*" "$WANDB_DIR/wandb/" 2>&1 | tail -5 || \
+        echo "  (sync failed — run on login node: wandb sync $WANDB_DIR/wandb/)"
+fi
+
 exit $PY_EXIT
