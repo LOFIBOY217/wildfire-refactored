@@ -47,8 +47,9 @@ S2S_VARIABLES = {
     "isi": "initial_spread_index",
 }
 
-# All days of the month (CDS expects strings)
-ALL_LEADTIMES = [str(d) for d in range(1, 216)]   # leads 1 to 215 days
+# SEAS5 forecasts at 12:00 UTC each day. lead day k → leadtime_hour =
+# 12 + (k - 1) * 24, for k = 1..215. Valid enum range: 12, 36, ..., 5148.
+ALL_LEADTIMES = [str(12 + (k - 1) * 24) for k in range(1, 216)]
 
 
 def download_one_issue(client, year, month, var, output_dir, area=None):
@@ -63,7 +64,9 @@ def download_one_issue(client, year, month, var, output_dir, area=None):
 
     var_dir = output_dir / var
     var_dir.mkdir(parents=True, exist_ok=True)
-    outfile = var_dir / f"s2s_{var}_{yr}{mo}.nc"
+    # Switch from .nc to .grib — the EWDS API delivers GRIB by default and
+    # NetCDF post-conversion is sometimes truncated for multi-leadtime asks.
+    outfile = var_dir / f"s2s_{var}_{yr}{mo}.grib"
 
     if outfile.exists():
         sz = outfile.stat().st_size / 1024 / 1024
@@ -73,23 +76,28 @@ def download_one_issue(client, year, month, var, output_dir, area=None):
         else:
             outfile.unlink()         # tiny file = corrupt; redownload
 
+    # cems-fire-seasonal schema (verified 2026-05-02 against EWDS):
+    #   release_version: "5"   (NOT "system")
+    #   day: "01" (only valid value — monthly issue)
+    #   leadtime_hour: 12, 36, ..., 5148 (12 + (k-1)*24 for lead day k)
+    #   no originating_centre, no product_type
     request = {
-        "originating_centre": "ecmwf",
-        "system": ["5"],                 # SEAS5
-        "product_type": ["ensemble_mean"],   # alt: 'ensemble_members'
-        "variable": [S2S_VARIABLES[var]],
-        "year": [yr],
-        "month": [mo],
-        "leadtime_hour": [str(int(d) * 24) for d in ALL_LEADTIMES],
+        "release_version": "5",
+        "variable": S2S_VARIABLES[var],
+        "year": yr,
+        "month": mo,
+        "day": "01",
+        "leadtime_hour": ALL_LEADTIMES,
         "area": area,
-        "data_format": "netcdf",
+        "data_format": "grib",
     }
 
     print(f"  [DOWNLOAD] {var} {yr}-{mo} ...", end=" ", flush=True)
     t0 = time.time()
     try:
-        client.retrieve("cems-fire-seasonal",
-                        request, str(outfile))
+        # Dataset name "cems-fire-seasonal" — operational SEAS5 forecasts
+        # 2017-present. For pre-2017 hindcasts use "cems-fire-seasonal-reforecast".
+        client.retrieve("cems-fire-seasonal", request, str(outfile))
         elapsed = time.time() - t0
         size_mb = outfile.stat().st_size / 1024 / 1024
         print(f"[OK] {size_mb:.1f} MB in {elapsed:.0f} s")
