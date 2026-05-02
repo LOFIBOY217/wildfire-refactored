@@ -94,6 +94,7 @@ from src.utils.raster_io import read_singleband_stack, clean_nodata
 from src.utils.patch_utils import patchify, depatchify
 from src.data_ops.processing.rasterize_hotspots import load_hotspot_data, rasterize_hotspots_batch
 from src.models.s2s_hotspot import S2SHotspotTransformer
+from src.models.baselines import build_baseline
 from src.training.losses import FocalBCELoss, ApproxNDCGLoss, HybridLoss
 
 # Reuse helpers from V2
@@ -1042,6 +1043,14 @@ def main():
     ap.add_argument("--neg_ratio", type=float, default=20.0)
     ap.add_argument("--pos_weight_cap", type=float, default=10.0)
     ap.add_argument("--max_pos_pairs", type=int, default=0)
+    ap.add_argument("--model_type", type=str, default="transformer",
+                    choices=["transformer", "mlp", "convlstm"],
+                    help="Model architecture. 'transformer' (default) is the "
+                         "S2SHotspotTransformer. 'mlp' is a 2-layer flatten-MLP "
+                         "baseline (answers: is the transformer overkill?). "
+                         "'convlstm' is a 2-layer ConvLSTM2D baseline (answers: "
+                         "is attention better than recurrent? — sacred geo-DL "
+                         "baseline).")
     ap.add_argument("--cache_dir", type=str, default="outputs/cache_v3")
     ap.add_argument("--master_cache_dir", type=str, default=None,
                     help="Optional master cache (e.g. v3_9ch_2000) covering a "
@@ -2490,22 +2499,39 @@ def main():
     patch_dim_dec = dec_dim
     patch_dim_out = out_dim
 
-    model = S2SHotspotTransformer(
-        patch_dim_enc=patch_dim_enc,
-        patch_dim_dec=patch_dim_dec,
-        patch_dim_out=patch_dim_out,
-        d_model=args.d_model,
-        nhead=args.nhead,
-        num_encoder_layers=args.enc_layers,
-        num_decoder_layers=args.dec_layers,
-        dim_feedforward=args.d_model * 4,
-        dropout=args.dropout,
-        encoder_days=in_days,
-        decoder_days=decoder_days,
-        n_patches=(n_patches if args.use_patch_embed else 0),
-        mlp_dec_embed=args.mlp_dec_embed,
-        dec_ctx_dim=ctx_extra_dim if args.decoder_ctx else 0,
-    ).to(device)
+    if args.model_type == "transformer":
+        model = S2SHotspotTransformer(
+            patch_dim_enc=patch_dim_enc,
+            patch_dim_dec=patch_dim_dec,
+            patch_dim_out=patch_dim_out,
+            d_model=args.d_model,
+            nhead=args.nhead,
+            num_encoder_layers=args.enc_layers,
+            num_decoder_layers=args.dec_layers,
+            dim_feedforward=args.d_model * 4,
+            dropout=args.dropout,
+            encoder_days=in_days,
+            decoder_days=decoder_days,
+            n_patches=(n_patches if args.use_patch_embed else 0),
+            mlp_dec_embed=args.mlp_dec_embed,
+            dec_ctx_dim=ctx_extra_dim if args.decoder_ctx else 0,
+        ).to(device)
+    else:
+        # Baseline: MLP or ConvLSTM. Drop-in replacement; same forward
+        # signature (encoder_input, decoder_input) → (B, T_dec, P*P).
+        model = build_baseline(
+            args.model_type,
+            patch_dim_enc=patch_dim_enc,
+            patch_dim_dec=patch_dim_dec,
+            patch_dim_out=patch_dim_out,
+            encoder_days=in_days,
+            decoder_days=decoder_days,
+            n_channels=N_CHANNELS,
+            patch_size=P,
+            d_model=args.d_model,
+            dropout=args.dropout,
+        ).to(device)
+        print(f"  [BASELINE] model_type={args.model_type}")
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Parameters: {n_params:,}")
