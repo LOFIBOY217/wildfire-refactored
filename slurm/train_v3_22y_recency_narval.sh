@@ -58,8 +58,21 @@ mkdir -p "$LOCAL_CACHE"
 copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
 
 CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
-TRAIN_CACHE_DIR="$SCRATCH/meteo_cache/v3_9ch_2000"
+CACHE_DIR_LUSTRE="$SCRATCH/meteo_cache/v3_9ch_2000"
 RUN_NAME="v3_9ch_enc${ENC}_2000_recency_tau${TAU}"
+
+# 2026-05-02: copy 22y meteo to SSD (Lustre fancy-indexing is 100x slower).
+# Skipping this caused 22y_strongreg + 22y_recency × 3 to all TIMEOUT.
+LOCAL_METEO="$LOCAL_CACHE/meteo"
+mkdir -p "$LOCAL_METEO"
+echo "=== copy 22y meteo to local SSD (~750 GB) ==="
+t0=$SECONDS
+for f in "$CACHE_DIR_LUSTRE"/*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$LOCAL_METEO/" || { echo "FATAL"; exit 1; }
+done
+echo "  copy done in $((SECONDS - t0))s"
+TRAIN_CACHE_DIR="$LOCAL_METEO"
 
 echo "============================================="
 echo "  V3 9ch enc${ENC} 22y with RECENCY WEIGHTING (tau=${TAU})"

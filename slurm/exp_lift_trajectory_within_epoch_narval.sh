@@ -76,8 +76,26 @@ mkdir -p "$LOCAL_CACHE"
 copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
 
 CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
-TRAIN_CACHE_DIR="$SCRATCH/meteo_cache/v3_9ch_2000"
+CACHE_DIR_LUSTRE="$SCRATCH/meteo_cache/v3_9ch_2000"
 RUN_NAME="v3_9ch_enc14_2000_lift_traj"
+
+# CRITICAL: copy meteo cache to local SSD before training.
+# Without this, fancy indexing on Lustre is 100x slower → chunk copy
+# in load_train_to_ram takes >24h → TIMEOUT (verified empirically by
+# 22y_strongreg + 22y_recency × 3 all timing out at chunk_5000).
+LOCAL_METEO="$LOCAL_CACHE/meteo"
+mkdir -p "$LOCAL_METEO"
+echo "=== copy 22y meteo to local SSD (~750 GB) ==="
+t0=$SECONDS
+for f in "$CACHE_DIR_LUSTRE"/*; do
+    [ -f "$f" ] || continue
+    fname=$(basename "$f")
+    sz=$(du -h "$f" | cut -f1)
+    echo "  copy $fname ($sz)"
+    cp "$f" "$LOCAL_METEO/" || { echo "FATAL"; exit 1; }
+done
+echo "  done in $((SECONDS - t0))s"
+TRAIN_CACHE_DIR="$LOCAL_METEO"
 
 echo "============================================="
 echo "  EXP: lift_trajectory_within_epoch"
