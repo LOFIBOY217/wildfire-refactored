@@ -7,12 +7,16 @@ t in the validation period (2022-05 to 2025-10), the SEAS5 seasonal
 forecast issued on the most recent month-start gives us a 1-7 month
 forecast of FWI. We compare our model against this product at lead 14-46.
 
-Dataset: cems-fire-seasonal-historical-v1
-  - SEAS5 ensemble mean (or member 1) drives the FWI calculation
+Dataset: cems-fire-seasonal  (operational forecasts 2017-present, on EWDS)
+  - SEAS5 ensemble mean (or members) drives the FWI calculation
   - Monthly issue dates (1st of each month)
   - Lead times: 1-215 days (~7 months)
-  - Spatial resolution: 1° lat/lon (NOT 0.25° like ERA5; SEAS5 native is ~1°)
+  - Spatial resolution: 1° lat/lon (SEAS5 native ~1° on O320 reduced Gaussian)
   - Variables: fwinx (FWI), ffmc, dc, dmc, bui, isi
+  - Hosted on EWDS (Early Warning Data Store) at ewds.climate.copernicus.eu,
+    NOT the standard CDS at cds.climate.copernicus.eu.
+
+  For hindcasts pre-2017, use dataset 'cems-fire-seasonal-reforecast' instead.
 
 Usage:
   # Local download (login node, no GPU needed):
@@ -71,11 +75,11 @@ def download_one_issue(client, year, month, var, output_dir, area=None):
 
     request = {
         "originating_centre": "ecmwf",
-        "system": "5",                 # SEAS5
-        "product_type": "ensemble_mean",   # could also be 'individual_members'
-        "variable": S2S_VARIABLES[var],
-        "year": yr,
-        "month": mo,
+        "system": ["5"],                 # SEAS5
+        "product_type": ["ensemble_mean"],   # alt: 'ensemble_members'
+        "variable": [S2S_VARIABLES[var]],
+        "year": [yr],
+        "month": [mo],
         "leadtime_hour": [str(int(d) * 24) for d in ALL_LEADTIMES],
         "area": area,
         "data_format": "netcdf",
@@ -84,7 +88,7 @@ def download_one_issue(client, year, month, var, output_dir, area=None):
     print(f"  [DOWNLOAD] {var} {yr}-{mo} ...", end=" ", flush=True)
     t0 = time.time()
     try:
-        client.retrieve("cems-fire-seasonal-historical-v1",
+        client.retrieve("cems-fire-seasonal",
                         request, str(outfile))
         elapsed = time.time() - t0
         size_mb = outfile.stat().st_size / 1024 / 1024
@@ -153,7 +157,10 @@ def main():
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--cds_url", type=str,
                     default=os.environ.get("CDS_API_URL",
-                                           "https://cds.climate.copernicus.eu/api"))
+                                           "https://ewds.climate.copernicus.eu/api"),
+                    help="EWDS API endpoint (CEMS-fire datasets live on "
+                         "ewds.climate.copernicus.eu, NOT cds.* — but the "
+                         "same CDS_API_KEY works on both).")
     ap.add_argument("--cds_key", type=str,
                     default=os.environ.get("CDS_API_KEY"))
     ap.add_argument("--area", type=float, nargs=4, default=None,
