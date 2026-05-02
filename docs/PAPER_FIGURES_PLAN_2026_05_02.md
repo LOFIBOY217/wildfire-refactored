@@ -34,7 +34,7 @@ not edit existing entries once "FROZEN" is marked.**
 | 1 | Three-tier evaluation protocol | ✅ APPROVED v3 (2026-05-02) | ⏳ TODO | ⏳ |
 | 2 | S2S timeline (14–46 day lead) | ✅ APPROVED v1 | n/a (no real-data overlay needed) | ✅ |
 | 3 | Patchification | ⏳ Refining (full prompt sent) | n/a | ⏳ |
-| 4 | Fire label construction | ⏳ Refining (full prompt sent, frame has placeholder) | ⏳ TODO (replace placeholder with real raster crop) | ⏳ |
+| 4 | Fire label construction | ✅ APPROVED v2 (2026-05-02) — frame has clean placeholder, no fake geography | ⏳ TODO (render real NBAC+NFDB raster crop into placeholder) | ⏳ |
 | 5 | Standard vs Novel-30 d evaluation | ⏳ Refining (full prompt sent) | ⏳ TODO (real polygon shapes) | ⏳ |
 | 6 | Study area (Canada) | ⏳ AI v1 had bad geography | ⏳ TODO (entire Python rebuild planned) | ⏳ |
 | 7 | Architecture diagram | ✅ APPROVED v1 | n/a | ✅ |
@@ -128,9 +128,24 @@ Composited and ready as-is.
 
 ## Figure 4 — Fire label construction
 
-**Status**: AI frame in refinement (full prompt sent — explicitly asks
-for placeholder dashed rectangle in Stage 5 output panel, no map of
-Canada anywhere in the flow).
+**Status**: AI frame v2 APPROVED 2026-05-02 (9.5/10). Stage 5 output
+panel correctly contains a dashed placeholder with text
+"[Insert real NBAC + NFDB binary raster — Python-rendered]".
+No fake Canada / US / lake geography anywhere in the figure.
+
+### What's good in the AI frame
+- 4 stages (1: blue, 2: orange, 3: green, 4: purple) + 5: output panel
+  with thicker dark border, all rounded rectangles, numbered circle
+  badges
+- Stage 1 sub-panels: clean polygon outline (NBAC) + filled red dot
+  (NFDB)
+- Right-side callout "Replaces CWFIS hotspot labels..." with bold blue
+  border + dashed blue connector from Stage 1
+- "Adopted 2026-04-21" subtitle, "350×" preserved, "AG_SDATE..AG_EDATE"
+  preserved exactly
+- Stage 5 placeholder is clearly marked dashed rectangle, italic text,
+  ready to be replaced by Python overlay
+- Two-row "1 (fire) / 0 (no fire)" legend already in place
 
 ### Python overlay TODOs
 
