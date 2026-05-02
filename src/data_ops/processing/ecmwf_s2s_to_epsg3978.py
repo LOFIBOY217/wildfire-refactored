@@ -52,19 +52,28 @@ def reproject_one_file(nc_path, ref_profile, ref_transform, ref_crs,
     else:
         ds = xr.open_dataset(nc_path)
 
-    # ECMWF NetCDF layout: dims = (forecast_reference_time, leadtime_hour,
-    # latitude, longitude). For ensemble_mean product type, no member dim.
-    var_name = list(ds.data_vars)[0]   # usually 'fwinx' / matches dataset
-    arr = ds[var_name]                  # shape (1, n_lead, n_lat, n_lon)
-
-    # Strip leading singleton time dim if present
-    if arr.ndim == 4 and arr.shape[0] == 1:
-        arr = arr.isel(forecast_reference_time=0) \
-            if "forecast_reference_time" in arr.dims else arr.squeeze(0)
+    # cems-fire-seasonal GRIB layout from EWDS:
+    #   dims = (number=51 members, step=215 lead days, latitude, longitude)
+    #   Take ensemble MEAN over `number` dim → (step, lat, lon).
+    var_name = list(ds.data_vars)[0]   # 'fwinx' / 'ffmc' / etc.
+    arr = ds[var_name]
+    if "number" in arr.dims:
+        arr = arr.mean(dim="number", skipna=True)   # ensemble mean
+    if "forecast_reference_time" in arr.dims and arr.sizes["forecast_reference_time"] == 1:
+        arr = arr.isel(forecast_reference_time=0)
+    # After this: arr has dims (step, latitude, longitude)
 
     # Determine source lat/lon
     lat = ds["latitude"].values
     lon = ds["longitude"].values
+    # SEAS5 longitude is in [0, 360]; convert to [-180, 180] for reproject
+    if lon.max() > 180:
+        # roll the longitude axis so values become continuous in [-180, 180]
+        lon_shifted = ((lon + 180) % 360) - 180
+        # find the order that puts the data right side
+        sort_idx = np.argsort(lon_shifted)
+        lon = lon_shifted[sort_idx]
+        arr = arr.isel({arr.dims[-1]: sort_idx})
     if lat.ndim != 1 or lon.ndim != 1:
         raise RuntimeError(f"Unexpected lat/lon shape: {lat.shape} / {lon.shape}")
     n_lat, n_lon = len(lat), len(lon)
@@ -77,9 +86,10 @@ def reproject_one_file(nc_path, ref_profile, ref_transform, ref_crs,
     )
     src_crs = "EPSG:4326"
 
-    # Issue tag from filename: s2s_fwinx_202307.nc → 202307
+    # Issue tag from filename: s2s_fwinx_202307.grib → 202307
     issue_tag = nc_path.stem.split("_")[-1]
     n_lead = arr.shape[0] if arr.ndim == 3 else 1
+    arr_np = arr.values  # materialise once (small after ensemble-mean)
 
     issue_dir = output_root / variable / f"issue_{issue_tag}"
     issue_dir.mkdir(parents=True, exist_ok=True)
@@ -91,11 +101,11 @@ def reproject_one_file(nc_path, ref_profile, ref_transform, ref_crs,
             n_done += 1
             continue
 
-        # SEAS5 ensemble mean for this lead day
-        if arr.ndim == 3:
-            src_data = arr.isel({arr.dims[0]: lead_idx}).values.astype(np.float32)
+        # SEAS5 ensemble mean for this lead day (already meaned over `number`)
+        if arr_np.ndim == 3:
+            src_data = arr_np[lead_idx].astype(np.float32)
         else:
-            src_data = arr.values.astype(np.float32)
+            src_data = arr_np.astype(np.float32)
 
         # Replace NaN with sentinel
         src_data = np.nan_to_num(src_data, nan=-9999.0)
