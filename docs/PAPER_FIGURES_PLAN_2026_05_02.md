@@ -33,7 +33,7 @@ not edit existing entries once "FROZEN" is marked.**
 |---|-------------|-----------------|------------------------|------------------------|
 | 1 | Three-tier evaluation protocol | ✅ APPROVED v3 (2026-05-02) | ⏳ TODO | ⏳ |
 | 2 | S2S timeline (14–46 day lead) | ✅ APPROVED v1 | n/a (no real-data overlay needed) | ✅ |
-| 3 | Patchification | ⏳ Refining (full prompt sent) | n/a | ⏳ |
+| 3 | Patchification | ✅ APPROVED v2 (2026-05-02) — correct 4 colormaps + 6×6 grid + token vector | n/a (illustrative crops, no real-data overlay needed) | ✅ |
 | 4 | Fire label construction | ✅ APPROVED v2 (2026-05-02) — frame has clean placeholder, no fake geography | ⏳ TODO (render real NBAC+NFDB raster crop into placeholder) | ⏳ |
 | 5 | Standard vs Novel-30 d evaluation | ✅ APPROVED v2 (2026-05-02) — clean USGS-style base, A/B base map pixel-identical, polygons consistent | ⏳ TODO (replace illustrative polygons with real central-BC NBAC + ignitions) | ⏳ |
 | 6 | Study area (Canada) | ⏳ AI v1 had bad geography | ⏳ TODO (entire Python rebuild planned) | ⏳ |
@@ -109,20 +109,35 @@ Composited and ready as-is.
 
 ## Figure 3 — Patchification (raster → patch tokens)
 
-**Status**: AI frame in refinement (full prompt sent v2 with strict
-6 × 6 grid + scientific colormaps + isometric stack rules).
+**Status**: AI frame v2 APPROVED 2026-05-02 (9.5/10). 4 scientific
+colormaps render as expected (YlOrRd / RdBu_r / YlGnBu / Purples),
+6 × 6 patch grid is exact, "patch i" red border consistent between
+Panel 2 and Panel 3, all numbers preserved.
 
-### Python overlay TODOs
-- **None** if AI frame v2+ uses real-looking colormaps. AI is allowed to
-  draw the rasters here because they're illustrative crops, not paper-grade
-  data. Reviewer will not check whether the FWI raster is "really
-  southern BC".
-- **Optional**: if reviewer cares, generate one real 96 × 96 px crop
-  from FWI 2018-07-15 (peak fire season) at southern BC, plot 4 channels
-  with the named colormaps, save as a single composite PNG, drop into
-  Panel 1 of the AI frame.
-- Source: `data/fwi_data/fwi_20180715.tif`,
-  `data/era5_on_fwi_grid/...` etc.
+### What's good in the AI frame
+- Panel 1: isometric 4-layer stack with correct colormaps per channel;
+  "4 channels (C)" curly brace below
+- Panel 2: clean 6 × 6 dashed grid (NOT 5 × 5), exact 16 px cells,
+  red-bordered "patch i" highlight, tick labels 0/16/32/48/64/80/96 on
+  both axes
+- Panel 3: same red-bordered patch on the left → Linear Conv2D arrow →
+  256-dim soft-green token column on the right; "× ~24 000 patches per
+  timestep" subtitle correct
+- Panel 4: 2 visible rows with vertical "..." between, 21 days curly
+  brace on the right, "~24 000 patch tokens per day" arrow below
+- Numbered badges 1/2/3/4 colour-coded (blue/orange/green/grey)
+
+### Minor issue
+- Panel 2 X-axis tick "16" is positioned slightly right of the first
+  dashed line. Cosmetic; reviewer unlikely to notice.
+
+### Python overlay
+- **No overlay needed**. The 4 rasters in Panel 1 are illustrative
+  crops representing concepts (FWI / ERA5 / soil moisture / fire
+  climatology) — reviewer will not check whether they correspond to a
+  real southern-BC location on a specific date. AI frame is final.
+- (Skipped: optional Python real-raster crop. Not worth the effort
+  given current frame quality.)
 
 ---
 
