@@ -67,7 +67,10 @@ done
 echo "  done in $((SECONDS - t0))s"
 
 CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
-RUN_NAME="v3_9ch_enc${ENC}_${RUN_TAG}"
+# Optional SUFFIX env var (e.g. SUFFIX=_ep1 / _strongreg / _recency_tau10) to
+# point at non-default ckpts. Default empty = original training run name.
+SUFFIX=${SUFFIX:-}
+RUN_NAME="v3_9ch_enc${ENC}_${RUN_TAG}${SUFFIX}"
 CKPT="$SCRATCH/wildfire-refactored/checkpoints/$RUN_NAME/best_model.pt"
 SCORES_DIR="$SCRATCH/wildfire-refactored/outputs/window_scores_full/$RUN_NAME"
 
