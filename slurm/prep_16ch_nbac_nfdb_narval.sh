@@ -2,7 +2,7 @@
 #SBATCH --job-name=wf-prep-16ch
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=256G
-#SBATCH --time=0-12:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/prep_16ch_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/prep_16ch_%j.err
 #SBATCH --account=def-inghaw
