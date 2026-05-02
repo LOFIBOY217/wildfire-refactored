@@ -37,7 +37,7 @@ not edit existing entries once "FROZEN" is marked.**
 | 4 | Fire label construction | ✅ APPROVED v2 (2026-05-02) — frame has clean placeholder, no fake geography | ⏳ TODO (render real NBAC+NFDB raster crop into placeholder) | ⏳ |
 | 5 | Standard vs Novel-30 d evaluation | ✅ APPROVED v2 (2026-05-02) — clean USGS-style base, A/B base map pixel-identical, polygons consistent | ⏳ TODO (replace illustrative polygons with real central-BC NBAC + ignitions) | ⏳ |
 | 6 | Study area (Canada) | ⏳ AI v1 had bad geography | ⏳ TODO (entire Python rebuild planned) | ⏳ |
-| 7 | Architecture diagram | ✅ APPROVED v2 (2026-05-02) — SOTA numbers removed, "Evaluation — what's new" panel added, factorized attention notation correct | n/a | ✅ |
+| 7 | Architecture diagram | ✅ APPROVED v3 (2026-05-02) — NeurIPS-grade: encoder/decoder block insets + factorized attention sub-diagrams + cross-attn terminates at correct sub-block + tokenization equation + loss equation typeset | n/a | ✅ |
 
 ---
 
@@ -271,19 +271,52 @@ No AI involvement in this one — geography is too important to risk.
 
 ## Figure 7 — Architecture diagram
 
-**Status**: AI frame v2 APPROVED 2026-05-02 (9.5/10).
+**Status**: AI frame v3 APPROVED 2026-05-02 (9.5/10) — meets NeurIPS /
+ICML method-section figure standard.
 
-### v2 changes vs v1
-- Removed all SOTA numbers (no more "Lift@5000 = 7.83×, +77 %")
-- Replaced bottom-right results card with **"Evaluation — what's new"**
-  panel listing four bullets: Lift@30 km, Recall@budget, Leak-free
-  baselines, Application value (operational deployment narrative)
-- Encoder block now correctly shows **factorized self-attention
-  (time then space) + MLP** with two sub-attention diagrams (Time
-  attention → Space attention)
-- MLP head label corrected to **"33 lead-days × 256 sub-pixels =
-  8 448 logits per patch"**
-- Static priors note added: "(year-1 offset to prevent label leakage)"
+### v3 changes vs v2 (5 NeurIPS-grade upgrades)
+1. **Encoder block inset**: pre-LN block expanded — Input → LayerNorm →
+   Time Self-Attn → + → LayerNorm → Space Self-Attn → + → LayerNorm →
+   MLP → + → Output, labelled "× N (one encoder block)". ViT/GPT-2
+   pre-LN style.
+2. **Decoder block inset**: same style — Input → LayerNorm → Masked
+   Self-Attn (with lock icon) → + → LayerNorm → Cross-Attn → + →
+   LayerNorm → MLP → + → Output, labelled "× L (one decoder block)".
+3. **Factorized attention sub-diagrams**: side-by-side comparison of
+   "Time attention" (red arrows along query row across 5 days) vs
+   "Space attention" (blue arrows from query patch radiating across
+   all 24 spatial patches in one time frame). TimeSformer / EarthFormer
+   style.
+4. **Cross-attention arrows now terminate at the correct sub-block** —
+   4 dashed black arrows from encoder memory bank into the
+   "Cross-Attention to encoder memory" sub-block of every decoder
+   block (NOT at masked self-attn).
+5. **Two typeset equations**:
+   - Tokenization (above patchify):
+     `x_p ∈ ℝ^{16×16×C} —Conv2D—> z_p ∈ ℝ^{256}` with proper italic
+     letters, blackboard ℝ, true sub/superscripts
+   - Focal BCE loss (in training callout):
+     `𝓛_{focal BCE} = −α(1−p_t)^γ log p_t , γ=2, α=0.25` with
+     calligraphic 𝓛, italic Greek α/γ, upright "log", true subscripts
+
+### v2 features retained
+- Removed SOTA numbers (no "Lift = 7.83×")
+- "Evaluation — what's new" panel: Lift@30 km, Recall@budget,
+  Leak-free baselines, Application value
+- Static priors year-1 offset note
+- MLP head label "33 lead-days × 256 sub-pixels = 8 448 logits per patch"
+
+### Reference style
+ViT (Dosovitskiy 2020) Figure 1 — block-internal expansion;
+TimeSformer (Bertasius 2021) Figure 2 — factorized attention diagram;
+GraphCast (Lam 2023) — multi-stage horizontal layout;
+AlphaFold 2 (Jumper 2021) Figure 1 — block expansion + equations.
+
+### Minor cosmetic (no action)
+- Encoder block inset "+" residual circle to LayerNorm connector
+  slightly short — looks marginally disjoint
+- Time attention sub-diagram "patch above / QUERY / below" labels
+  marginally large for cell width
 
 ### What's good
 - 6 colour-coded blocks (Inputs/Patchify/Encoder/Decoder/Output/Training)
