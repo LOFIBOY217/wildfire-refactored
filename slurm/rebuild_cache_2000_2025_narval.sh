@@ -102,6 +102,8 @@ python3 -u -m src.training.train_v3 \
     --cache_dir "$CACHE_DIR" \
     --chunk_patches 2000 --num_workers 8 \
     --skip_forecast \
+    --label_fusion --nfdb_min_size_ha 1.0 \
+    --fire_clim_dir data/fire_clim_annual_nbac \
     --overwrite
 
 echo "=== Done: $(date) ==="
