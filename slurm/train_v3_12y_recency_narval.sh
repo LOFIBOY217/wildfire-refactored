@@ -53,8 +53,18 @@ mkdir -p "$LOCAL_CACHE"
 copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
 
 CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
-TRAIN_CACHE_DIR="$SCRATCH/meteo_cache/v3_9ch_12y_2014"
+CACHE_DIR_LUSTRE="$SCRATCH/meteo_cache/v3_9ch_12y_2014"
 RUN_NAME="v3_9ch_enc${ENC}_12y_2014_recency_tau${TAU}"
+
+# 2026-05-02: copy 12y meteo to SSD (Lustre fancy-indexing slow)
+LOCAL_METEO="$LOCAL_CACHE/meteo"
+mkdir -p "$LOCAL_METEO"
+echo "=== copy 12y meteo to local SSD (~315 GB) ==="
+for f in "$CACHE_DIR_LUSTRE"/*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$LOCAL_METEO/" || { echo "FATAL"; exit 1; }
+done
+TRAIN_CACHE_DIR="$LOCAL_METEO"
 
 if [ ! -d "$TRAIN_CACHE_DIR" ] || [ -z "$(ls -A "$TRAIN_CACHE_DIR" 2>/dev/null)" ]; then
     echo "ERROR: $TRAIN_CACHE_DIR is empty or missing"; exit 1
