@@ -2584,6 +2584,13 @@ def main():
                     and val_wins_lift):
                 global_step = (epoch - 1) * n_batches + batch_idx + 1
                 _t_meval = time.time()
+                _mid_ctx_fn = None
+                if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
+                    def _mid_ctx_fn(xb_dec, cs, ce):
+                        _ctx_batch = torch.from_numpy(
+                            _dec_ctx_np[cs:ce].astype(np.float32)
+                        ).to(xb_dec.device)
+                        return _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
                 model.eval()
                 with torch.no_grad():
                     _m_mid = _compute_val_lift_k_v3(
@@ -2594,7 +2601,7 @@ def main():
                         val_win_dates=val_wins_lift_dates, patch_size=P,
                         s2s_means=s2s_means, s2s_stds=s2s_stds,
                         date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
-                        decoder_ctx_fn=decoder_ctx_fn, use_patch_embed=args.use_patch_embed,
+                        decoder_ctx_fn=_mid_ctx_fn, use_patch_embed=args.use_patch_embed,
                         cluster_min_size=1, s2s_full_cache=s2s_full_cache,
                         skip_cluster=True,
                     )
