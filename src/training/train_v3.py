@@ -991,6 +991,13 @@ def main():
     ap.add_argument("--weight_decay", type=float, default=0.01)
     ap.add_argument("--label_smoothing", type=float, default=0.0)
     ap.add_argument("--neg_buffer", type=int, default=0)
+    ap.add_argument("--neg_spatial_radius_km", type=float, default=0.0,
+                    help="If > 0, restrict negative candidates per training "
+                         "window to patches within this radius of any positive "
+                         "in the same window. Forces sharper spatial decision "
+                         "boundary (vs trivial boreal-vs-tundra split). "
+                         "Recommended: 100-300 km. Patch resolution is "
+                         "16 px x 2 km/px = 32 km, so R=200 km -> 7 patches.")
 
     # Training
     ap.add_argument("--epochs", type=int, default=30)
@@ -2202,12 +2209,18 @@ def main():
     t0_filter = time.time()
 
     pos_pairs = []
+    # We need the original (pre-buffer) per-window positive mask later if
+    # spatial-radius mining is enabled — record positives per window now.
+    win_pos_patches = {}  # win_i -> set of patch indices with positive
     for win_i, (hs, he, ts, te) in enumerate(train_wins):
         # Vectorized: read entire window at once, max over (time, pixels) per patch
         # fire_patched shape: (T, n_patches, P²), read [ts:te] slice = (dec_days, n_patches, P²)
         win_fire = np.array(fire_patched[ts:te, :, :])   # load to RAM once
         has_fire = win_fire.max(axis=(0, 2)) > 0          # (n_patches,) bool
-        for patch_i in np.where(has_fire)[0]:
+        win_patches = np.where(has_fire)[0]
+        if len(win_patches) > 0:
+            win_pos_patches[win_i] = win_patches
+        for patch_i in win_patches:
             pos_pairs.append((win_i, int(patch_i)))
         if win_i % 200 == 0 or win_i == len(train_wins) - 1:
             print(f"  scanned {win_i+1}/{len(train_wins)} windows  "
@@ -2240,7 +2253,35 @@ def main():
             _buf_grid = binary_dilation(_pos_grid, structure=_struct)
             pos_mask[_win_offset:_win_offset + n_patches] |= _buf_grid.reshape(-1)
 
-    neg_flat = np.where(~pos_mask)[0]
+    # Optional: spatial-radius hard mining — restrict negative candidates
+    # per training window to patches within R km of any positive in the
+    # SAME window. This is harder than fire_clim weighting because it ties
+    # the mining to the actual within-window spatial context.
+    if args.neg_spatial_radius_km > 0 and len(win_pos_patches) > 0:
+        patch_size_km = args.patch_size * 2.0   # 2 km/px @ EPSG:3978
+        R_patches = max(1, int(np.ceil(args.neg_spatial_radius_km / patch_size_km)))
+        struct_sp = np.ones((2 * R_patches + 1, 2 * R_patches + 1), dtype=bool)
+        nrow_sp, ncol_sp = grid
+        spatial_mask = np.zeros(total_pairs, dtype=bool)
+        for win_i, win_patches in win_pos_patches.items():
+            offset = win_i * n_patches
+            grid_pos = np.zeros(n_patches, dtype=bool)
+            grid_pos[win_patches] = True
+            dilated = binary_dilation(
+                grid_pos.reshape(nrow_sp, ncol_sp), structure=struct_sp
+            )
+            spatial_mask[offset:offset + n_patches] = dilated.flatten()
+        neg_flat = np.where(spatial_mask & ~pos_mask)[0]
+        print(f"  Spatial-radius mining: R={args.neg_spatial_radius_km:.0f} km "
+              f"({R_patches} patches) → neg candidates: {len(neg_flat):,} "
+              f"(vs unrestricted {(~pos_mask).sum():,})")
+        if len(neg_flat) < int(len(pos_pairs) * args.neg_ratio):
+            print(f"  WARNING: spatial radius too tight; only {len(neg_flat):,} "
+                  f"candidates for {len(pos_pairs):,} pos × ratio "
+                  f"{args.neg_ratio} = {int(len(pos_pairs) * args.neg_ratio):,} "
+                  f"target. Will sample with replacement or cap.")
+    else:
+        neg_flat = np.where(~pos_mask)[0]
     n_neg_target = min(int(len(pos_pairs) * args.neg_ratio), len(neg_flat))
 
     # Compute fire_clim per patch for hard negative mining
