@@ -1036,6 +1036,18 @@ def main():
     ap.add_argument("--pos_weight_cap", type=float, default=10.0)
     ap.add_argument("--max_pos_pairs", type=int, default=0)
     ap.add_argument("--cache_dir", type=str, default="outputs/cache_v3")
+    ap.add_argument("--master_cache_dir", type=str, default=None,
+                    help="Optional master cache (e.g. v3_9ch_2000) covering a "
+                         "wider date range. If set with --master_data_start / "
+                         "--master_data_end, the requested data_start..pred_end "
+                         "is sliced from the master memmap along the time axis "
+                         "instead of rebuilding a per-range cache. stats.npy "
+                         "is reused unchanged from the master dir.")
+    ap.add_argument("--master_data_start", type=str, default=None,
+                    help="Start date of master cache (e.g. 2000-05-01).")
+    ap.add_argument("--master_data_end", type=str, default=None,
+                    help="End date of master cache (e.g. 2025-12-20). "
+                         "If omitted, inferred from master cache filename.")
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--chunk_patches", type=int, default=200)
     ap.add_argument("--load_to_ram", action="store_true")
@@ -1334,6 +1346,65 @@ def main():
     print(f"  Aligned dates: {T}  ({aligned_dates[0]} → {aligned_dates[-1]})")
 
     # ----------------------------------------------------------------
+    # MASTER CACHE RESOLUTION
+    # ----------------------------------------------------------------
+    # If --master_cache_dir is set, we will reuse a wider-range cache by
+    # slicing along the time axis. master_t_offset / T give the slice.
+    # Channel-wise stats are RANGE-INDEPENDENT, so master stats.npy is
+    # reused unchanged.
+    master_info = None
+    if args.master_cache_dir:
+        if not args.master_data_start:
+            raise RuntimeError(
+                "--master_cache_dir requires --master_data_start"
+            )
+        master_start = datetime.strptime(args.master_data_start, "%Y-%m-%d").date()
+        # Compute aligned-date offset of THIS run's start within master.
+        if aligned_dates[0] < master_start:
+            raise RuntimeError(
+                f"data_start aligned={aligned_dates[0]} < master_start={master_start}; "
+                f"master cache does not cover this range."
+            )
+        # Master must align day-by-day with this run's aligned_dates from
+        # master_t_offset onwards. We trust this: master was built with
+        # the same FWI/2t/etc presence checks, so missing days are the
+        # same set. master_t_offset = days from master_start to aligned_dates[0].
+        master_t_offset = (aligned_dates[0] - master_start).days
+        # Resolve master_T from filename pattern.
+        import glob as _glob
+        master_pf_glob = os.path.join(
+            args.master_cache_dir,
+            f"meteo_v3_p{args.patch_size}_C*_T*_{args.master_data_start}_*_pf.dat"
+        )
+        master_pf_matches = _glob.glob(master_pf_glob)
+        if not master_pf_matches:
+            raise RuntimeError(
+                f"No master meteo cache found matching: {master_pf_glob}"
+            )
+        master_pf_path = master_pf_matches[0]
+        # Parse master_T from filename:
+        # meteo_v3_p16_C9_T9332_2000-05-01_2025-12-20_pf.dat
+        _bn = os.path.basename(master_pf_path)
+        master_T = int(_bn.split("_T")[1].split("_")[0])
+        master_data_end = _bn.split("_")[5]
+        master_info = dict(
+            cache_dir=args.master_cache_dir,
+            t_offset=master_t_offset,
+            T_master=master_T,
+            data_start=args.master_data_start,
+            data_end=master_data_end,
+        )
+        print(f"\n[MASTER CACHE] Reusing wider cache:")
+        print(f"  dir          : {args.master_cache_dir}")
+        print(f"  master range : {args.master_data_start} → {master_data_end}  (T_master={master_T})")
+        print(f"  this run     : {aligned_dates[0]} → {aligned_dates[-1]}      (T={T})")
+        print(f"  t_offset     : {master_t_offset}")
+        if master_t_offset + T > master_T:
+            raise RuntimeError(
+                f"master_T={master_T} too short: need t_offset+T={master_t_offset+T}"
+            )
+
+    # ----------------------------------------------------------------
     # STEP 3  Grid dimensions & streaming per-channel stats
     # ----------------------------------------------------------------
     with rasterio.open(fwi_paths[0]) as src:
@@ -1383,7 +1454,11 @@ def main():
     # Check for cached stats
     P = args.patch_size
     stats_path = None
-    if args.cache_dir:
+    if master_info is not None:
+        # Stats are range-independent; reuse master stats.
+        stats_path = os.path.join(master_info["cache_dir"],
+                                  f"meteo_v3_p{P}_C{N_CHANNELS}_stats.npy")
+    elif args.cache_dir:
         os.makedirs(args.cache_dir, exist_ok=True)
         stats_path = os.path.join(args.cache_dir,
                                   f"meteo_v3_p{P}_C{N_CHANNELS}_stats.npy")
@@ -1536,13 +1611,28 @@ def main():
     r = args.dilate_radius
     fusion_tag = "_nbac_nfdb" if args.label_fusion else ""
     fire_cache_key = None
-    if r > 0 and args.cache_dir:
+    fire_master_path = None
+    if r > 0 and master_info is not None:
+        # Master fire_dilated covers a wider date range; slice along axis 0.
+        fire_master_path = os.path.join(
+            master_info["cache_dir"],
+            f"fire_dilated_r{r}{fusion_tag}"
+            f"_{master_info['data_start']}_{master_info['data_end']}_{H}x{W}.npy")
+    elif r > 0 and args.cache_dir:
         fire_cache_key = os.path.join(
             args.cache_dir,
             f"fire_dilated_r{r}{fusion_tag}"
             f"_{aligned_dates[0]}_{aligned_dates[-1]}_{H}x{W}.npy")
 
-    if fire_cache_key and os.path.exists(fire_cache_key) and not args.overwrite:
+    if fire_master_path and os.path.exists(fire_master_path) and not args.overwrite:
+        print(f"\n[STEP 4] Loading MASTER fire_stack + slicing: {fire_master_path}")
+        # mmap_mode='r' avoids loading entire master into RAM; we slice + copy.
+        _master_fire = np.load(fire_master_path, mmap_mode='r')
+        t0 = master_info["t_offset"]
+        fire_stack = np.array(_master_fire[t0:t0 + T])
+        del _master_fire
+        print(f"  fire_stack: {fire_stack.shape}  positive_rate={fire_stack.mean():.4%}")
+    elif fire_cache_key and os.path.exists(fire_cache_key) and not args.overwrite:
         print(f"\n[STEP 4] Loading cached fire_stack: {fire_cache_key}")
         fire_stack = np.load(fire_cache_key)
         if fire_stack.shape[0] > T:
@@ -1682,12 +1772,32 @@ def main():
     print(f"  n_patches={n_patches}  enc_dim={enc_dim}  ~{meteo_mmap_gb:.1f} GB")
 
     mmap_path = None
-    if args.cache_dir:
+    master_meteo_path = None
+    if master_info is not None:
+        master_meteo_path = os.path.join(
+            master_info["cache_dir"],
+            f"meteo_v3_p{P}_C{N_CHANNELS}_T{master_info['T_master']}"
+            f"_{master_info['data_start']}_{master_info['data_end']}_pf.dat")
+    elif args.cache_dir:
         mmap_key = (f"meteo_v3_p{P}_C{N_CHANNELS}_T{T}"
                     f"_{aligned_dates[0]}_{aligned_dates[-1]}_pf.dat")
         mmap_path = os.path.join(args.cache_dir, mmap_key)
 
-    if mmap_path and os.path.exists(mmap_path) and not args.overwrite:
+    if master_meteo_path and os.path.exists(master_meteo_path) and not args.overwrite:
+        print(f"  Loading MASTER memmap + slicing: {master_meteo_path}")
+        T_master = master_info["T_master"]
+        t0 = master_info["t_offset"]
+        master_mmap = np.memmap(master_meteo_path, dtype='float16', mode='r',
+                                shape=(n_patches, T_master, enc_dim))
+        # Slicing returns a view; if --load_to_ram, copy the slice (much
+        # smaller than the master) into RAM.
+        if args.load_to_ram or args.load_train_to_ram:
+            print(f"  Copying slice [{t0}:{t0+T}] to RAM...")
+            meteo_patched = np.array(master_mmap[:, t0:t0 + T, :])
+            del master_mmap
+        else:
+            meteo_patched = master_mmap[:, t0:t0 + T, :]
+    elif mmap_path and os.path.exists(mmap_path) and not args.overwrite:
         print(f"  Loading cached memmap: {mmap_path}")
         meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
                                   shape=(n_patches, T, enc_dim))
@@ -1922,13 +2032,29 @@ def main():
     print(f"\n[STEP 7] Pre-computing fire patches...")
     fire_gb = T * n_patches * out_dim / 1e9
     fire_cache_path = None
-    if args.cache_dir:
+    fire_master_patched_path = None
+    if master_info is not None:
+        T_master = master_info["T_master"]
+        fire_master_patched_path = os.path.join(
+            master_info["cache_dir"],
+            f"fire_patched_v3_r{args.dilate_radius}{fusion_tag}"
+            f"_{master_info['data_start']}_{master_info['data_end']}"
+            f"_{T_master}x{n_patches}x{out_dim}.dat")
+    elif args.cache_dir:
         fire_cache_path = os.path.join(args.cache_dir,
                                        f"fire_patched_v3_r{args.dilate_radius}{fusion_tag}"
                                        f"_{aligned_dates[0]}_{aligned_dates[-1]}"
                                        f"_{T}x{n_patches}x{out_dim}.dat")
 
-    if fire_cache_path and os.path.exists(fire_cache_path) and not args.overwrite:
+    if fire_master_patched_path and os.path.exists(fire_master_patched_path) and not args.overwrite:
+        T_master = master_info["T_master"]
+        t0 = master_info["t_offset"]
+        master_fp = np.memmap(fire_master_patched_path, dtype='uint8', mode='r',
+                              shape=(T_master, n_patches, out_dim))
+        # Time-first layout: slice on dim 0.
+        fire_patched = master_fp[t0:t0 + T]
+        print(f"  Loaded MASTER fire_patched + sliced: {fire_master_patched_path}")
+    elif fire_cache_path and os.path.exists(fire_cache_path) and not args.overwrite:
         _fp_T = os.path.getsize(fire_cache_path) // (n_patches * out_dim)
         fire_patched = np.memmap(fire_cache_path, dtype='uint8', mode='r',
                                  shape=(_fp_T, n_patches, out_dim))
