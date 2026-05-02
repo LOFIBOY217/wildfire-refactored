@@ -45,7 +45,12 @@ def reproject_one_file(nc_path, ref_profile, ref_transform, ref_crs,
     import rasterio
     from rasterio.warp import reproject, Resampling
 
-    ds = xr.open_dataset(nc_path)
+    # Auto-detect engine: cfgrib for .grib, netcdf4 for .nc
+    if str(nc_path).endswith(".grib") or str(nc_path).endswith(".grb"):
+        ds = xr.open_dataset(nc_path, engine="cfgrib",
+                             backend_kwargs={"indexpath": ""})
+    else:
+        ds = xr.open_dataset(nc_path)
 
     # ECMWF NetCDF layout: dims = (forecast_reference_time, leadtime_hour,
     # latitude, longitude). For ensemble_mean product type, no member dim.
@@ -153,7 +158,9 @@ def main():
     # Process each variable
     for var in args.variables:
         var_input = input_dir / var
-        nc_files = sorted(var_input.glob("s2s_*.nc"))
+        # accept both .grib (preferred, default from EWDS) and legacy .nc
+        nc_files = sorted(list(var_input.glob("s2s_*.grib")) +
+                          list(var_input.glob("s2s_*.nc")))
         if not nc_files:
             print(f"[WARN] no NetCDF files in {var_input}")
             continue
