@@ -35,7 +35,7 @@ not edit existing entries once "FROZEN" is marked.**
 | 2 | S2S timeline (14–46 day lead) | ✅ APPROVED v1 | n/a (no real-data overlay needed) | ✅ |
 | 3 | Patchification | ⏳ Refining (full prompt sent) | n/a | ⏳ |
 | 4 | Fire label construction | ✅ APPROVED v2 (2026-05-02) — frame has clean placeholder, no fake geography | ⏳ TODO (render real NBAC+NFDB raster crop into placeholder) | ⏳ |
-| 5 | Standard vs Novel-30 d evaluation | ⏳ Refining (full prompt sent) | ⏳ TODO (real polygon shapes) | ⏳ |
+| 5 | Standard vs Novel-30 d evaluation | ✅ APPROVED v2 (2026-05-02) — clean USGS-style base, A/B base map pixel-identical, polygons consistent | ⏳ TODO (replace illustrative polygons with real central-BC NBAC + ignitions) | ⏳ |
 | 6 | Study area (Canada) | ⏳ AI v1 had bad geography | ⏳ TODO (entire Python rebuild planned) | ⏳ |
 | 7 | Architecture diagram | ✅ APPROVED v1 | n/a | ✅ |
 
@@ -167,9 +167,32 @@ No fake Canada / US / lake geography anywhere in the figure.
 
 ## Figure 5 — Standard vs Novel-30 d evaluation
 
-**Status**: AI frame in refinement (full prompt sent — strict
-identical-base-map between Panel A and B, 3 polygons in same positions,
-clean USGS-style topographic look not satellite).
+**Status**: AI frame v2 APPROVED 2026-05-02 (9.5/10). Panel A/B base
+maps are pixel-identical; clean USGS-style cartography (no green
+vegetation tint, no satellite look); 3 polygon shapes consistent
+between A (solid red + orange halo) and B (diagonal hatched);
+"17.1×" / "0.0×" preserved exactly in the bottom bar chart.
+
+### What's good in the AI frame
+- USGS-style base: light beige land, thin blue rivers, faint grey
+  contour lines, NO satellite imagery, NO green vegetation
+- A and B share IDENTICAL base map (same hill texture, same rivers,
+  same lake shapes) — only the overlay differs
+- 3 polygon shapes are pixel-replicated between A and B (solid in A,
+  hatched in B)
+- Centre divider with red callout arrow + "Same model, same data — only
+  the evaluation definition changes" works as visual anchor
+- Bottom bar chart: Y-axis labelled, gridlines at 0×/10×/20×, grey bar
+  reaches 17×, red ✗ on the right side
+- Scale bar "0–25–50 km" identical in both panels
+- "First time this distinction has been reported..." footnote in quiet
+  grey italic
+
+### Minor issue
+- The red ✗ in the right mini-chart sits at ~Y = 3× instead of exactly
+  Y = 0×. Visual nit; reviewer unlikely to notice. If touching up, ask
+  image2 to "move the red ✗ down so its baseline sits exactly on the
+  Y = 0× gridline".
 
 ### Python overlay TODOs
 
