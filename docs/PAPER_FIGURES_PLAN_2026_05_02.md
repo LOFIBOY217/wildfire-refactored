@@ -37,7 +37,7 @@ not edit existing entries once "FROZEN" is marked.**
 | 4 | Fire label construction | ✅ APPROVED v2 (2026-05-02) — frame has clean placeholder, no fake geography | ⏳ TODO (render real NBAC+NFDB raster crop into placeholder) | ⏳ |
 | 5 | Standard vs Novel-30 d evaluation | ✅ APPROVED v2 (2026-05-02) — clean USGS-style base, A/B base map pixel-identical, polygons consistent | ⏳ TODO (replace illustrative polygons with real central-BC NBAC + ignitions) | ⏳ |
 | 6 | Study area (Canada) | ⏳ AI v1 had bad geography | ⏳ TODO (entire Python rebuild planned) | ⏳ |
-| 7 | Architecture diagram | ✅ APPROVED v1 | n/a | ✅ |
+| 7 | Architecture diagram | ✅ APPROVED v2 (2026-05-02) — SOTA numbers removed, "Evaluation — what's new" panel added, factorized attention notation correct | n/a | ✅ |
 
 ---
 
@@ -271,9 +271,40 @@ No AI involvement in this one — geography is too important to risk.
 
 ## Figure 7 — Architecture diagram
 
-**Status**: AI frame v1 APPROVED. No Python overlay needed.
+**Status**: AI frame v2 APPROVED 2026-05-02 (9.5/10).
 
-Composited and ready as-is.
+### v2 changes vs v1
+- Removed all SOTA numbers (no more "Lift@5000 = 7.83×, +77 %")
+- Replaced bottom-right results card with **"Evaluation — what's new"**
+  panel listing four bullets: Lift@30 km, Recall@budget, Leak-free
+  baselines, Application value (operational deployment narrative)
+- Encoder block now correctly shows **factorized self-attention
+  (time then space) + MLP** with two sub-attention diagrams (Time
+  attention → Space attention)
+- MLP head label corrected to **"33 lead-days × 256 sub-pixels =
+  8 448 logits per patch"**
+- Static priors note added: "(year-1 offset to prevent label leakage)"
+
+### What's good
+- 6 colour-coded blocks (Inputs/Patchify/Encoder/Decoder/Output/Training)
+- 3 line styles in legend: data flow (solid), cross-attention (dashed),
+  loss/supervision (red dotted)
+- Cross-attention arrows from encoder memory bank into all L decoder
+  blocks
+- Output Canada map with red-orange fire-risk overlay + colorbar
+  10⁻⁴ → 1
+- Training callout connected to labels block + decoder head via red
+  dotted lines
+
+### Minor issues (cosmetic, no action needed)
+- MLP head shows only 5 token squares with "..." (truncated 256)
+- Cross-attention arrows visually point at decoder's masked self-attn
+  block instead of cross-attn sub-block
+- Output map fire density slightly biased to BC coast (real distribution
+  is BC interior + AB + NWT) — acceptable for a concept figure
+
+### Python overlay
+- **None**. Composited and ready.
 
 ---
 
