@@ -953,6 +953,16 @@ def main():
     ap.add_argument("--recency_base_year", type=int, default=2024,
                     help="Reference year for recency weighting (weight peaks at base_year).")
 
+    # 2026-05-01: mid-epoch validation (calibration-vs-rank tradeoff hypothesis test)
+    # Evaluates model on val_lift_sample_wins every N batches, appending to CSV.
+    # Hypothesis: val_lift peaks at ~5000-10000 SGD updates, then degrades while
+    # train_loss continues to decrease (focal loss → smoother predictions → top-K loses sharpness).
+    # 0 = disabled (default). Typical: 500 batches (3-5 min eval per check).
+    ap.add_argument("--mid_epoch_val_every", type=int, default=0,
+                    help="Run quick val_lift every N training batches (within epoch). "
+                         "Logs to outputs/{run_name}_lift_trajectory.csv. "
+                         "Adds ~3-5 min per call. 0 = disabled.")
+
     # V3: decoder context augmentation
     ap.add_argument("--decoder_ctx", action="store_true",
                     help="Augment decoder input with static spatial context + lead time.\n"
@@ -2565,6 +2575,67 @@ def main():
                 print(f"    ep{epoch} [{batch_idx+1:5d}/{n_batches} {pct*100:4.1f}%]  "
                       f"loss={train_loss/max(train_samples,1):.4f}  "
                       f"{(batch_idx+1)/elapsed:.1f}b/s")
+
+            # ── Mid-epoch validation (2026-05-01 calibration-vs-rank hypothesis test) ─
+            if (args.mid_epoch_val_every > 0
+                    and (batch_idx + 1) % args.mid_epoch_val_every == 0
+                    and (batch_idx + 1) < n_batches
+                    and not args.skip_val
+                    and val_wins_lift):
+                global_step = (epoch - 1) * n_batches + batch_idx + 1
+                _t_meval = time.time()
+                model.eval()
+                with torch.no_grad():
+                    _m_mid = _compute_val_lift_k_v3(
+                        model, meteo_patched, fire_patched, val_wins_lift,
+                        n_patches, args.val_lift_k, args.val_lift_sample_wins, args.chunk_patches,
+                        device, decoder_mode=args.decoder, dec_dim=dec_dim,
+                        s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+                        val_win_dates=val_wins_lift_dates, patch_size=P,
+                        s2s_means=s2s_means, s2s_stds=s2s_stds,
+                        date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+                        decoder_ctx_fn=decoder_ctx_fn, use_patch_embed=args.use_patch_embed,
+                        cluster_min_size=1, s2s_full_cache=s2s_full_cache,
+                        skip_cluster=True,
+                    )
+                model.train()
+                _t_meval = time.time() - _t_meval
+                _vlift = _m_mid.get("lift_k", 0.0)
+                _vroc = _m_mid.get("roc_auc", 0.0)
+                _vbri = _m_mid.get("brier", 0.0)
+                # Append to CSV
+                _csv_path = os.path.join(
+                    paths_cfg.get("outputs_dir", "outputs"),
+                    f"{args.run_name}_lift_trajectory.csv")
+                _new_file = not os.path.exists(_csv_path)
+                os.makedirs(os.path.dirname(_csv_path) or ".", exist_ok=True)
+                with open(_csv_path, "a") as _f:
+                    if _new_file:
+                        _f.write("epoch,batch,global_step,train_loss,val_lift_k,val_roc_auc,val_brier,eval_sec\n")
+                    _f.write(f"{epoch},{batch_idx+1},{global_step},"
+                             f"{train_loss/max(train_samples,1):.6f},"
+                             f"{_vlift:.4f},{_vroc:.4f},{_vbri:.6f},{_t_meval:.1f}\n")
+                print(f"    [mid-val] step {global_step}  "
+                      f"Lift@{args.val_lift_k}={_vlift:.2f}x  "
+                      f"ROC-AUC={_vroc:.4f}  Brier={_vbri:.4f}  ({_t_meval:.0f}s)")
+                # Save snapshot if new best (by val_lift)
+                if _vlift > best_val_lift_k:
+                    best_val_lift_k = _vlift
+                    _mid_best_path = os.path.join(ckpt_dir, "best_model.pt")
+                    _payload = {
+                        "epoch": epoch, "batch_idx": batch_idx + 1,
+                        "global_step": global_step,
+                        "model_state": model.state_dict(),
+                        "best_val_lift_k_global": best_val_lift_k,
+                        "meteo_means": meteo_means, "meteo_stds": meteo_stds,
+                        "patch_dim_enc": patch_dim_enc, "patch_dim_dec": patch_dim_dec,
+                        "patch_dim_out": patch_dim_out, "hw": hw, "grid": grid,
+                        "args": vars(args), "channel_names": CHANNEL_NAMES,
+                        "n_channels": N_CHANNELS,
+                        "s2s_means": s2s_means, "s2s_stds": s2s_stds,
+                    }
+                    torch.save(_payload, _mid_best_path)
+                    print(f"    [mid-val] ★ new best Lift={_vlift:.2f}x at step {global_step}")
 
             # Mid-epoch checkpoint (no val, lightweight snapshot for crash recovery)
             # Saves every `ckpt_interval` batches, atomic rename to prevent partial writes.
