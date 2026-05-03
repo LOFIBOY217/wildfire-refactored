@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-prep-13ch
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=256G
+#SBATCH --mem=480G
 #SBATCH --time=2-00:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/prep_13ch_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/prep_13ch_%j.err
