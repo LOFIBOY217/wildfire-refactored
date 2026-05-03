@@ -70,6 +70,29 @@ def load_score_map(npz_path):
     return arr[arr.files[0]]
 
 
+def load_patch_arrays(npz_path):
+    """Load (prob_agg, label_agg) from save_window_scores_full npz format.
+
+    Format produced by train_v3 save_window_scores_dir:
+      keys: prob_agg, label_agg, hs, he, ts, te, win_date, win_idx
+      shapes: prob_agg = (n_patches, P*P) float16
+              label_agg = (n_patches, P*P) uint8
+    """
+    arr = np.load(npz_path)
+    if "prob_agg" not in arr or "label_agg" not in arr:
+        raise KeyError(f"npz missing prob_agg/label_agg; keys={list(arr.files)}")
+    return arr["prob_agg"].astype(np.float32), arr["label_agg"].astype(np.uint8)
+
+
+def patches_to_2d(patch_arr, n_rows, n_cols, patch_size):
+    """Reshape (n_patches, P*P) → (n_rows*P, n_cols*P) 2D grid."""
+    P = patch_size
+    return (patch_arr
+            .reshape(n_rows, n_cols, P, P)
+            .transpose(0, 2, 1, 3)
+            .reshape(n_rows * P, n_cols * P))
+
+
 def connected_fire_events(label_2d, structure=None):
     """Return labelled connected components of binary fire raster."""
     from scipy.ndimage import label as ndi_label
@@ -131,7 +154,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scores_dir", type=str, required=True,
                     help="outputs/window_scores_full/<run> directory")
-    ap.add_argument("--label_npy", type=str, required=True)
+    ap.add_argument("--label_npy", type=str, default=None,
+                    help="(unused in patch mode) — kept for backward compat")
     ap.add_argument("--label_data_start", type=str, default="2000-05-01")
     ap.add_argument("--pred_start", type=str, default="2022-05-01")
     ap.add_argument("--pred_end", type=str, default="2025-10-31")
@@ -139,6 +163,11 @@ def main():
     ap.add_argument("--lead_end", type=int, default=46)
     ap.add_argument("--budgets", type=float, nargs="+",
                     default=[0.001, 0.005, 0.01, 0.05, 0.10])
+    ap.add_argument("--patch_size", type=int, default=16)
+    ap.add_argument("--n_rows", type=int, default=142,
+                    help="Patches per column (2281 // 16 = 142)")
+    ap.add_argument("--n_cols", type=int, default=169,
+                    help="Patches per row (2709 // 16 = 169)")
     ap.add_argument("--fire_season_only", action="store_true", default=True)
     ap.add_argument("--output_prefix", type=str, required=True)
     ap.add_argument("--limit_windows", type=int, default=0,
@@ -147,15 +176,15 @@ def main():
 
     pred_start = parse_date(args.pred_start)
     pred_end = parse_date(args.pred_end)
-    label_start = parse_date(args.label_data_start)
 
     print("=" * 60)
-    print("Recall@budget evaluation")
+    print("Recall@budget evaluation (patch-format mode)")
     print("=" * 60)
     print(f"  scores_dir : {args.scores_dir}")
-    print(f"  label_npy  : {args.label_npy}")
+    print(f"  patch grid : {args.n_rows} x {args.n_cols} (P={args.patch_size})")
     print(f"  val window : {pred_start} → {pred_end}")
-    print(f"  lead window: t+{args.lead_start} .. t+{args.lead_end}")
+    print(f"  lead window: t+{args.lead_start} .. t+{args.lead_end}  "
+          f"(window already aggregated in npz prob_agg/label_agg)")
     print(f"  budgets    : {args.budgets}")
 
     # List score files
@@ -169,10 +198,8 @@ def main():
         score_files = score_files[:args.limit_windows]
         print(f"  limited to {len(score_files)}")
 
-    # Load label memmap
-    label_stack = np.load(args.label_npy, mmap_mode="r")
-    print(f"  label shape: {label_stack.shape}")
-    H, W = label_stack.shape[1], label_stack.shape[2]
+    H = args.n_rows * args.patch_size
+    W = args.n_cols * args.patch_size
 
     per_window = []
     n_skip_no_fire = 0
@@ -180,33 +207,34 @@ def main():
     t0 = datetime.now()
 
     for i, (t, score_path) in enumerate(score_files):
-        # Build label window: max over [t+lead_start, t+lead_end]
-        t_lo = (t + timedelta(days=args.lead_start) - label_start).days
-        t_hi = (t + timedelta(days=args.lead_end) - label_start).days
-        if t_lo < 0 or t_hi >= label_stack.shape[0]:
+        # Load patch arrays from save_window_scores npz
+        try:
+            prob_patch, label_patch = load_patch_arrays(score_path)
+        except Exception as e:
+            print(f"  [WARN] failed to load {score_path.name}: {e}")
             continue
-        label_win = np.array(label_stack[t_lo:t_hi + 1])  # (33, H, W)
-        label_2d = (label_win.max(axis=0) > 0).astype(np.uint8)
+
+        expected_shape = (args.n_rows * args.n_cols,
+                          args.patch_size * args.patch_size)
+        if prob_patch.shape != expected_shape:
+            n_skip_shape_mismatch += 1
+            if n_skip_shape_mismatch <= 3:
+                print(f"  [WARN] shape mismatch {prob_patch.shape} vs {expected_shape}")
+            continue
+
+        # Reshape patch arrays to 2D grid
+        score_map = patches_to_2d(prob_patch, args.n_rows, args.n_cols, args.patch_size)
+        label_2d = (patches_to_2d(label_patch, args.n_rows, args.n_cols, args.patch_size) > 0).astype(np.uint8)
+
         if label_2d.sum() == 0:
             n_skip_no_fire += 1
             continue
 
-        # Load score map
-        try:
-            score_map = load_score_map(score_path)
-        except Exception as e:
-            print(f"  [WARN] failed to load {score_path.name}: {e}")
-            continue
-        if score_map.shape != (H, W):
-            n_skip_shape_mismatch += 1
-            continue
-
-        # Valid land mask = pixels with finite scores AND positive base value.
-        # save_window_scores files use 0 for non-land pixels typically; here we
-        # accept all finite pixels as "valid".
+        # All patch-pixels are "valid" land for our purposes (the model only
+        # produces predictions for in-Canada patches that the dataset filters)
         valid_mask = np.isfinite(score_map)
 
-        # Connected fire events in this lead window
+        # Connected fire events
         event_lbl, n_events = connected_fire_events(label_2d)
 
         rec_per_budget = []

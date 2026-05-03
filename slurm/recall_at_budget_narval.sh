@@ -42,32 +42,28 @@ source slurm/lib_copy_cache.sh
 copy_venv $SCRATCH/venv-wildfire
 
 SCORES_DIR="$SCRATCH/wildfire-refactored/outputs/window_scores_full/${RUN}"
-LABEL_NPY="$SCRATCH/wildfire-refactored/data/fire_labels/fire_labels_nbac_nfdb_2000-05-01_2025-12-21_2281x2709_r14.npy"
 OUT_PREFIX="$SCRATCH/wildfire-refactored/outputs/recall_at_budget_${TAG}"
 
 if [ ! -d "$SCORES_DIR" ]; then
     echo "ERROR: scores dir missing: $SCORES_DIR"; exit 1
 fi
-if [ ! -f "$LABEL_NPY" ]; then
-    echo "ERROR: label npy missing: $LABEL_NPY"; exit 1
-fi
 NWIN=$(ls "$SCORES_DIR" | wc -l)
 
 echo "============================================="
-echo "  Recall@budget"
+echo "  Recall@budget (patch-format mode)"
 echo "  RUN        : $RUN"
 echo "  scores dir : $SCORES_DIR  ($NWIN files)"
-echo "  label npy  : $LABEL_NPY"
 echo "  output     : ${OUT_PREFIX}_*.json"
 echo "============================================="
 
+# Patch-format mode: reads prob_agg + label_agg directly from npz files,
+# no external label_npy needed. Patch grid: 142 x 169 @ patch=16 px.
 $PYTHON -u -m scripts.recall_at_budget \
     --scores_dir "$SCORES_DIR" \
-    --label_npy "$LABEL_NPY" \
-    --label_data_start 2000-05-01 \
     --pred_start 2022-05-01 --pred_end 2025-10-31 \
     --lead_start 14 --lead_end 46 \
     --budgets 0.001 0.005 0.01 0.05 0.10 \
+    --patch_size 16 --n_rows 142 --n_cols 169 \
     --output_prefix "$OUT_PREFIX"
 
 PY_EXIT=$?
