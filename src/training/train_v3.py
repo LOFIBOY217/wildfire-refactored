@@ -601,8 +601,17 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                            per_lead_eval=False,
                            decoder_ctx_fn=None,
                            save_per_window_json=None,
-                           save_window_scores_dir=None):
-    """V3 validation: standard pixel-level metrics + optional cluster/per-lead."""
+                           save_window_scores_dir=None,
+                           skip_cluster=False):
+    """V3 validation: standard pixel-level metrics + optional cluster/per-lead.
+
+    Args:
+        skip_cluster: if True, force-disable cluster_eval regardless of
+            the cluster_eval kwarg. Used by mid-epoch eval (lift_trajectory)
+            to keep evaluation fast.
+    """
+    if skip_cluster:
+        cluster_eval = False
     # PROBE: validate full forward pass with fake tensors BEFORE running all windows.
     # Catches shape mismatches (like missing decoder_ctx_fn) in <1 second.
     if len(val_wins) > 0 and dec_dim is not None:
