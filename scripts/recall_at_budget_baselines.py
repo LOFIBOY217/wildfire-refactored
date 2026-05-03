@@ -127,6 +127,9 @@ def main():
     ap.add_argument("--fire_season_only", action="store_true", default=True)
     ap.add_argument("--output_prefix", required=True)
     ap.add_argument("--limit_windows", type=int, default=0)
+    ap.add_argument("--restrict_mask_npy", type=str, default=None,
+                    help="Boreal-belt mask: (H,W) bool npy. If set, "
+                         "restricts top-K selection to within this mask.")
     args = ap.parse_args()
 
     pred_start = parse_date(args.pred_start)
@@ -148,6 +151,13 @@ def main():
     P, NR, NC = args.patch_size, args.n_rows, args.n_cols
     H = NR * P
     W = NC * P
+
+    restrict_mask = None
+    if args.restrict_mask_npy:
+        restrict_mask = np.load(args.restrict_mask_npy).astype(bool)
+        if restrict_mask.shape != (H, W):
+            restrict_mask = restrict_mask[:H, :W]
+        print(f"  restrict_mask: {restrict_mask.sum():,} pixels eligible")
 
     # Label memmap (for persistence) and label_data_start
     if args.method == "persistence" or args.label_npy:
@@ -250,6 +260,8 @@ def main():
 
         # If score has nan, use a finite mask
         valid_mask = np.isfinite(score_2d_final)
+        if restrict_mask is not None:
+            valid_mask = valid_mask & restrict_mask
         if valid_mask.sum() == 0:
             n_skip_no_score += 1
             continue

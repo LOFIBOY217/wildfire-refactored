@@ -172,6 +172,12 @@ def main():
     ap.add_argument("--output_prefix", type=str, required=True)
     ap.add_argument("--limit_windows", type=int, default=0,
                     help="If > 0, only N windows for debug")
+    ap.add_argument("--restrict_mask_npy", type=str, default=None,
+                    help="Optional path to a (H, W) bool/uint8 npy mask. "
+                         "If set, only pixels where mask=True are eligible "
+                         "for top-K ranking AND the budget denominator is the "
+                         "mask's pixel count, not the full Canada land. "
+                         "Used to compute 'within-boreal-belt Recall@budget'.")
     args = ap.parse_args()
 
     pred_start = parse_date(args.pred_start)
@@ -200,6 +206,21 @@ def main():
 
     H = args.n_rows * args.patch_size
     W = args.n_cols * args.patch_size
+
+    # Optional: load restrict mask (boreal-belt mode)
+    restrict_mask = None
+    if args.restrict_mask_npy:
+        restrict_mask = np.load(args.restrict_mask_npy).astype(bool)
+        if restrict_mask.shape != (H, W):
+            # Crop or fail
+            if restrict_mask.shape[0] >= H and restrict_mask.shape[1] >= W:
+                restrict_mask = restrict_mask[:H, :W]
+            else:
+                print(f"[ERROR] restrict_mask shape {restrict_mask.shape} "
+                      f"smaller than ({H},{W})")
+                sys.exit(1)
+        print(f"  restrict_mask: {restrict_mask.sum():,} / {restrict_mask.size:,} "
+              f"pixels eligible ({100*restrict_mask.mean():.2f}%)")
 
     per_window = []
     n_skip_no_fire = 0
@@ -233,6 +254,8 @@ def main():
         # All patch-pixels are "valid" land for our purposes (the model only
         # produces predictions for in-Canada patches that the dataset filters)
         valid_mask = np.isfinite(score_map)
+        if restrict_mask is not None:
+            valid_mask = valid_mask & restrict_mask
 
         # Connected fire events
         event_lbl, n_events = connected_fire_events(label_2d)

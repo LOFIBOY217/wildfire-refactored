@@ -218,6 +218,55 @@ def main():
                               for mi, m in enumerate(methods)},
             }
 
+    # ── Metric 4: Anomaly-window stratified recall ──────────────────────
+    # Stratify windows by climatology recall@5% (bottom = "climatology
+    # fails to predict this window's fires" = anomaly windows). Compare
+    # each method's recall on these strata.
+    print("\n" + "=" * 70)
+    print("METRIC 4 — Anomaly-window stratified Recall@5% (B requested)")
+    print("=" * 70)
+    anomaly_summary = {"by_stratum": {}}
+    if bi5 is not None:
+        clim_recall_w = R[clim_idx, :, bi5]
+        # Thresholds: bottom-25%, mid-50%, top-25% by climatology recall
+        q25, q75 = np.nanpercentile(clim_recall_w, [25, 75])
+        strata = {
+            "anomaly (clim fails, bottom 25%)":
+                np.where(clim_recall_w <= q25)[0],
+            "normal (clim mid, 25-75%)":
+                np.where((clim_recall_w > q25) & (clim_recall_w < q75))[0],
+            "easy (clim top 25%)":
+                np.where(clim_recall_w >= q75)[0],
+        }
+        print(f"\n{'Stratum':<40} | n_win | " + " | ".join(f"{m:>11}" for m in methods))
+        for stratum_name, idxs in strata.items():
+            line = [f"{stratum_name:<40}", f"{len(idxs):>5}"]
+            for mi, m in enumerate(methods):
+                vals = R[mi, idxs, bi5]
+                line.append(f"{np.nanmean(vals)*100:6.2f}%   ")
+            print(" | ".join(line))
+            anomaly_summary["by_stratum"][stratum_name] = {
+                "n": int(len(idxs)),
+                "by_method": {m: float(np.nanmean(R[mi, idxs, bi5]))
+                              for mi, m in enumerate(methods)},
+            }
+        # Also report per-budget
+        print(f"\nFull per-budget breakdown for the ANOMALY stratum:")
+        anomaly_idxs = strata["anomaly (clim fails, bottom 25%)"]
+        print(f"{'Budget':>8} | " + " | ".join(f"{m:>11}" for m in methods))
+        anomaly_summary["per_budget_anomaly"] = []
+        for bi, B in enumerate(args.budgets):
+            line = [f"{B*100:6.2f}%"]
+            row = {"budget": float(B), "n": int(len(anomaly_idxs)),
+                   "by_method": {}}
+            for mi, m in enumerate(methods):
+                vals = R[mi, anomaly_idxs, bi]
+                m_val = float(np.nanmean(vals))
+                line.append(f"{m_val*100:6.2f}%   ")
+                row["by_method"][m] = m_val
+            print(" | ".join(line))
+            anomaly_summary["per_budget_anomaly"].append(row)
+
     # ── Save outputs ───────────────────────────────────────────────────
     out_dir = Path(args.output_prefix).parent
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -227,7 +276,9 @@ def main():
         json.dump(year_summary, f, indent=2)
     with open(f"{args.output_prefix}_month.json", "w") as f:
         json.dump(month_summary, f, indent=2)
-    print(f"\nWrote {args.output_prefix}_{{delta,year,month}}.json")
+    with open(f"{args.output_prefix}_anomaly.json", "w") as f:
+        json.dump(anomaly_summary, f, indent=2)
+    print(f"\nWrote {args.output_prefix}_{{delta,year,month,anomaly}}.json")
 
 
 if __name__ == "__main__":
