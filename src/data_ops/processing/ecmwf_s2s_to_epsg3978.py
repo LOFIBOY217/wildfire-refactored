@@ -23,11 +23,23 @@ Usage:
 """
 from __future__ import annotations
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
+
+# Set ECCODES env vars from the loaded module if not already set.
+# Required for cfgrib to find the ecCodes C library on Narval (the
+# eccodes module sets EBROOTECCODES but not ECCODES_DIR / LD_LIBRARY_PATH).
+_eb = os.environ.get("EBROOTECCODES", "")
+if _eb and not os.environ.get("ECCODES_DIR"):
+    os.environ["ECCODES_DIR"] = _eb
+if _eb and _eb + "/lib" not in os.environ.get("LD_LIBRARY_PATH", ""):
+    os.environ["LD_LIBRARY_PATH"] = (
+        f"{_eb}/lib:{os.environ.get('LD_LIBRARY_PATH', '')}"
+    )
 
 
 def reproject_one_file(nc_path, ref_profile, ref_transform, ref_crs,
