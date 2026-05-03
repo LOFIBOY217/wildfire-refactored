@@ -28,7 +28,7 @@
 set -uo pipefail
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
-module load StdEnv/2023 gcc/12.3 python/3.11.5 proj/9.4.1
+module load StdEnv/2023 gcc/12.3 python/3.11.5 proj/9.4.1 eccodes/2.31.0
 cd "$SCRATCH/wildfire-refactored"
 export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
 export PROJ_DATA=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Compiler/gcccore/proj/9.4.1/share/proj
