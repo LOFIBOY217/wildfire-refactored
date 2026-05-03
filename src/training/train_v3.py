@@ -962,6 +962,13 @@ def main():
                          "10y ago weighted exp(-1)=0.37 vs current year weighted 1.0.")
     ap.add_argument("--recency_base_year", type=int, default=2024,
                     help="Reference year for recency weighting (weight peaks at base_year).")
+    ap.add_argument("--climate_similarity_csv", type=str, default=None,
+                    help="Path to a CSV with columns 'year,weight' giving "
+                         "per-year sample weights based on climate similarity "
+                         "to the validation period (e.g. ENSO ONI distance). "
+                         "If set, OVERRIDES --recency_tau: per-year weights "
+                         "come from the CSV instead of exp(-(base-year)/tau). "
+                         "Build with scripts/build_climate_similarity_weights.py.")
 
     # 2026-05-01: mid-epoch validation (calibration-vs-rank tradeoff hypothesis test)
     # Evaluates model on val_lift_sample_wins every N batches, appending to CSV.
@@ -2450,17 +2457,48 @@ def main():
         s2s_full_cache=s2s_full_cache,
     )
 
-    # ── Recency-weighted sampling (2026-04-30) ──────────────────────────
-    # Pre-compute per-sample weight = exp(-(base_year - window_year) / tau)
-    # Wrapped dataset returns (x_enc, x_dec, y, patch_id, weight) when tau > 0.
-    # Loss applies the weight per-sample.
+    # ── Per-year sample weighting ───────────────────────────────────────
+    # Two strategies (mutually exclusive, climate_similarity_csv takes
+    # precedence if both set):
+    #   (A) --recency_tau:        weight = exp(-(base_year - year) / tau)
+    #   (B) --climate_similarity_csv: weight = ENSO/PDO similarity to val period
+    # Wrapped dataset returns (x_enc, x_dec, y, patch_id, weight); loss
+    # applies the weight per-sample. Mean weight is normalised to 1.0 so
+    # loss scale is preserved.
     sample_weights_arr = None
-    if args.recency_tau > 0:
-        # window_dates are str like "2018-08-15" — extract year
-        win_years = np.array([int(d[:4]) for d in train_window_dates_eff], dtype=np.float32)
-        # sample weight indexed by all_pairs_eff[:, 0] (= win_idx)
+    win_years = np.array([int(d[:4]) for d in train_window_dates_eff], dtype=np.float32)
+
+    if args.climate_similarity_csv:
+        # (B) Climate-similarity weighting
+        import csv as _csv
+        year_to_weight = {}
+        with open(args.climate_similarity_csv, "r") as _f:
+            for row in _csv.DictReader(_f):
+                year_to_weight[int(row["year"])] = float(row["weight"])
+        # Map every training window year to its weight; fall back to 1.0
+        # for any year missing from the CSV (with a warning).
+        win_weights = np.ones_like(win_years, dtype=np.float32)
+        _missing = set()
+        for i, y in enumerate(win_years):
+            yi = int(y)
+            if yi in year_to_weight:
+                win_weights[i] = year_to_weight[yi]
+            else:
+                _missing.add(yi)
+        if _missing:
+            print(f"  [climate-sim] WARNING: years missing from CSV "
+                  f"(default 1.0): {sorted(_missing)}")
+        # Re-normalize over actual windows so mean = 1
+        win_weights = win_weights / max(float(win_weights.mean()), 1e-6)
+        sample_weights_arr = win_weights[all_pairs_eff[:, 0]]
+        print(f"  [climate-sim] CSV: {args.climate_similarity_csv}")
+        print(f"  [climate-sim] window years: {int(win_years.min())}-{int(win_years.max())}")
+        print(f"  [climate-sim] weight range: {win_weights.min():.3f}-{win_weights.max():.3f}")
+        print(f"  [climate-sim] sample weights mean={sample_weights_arr.mean():.3f} "
+              f"(should be 1.0 by normalization)")
+    elif args.recency_tau > 0:
+        # (A) Recency weighting
         win_weights = np.exp(-(args.recency_base_year - win_years) / args.recency_tau)
-        # Normalize so mean(w) = 1 (preserves loss scale)
         win_weights = win_weights / win_weights.mean()
         sample_weights_arr = win_weights[all_pairs_eff[:, 0]]
         print(f"  [recency] tau={args.recency_tau}, base_year={args.recency_base_year}")
@@ -2469,19 +2507,21 @@ def main():
         print(f"  [recency] sample weights mean={sample_weights_arr.mean():.3f} "
               f"(should be 1.0 by normalization)")
 
-        # Wrapper that adds sample_weight as 5th element
+    # Apply weighted-sample wrapper if any per-year weights are active
+    # (climate-similarity OR recency).
+    if sample_weights_arr is not None:
         from torch.utils.data import Dataset as _TorchDataset
         _base_train_ds = train_ds
         _sw_tensor = torch.from_numpy(sample_weights_arr).float()
 
-        class _RecencyWeightedDS(_TorchDataset):
+        class _PerYearWeightedDS(_TorchDataset):
             def __len__(self):
                 return len(_base_train_ds)
             def __getitem__(self, idx):
                 out = _base_train_ds[idx]   # 4-tuple
                 return out + (_sw_tensor[idx],)
 
-        train_ds = _RecencyWeightedDS()
+        train_ds = _PerYearWeightedDS()
 
     _prefetch = 4 if args.num_workers > 0 else None
     _persistent = args.num_workers > 0
@@ -2713,9 +2753,13 @@ def main():
         train_loss = 0.0
         train_samples = 0
 
+        # Per-year sample weighting active if either recency or
+        # climate-similarity is set (both produce 5-tuple batches).
+        _has_sample_weight = (args.recency_tau > 0) or bool(args.climate_similarity_csv)
         for batch_idx, batch in enumerate(train_dl):
-            # Backward-compatible: 4-tuple (no recency) or 5-tuple (with recency weight)
-            if args.recency_tau > 0:
+            # Backward-compatible: 4-tuple (uniform weights) or 5-tuple
+            # (per-year sample weight as 5th element)
+            if _has_sample_weight:
                 xb_enc, xb_dec, yb, patch_ids, sw = batch
                 sw = sw.to(device, dtype=torch.float32, non_blocking=True)
             else:
