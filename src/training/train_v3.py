@@ -962,6 +962,15 @@ def main():
                          "10y ago weighted exp(-1)=0.37 vs current year weighted 1.0.")
     ap.add_argument("--recency_base_year", type=int, default=2024,
                     help="Reference year for recency weighting (weight peaks at base_year).")
+    ap.add_argument("--clim_blend_alpha", type=float, default=0.0,
+                    help="If > 0, add α × log(fire_clim) as a fixed bias to "
+                         "the model's logits at every (patch, lead-day, "
+                         "sub-pixel). The model only needs to learn a "
+                         "RESIDUAL on top of the climatological prior — "
+                         "directly attacks the Recall@budget gap to "
+                         "climatology baseline. α=0 disables; α=1 means full "
+                         "log-clim added; typical 0.3–1.0. Auto-enables "
+                         "--use_patch_embed (needs patch_ids passed).")
     ap.add_argument("--climate_similarity_csv", type=str, default=None,
                     help="Path to a CSV with columns 'year,weight' giving "
                          "per-year sample weights based on climate similarity "
@@ -1134,6 +1143,14 @@ def main():
     args = ap.parse_args()
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+
+    # Climatology blending requires patch_ids passed everywhere → force
+    # --use_patch_embed (adds learned spatial embeddings as a side effect;
+    # this is desired since the model needs to know "which patch" to add
+    # the climatology bias to).
+    if args.clim_blend_alpha > 0 and not args.use_patch_embed:
+        print(f"[clim_blend] auto-enabling --use_patch_embed (alpha={args.clim_blend_alpha})")
+        args.use_patch_embed = True
 
     # ── W&B init (optional) ─────────────────────────────────────────────
     _wandb = None
@@ -2581,6 +2598,45 @@ def main():
             dropout=args.dropout,
         ).to(device)
         print(f"  [BASELINE] model_type={args.model_type}")
+
+    # ── Climatology blending wrapper ────────────────────────────────────
+    # Adds α × log(fire_clim) as a fixed bias to logits at every
+    # (patch, lead-day, sub-pixel). Model only learns the residual.
+    if args.clim_blend_alpha > 0:
+        if "fire_clim" not in static_arrays:
+            print("  [clim_blend] WARNING: fire_clim not in static_arrays; "
+                  "skipping blend.")
+        else:
+            _fc = static_arrays["fire_clim"][:Hc, :Wc]
+            _fc_patched = _patchify_frame(_fc[:, :, np.newaxis], P)  # (n_patches, P*P)
+            _eps = 1e-6
+            _clim_logit_np = np.log(np.maximum(_fc_patched, _eps)).astype(np.float32)
+            # Center to zero mean so α is interpretable; baseline rate
+            # still encoded by model bias.
+            _clim_logit_np = _clim_logit_np - _clim_logit_np.mean()
+            _clim_logit_buf = torch.from_numpy(_clim_logit_np)
+            _alpha_blend = float(args.clim_blend_alpha)
+            _base_for_blend = model
+
+            class _ClimBlendModel(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    self.base = _base_for_blend
+                    self.register_buffer("clim_logit", _clim_logit_buf)
+                    self.alpha = _alpha_blend
+
+                def forward(self, encoder_input, decoder_input, patch_ids=None):
+                    out = self.base(encoder_input, decoder_input, patch_ids)
+                    if patch_ids is not None and self.alpha != 0:
+                        bias = self.clim_logit[patch_ids]   # (B, P*P)
+                        out = out + self.alpha * bias.unsqueeze(1)
+                    return out
+
+            model = _ClimBlendModel().to(device)
+            print(f"  [clim_blend] alpha={_alpha_blend}, "
+                  f"clim_logit shape={_clim_logit_np.shape}, "
+                  f"|clim_logit|: min={_clim_logit_np.min():.2f} "
+                  f"max={_clim_logit_np.max():.2f}")
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Parameters: {n_params:,}")
