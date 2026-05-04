@@ -290,3 +290,47 @@ copy_back() {
     ts "  Total copy-back time: $((SECONDS - t0))s"
     ts "=== COPY BACK COMPLETE ==="
 }
+
+# ============================================================
+# Strict CUDA probe — tries to actually allocate a tensor on
+# the GPU. `torch.cuda.is_available()` only checks the driver
+# but not whether the GPU is usable; this catches the
+# 'CUDA-capable device(s) is/are busy or unavailable' failure
+# that has cost us several 30-72 minute SSD-copy wastes.
+#
+# Call BEFORE the slow SSD copy. Exits 1 if GPU is bad so the
+# job fails fast and SLURM can re-queue / a new node is given.
+#
+# Usage:
+#   cuda_probe || exit 1
+# ============================================================
+cuda_probe() {
+    ts "=== CUDA PROBE (allocate-tensor smoke test) ==="
+    ${PYTHON:-python} - <<'EOF' || return 1
+import sys, torch
+try:
+    if not torch.cuda.is_available():
+        print("[CUDA PROBE] cuda.is_available() = False")
+        sys.exit(1)
+    print(f"[CUDA PROBE] CUDA: {torch.cuda.is_available()}, "
+          f"device count: {torch.cuda.device_count()}, "
+          f"device 0: {torch.cuda.get_device_name(0)}")
+    # Real allocation attempt
+    x = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32).to("cuda:0")
+    y = (x * 2).sum().item()
+    assert abs(y - 12.0) < 1e-5, f"GPU compute wrong: {y}"
+    del x
+    torch.cuda.empty_cache()
+    print("[CUDA PROBE] OK — GPU usable")
+except Exception as e:
+    print(f"[CUDA PROBE] FAILED: {type(e).__name__}: {e}")
+    sys.exit(1)
+EOF
+    local rc=$?
+    if [ $rc -ne 0 ]; then
+        ts "=== CUDA PROBE FAILED — bad GPU node, exiting fast ==="
+        return 1
+    fi
+    ts "=== CUDA PROBE PASSED ==="
+    return 0
+}

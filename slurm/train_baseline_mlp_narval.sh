@@ -36,7 +36,7 @@ export WANDB_DIR=$SCRATCH/wandb_offline
 
 source slurm/lib_copy_cache.sh
 copy_venv $SCRATCH/venv-wildfire
-$PYTHON -c "import torch; print('torch:', torch.__version__, '| CUDA:', torch.cuda.is_available())" || exit 1
+cuda_probe || exit 1
 
 LOCAL_CACHE=$SLURM_TMPDIR/cache
 mkdir -p "$LOCAL_CACHE"
