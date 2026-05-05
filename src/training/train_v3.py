@@ -140,6 +140,7 @@ V3_CHANNEL_DEFS = {
     "slope":      {"type": "static",  "required": False},
     "elevation":  {"type": "static",  "required": False},
     "aspect":     {"type": "static",  "required": False},
+    "lightning_climatology": {"type": "static", "required": False},
     "burn_age":   {"type": "annual",  "required": False},
     "burn_count": {"type": "annual",  "required": False},
     "u10":        {"type": "daily",   "required": False},
@@ -1506,6 +1507,15 @@ def main():
         # need 2 channels — defer.)
         aspect_path = os.path.join(terrain_dir, "aspect.tif")
         static_arrays["aspect"] = _load_static_channel(aspect_path, H, W, "aspect")
+    if "lightning_climatology" in CHANNEL_NAMES:
+        # Per-pixel mean annual lightning strikes (log1p), built from
+        # GLM 2018-onwards by scripts/build_lightning_climatology.py.
+        # Lightning hot-spots are stable over decades, so a static prior
+        # is a valid first-order proxy for the dominant boreal ignition
+        # cause (~60% of fires).
+        lc_path = "data/lightning_climatology.tif"
+        static_arrays["lightning_climatology"] = _load_static_channel(
+            lc_path, H, W, "lightning_climatology")
 
     # Train/val split index
     train_end_idx = next(
