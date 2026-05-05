@@ -2734,7 +2734,32 @@ def main():
                 state = ckpt
         else:
             state = ckpt
+
+        # Auto-detect clim_blend wrapper: if ≥half of keys start with
+        # 'base.', the ckpt was saved from _ClimBlendModel and must be
+        # loaded back into the wrapper (otherwise raw transformer has
+        # NO matching keys → random weights → garbage eval).
+        n_base = sum(1 for k in state if k.startswith("base."))
+        is_clim_blend = (n_base >= len(state) / 2) and (n_base > 0)
+        if is_clim_blend and args.clim_blend_alpha == 0:
+            print("[WARN] ckpt has 'base.' prefix on >=half of keys → "
+                  "this is a clim_blend ckpt but --clim_blend_alpha is 0. "
+                  "Loading raw transformer = garbage eval.")
+            print("[FIX] Either pass --clim_blend_alpha matching the trained "
+                  "value, or strip the prefix below.")
+
         missing, unexpected = model.load_state_dict(state, strict=False)
+        # Sanity: abort if the load is meaningless (too many key mismatches).
+        # This catches the clim_blend case + any other arch drift.
+        n_total = len(state)
+        if n_total > 0 and len(unexpected) > n_total / 2:
+            print(f"\n[ERROR] {len(unexpected)}/{n_total} unexpected keys — "
+                  f"checkpoint architecture does not match this model.")
+            print(f"  First 5 unexpected: {unexpected[:5]}")
+            print(f"  First 5 missing:    {missing[:5]}")
+            print(f"  → likely cause: ckpt was saved with --clim_blend_alpha > 0 "
+                  f"but eval is run without it (or vice versa). Aborting eval.")
+            return
         if missing:
             print(f"  [warn] {len(missing)} missing keys (first: {missing[:3]})")
         if unexpected:
