@@ -63,7 +63,12 @@ echo "  done in $((SECONDS - t0))s"
 
 CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,deep_soil,precip_def,NDVI,population,slope,burn_age,burn_count"
 SUFFIX=${SUFFIX:-}
-RUN_NAME="v3_13ch_enc${ENC}_${RUN_TAG}${SUFFIX}"
+MODEL_TYPE=${MODEL_TYPE:-transformer}
+if [ -n "${RUN_NAME_OVERRIDE:-}" ]; then
+    RUN_NAME="$RUN_NAME_OVERRIDE"
+else
+    RUN_NAME="v3_13ch_enc${ENC}_${RUN_TAG}${SUFFIX}"
+fi
 CKPT="$SCRATCH/wildfire-refactored/checkpoints/$RUN_NAME/best_model.pt"
 SCORES_DIR="$SCRATCH/wildfire-refactored/outputs/window_scores_full/$RUN_NAME"
 
@@ -83,6 +88,7 @@ $PYTHON -u -m src.training.train_v3 \
     --run_name "${RUN_NAME}_eval_full" \
     --eval_checkpoint "$CKPT" \
     --save_window_scores_dir "$SCORES_DIR" \
+    --model_type "$MODEL_TYPE" \
     --full_val \
     --data_start "$DATA_START" --pred_start 2022-05-01 --pred_end 2025-10-31 \
     --channels "$CHANNELS" --in_days "$ENC" \
