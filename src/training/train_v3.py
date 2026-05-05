@@ -138,6 +138,8 @@ V3_CHANNEL_DEFS = {
     "deep_soil":  {"type": "daily",   "required": False},
     "precip_def": {"type": "computed","required": False},
     "slope":      {"type": "static",  "required": False},
+    "elevation":  {"type": "static",  "required": False},
+    "aspect":     {"type": "static",  "required": False},
     "burn_age":   {"type": "annual",  "required": False},
     "burn_count": {"type": "annual",  "required": False},
     "u10":        {"type": "daily",   "required": False},
@@ -1491,6 +1493,19 @@ def main():
     if "slope" in CHANNEL_NAMES:
         slope_path = os.path.join(terrain_dir, "slope.tif")
         static_arrays["slope"] = _load_static_channel(slope_path, H, W, "slope")
+    if "elevation" in CHANNEL_NAMES:
+        # CDEM-derived DEM altitude (metres). Distinct from 'slope' which
+        # is the gradient magnitude — elevation captures the absolute
+        # terrain context (boreal valley vs mountain plateau).
+        elev_path = os.path.join(terrain_dir, "dem_cdem.tif")
+        static_arrays["elevation"] = _load_static_channel(elev_path, H, W, "elevation")
+    if "aspect" in CHANNEL_NAMES:
+        # Slope direction in degrees [0, 360). Important for solar
+        # exposure / drying. Encoded as raw degrees here; downstream
+        # normalisation makes it usable. (For sin/cos encoding, would
+        # need 2 channels — defer.)
+        aspect_path = os.path.join(terrain_dir, "aspect.tif")
+        static_arrays["aspect"] = _load_static_channel(aspect_path, H, W, "aspect")
 
     # Train/val split index
     train_end_idx = next(
