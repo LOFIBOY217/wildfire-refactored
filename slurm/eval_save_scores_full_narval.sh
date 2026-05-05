@@ -75,10 +75,21 @@ CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
 #    --model_type to train_v3 for proper architecture instantiation.
 SUFFIX=${SUFFIX:-}
 MODEL_TYPE=${MODEL_TYPE:-transformer}
+# Optional: explicit α for clim_blend ckpts (detected from SUFFIX too).
+CLIM_BLEND_ALPHA=${CLIM_BLEND_ALPHA:-0}
 if [ -n "${RUN_NAME_OVERRIDE:-}" ]; then
     RUN_NAME="$RUN_NAME_OVERRIDE"
 else
     RUN_NAME="v3_9ch_enc${ENC}_${RUN_TAG}${SUFFIX}"
+fi
+# Auto-extract α from SUFFIX (e.g. _climblend_a0.3 → 0.3) so user only
+# needs to specify SUFFIX. Override via CLIM_BLEND_ALPHA env if needed.
+if [ "$CLIM_BLEND_ALPHA" = "0" ]; then
+    case "$RUN_NAME" in
+        *climblend_a0.3*) CLIM_BLEND_ALPHA=0.3 ;;
+        *climblend_a0.5*) CLIM_BLEND_ALPHA=0.5 ;;
+        *climblend_a1.0*) CLIM_BLEND_ALPHA=1.0 ;;
+    esac
 fi
 CKPT="$SCRATCH/wildfire-refactored/checkpoints/$RUN_NAME/best_model.pt"
 SCORES_DIR="$SCRATCH/wildfire-refactored/outputs/window_scores_full/$RUN_NAME"
@@ -101,6 +112,7 @@ $PYTHON -u -m src.training.train_v3 \
     --eval_checkpoint "$CKPT" \
     --save_window_scores_dir "$SCORES_DIR" \
     --model_type "$MODEL_TYPE" \
+    --clim_blend_alpha "$CLIM_BLEND_ALPHA" \
     --full_val \
     --data_start "$DATA_START" --pred_start 2022-05-01 --pred_end 2025-10-31 \
     --channels "$CHANNELS" --in_days "$ENC" \
