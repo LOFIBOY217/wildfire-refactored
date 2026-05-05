@@ -2,7 +2,7 @@
 #SBATCH --job-name=wf-mlp-baseline
 #SBATCH --gpus-per-node=1
 #SBATCH --time=0-12:00:00
-#SBATCH --mem=480G
+#SBATCH --mem=400G
 #SBATCH --output=/scratch/jiaqi217/logs/mlp_baseline_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/mlp_baseline_%j.err
 #SBATCH --account=def-inghaw
@@ -43,8 +43,8 @@ mkdir -p "$LOCAL_CACHE"
 copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
 
 CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
-CACHE_DIR_LUSTRE="$SCRATCH/meteo_cache/v3_9ch_2000"
-RUN_NAME="baseline_mlp_22y_2000_9ch"
+CACHE_DIR_LUSTRE="$SCRATCH/meteo_cache/v3_9ch_12y_2014"
+RUN_NAME="baseline_mlp_12y_2014_9ch"
 
 LOCAL_METEO="$LOCAL_CACHE/meteo"
 mkdir -p "$LOCAL_METEO"
@@ -66,7 +66,7 @@ $PYTHON -u -m src.training.train_v3 \
     --config configs/paths_narval.yaml \
     --run_name "$RUN_NAME" \
     --model_type mlp \
-    --data_start 2000-05-01 --pred_start 2022-05-01 --pred_end 2025-10-31 \
+    --data_start 2014-05-01 --pred_start 2022-05-01 --pred_end 2025-10-31 \
     --channels "$CHANNELS" --in_days 21 \
     --decoder s2s_legacy --s2s_cache "$LOCAL_CACHE/s2s_decoder_cache.dat" --s2s_max_issue_lag 3 \
     --loss_fn focal --focal_alpha 0.25 --focal_gamma 2.0 \
@@ -80,7 +80,7 @@ $PYTHON -u -m src.training.train_v3 \
     --label_fusion --nfdb_min_size_ha 1.0 \
     --fire_clim_dir data/fire_clim_annual_nbac \
     --wandb_project wildfire-s2s \
-    --wandb_tags "baseline,mlp,9ch,22y_2000" \
+    --wandb_tags "baseline,mlp,9ch,12y_2014" \
     --save_per_window_json "$SCRATCH/wildfire-refactored/outputs/${RUN_NAME}_per_window.json"
 
 PY_EXIT=$?
