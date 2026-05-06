@@ -974,6 +974,16 @@ def main():
                          "climatology baseline. α=0 disables; α=1 means full "
                          "log-clim added; typical 0.3–1.0. Auto-enables "
                          "--use_patch_embed (needs patch_ids passed).")
+    ap.add_argument("--anomaly_weight_pow", type=float, default=0.0,
+                    help="If > 0, multiply each (window, patch) sample's loss "
+                         "weight by 1/(climatology_at_patch + 1e-3)^pow. "
+                         "Forces the model to learn residual fire signal "
+                         "above the climatological prior, attacking the "
+                         "dynamic-skill axis directly. pow=1.0 = inverse "
+                         "weighting; pow=0.5 = softer; pow=2.0 = aggressive. "
+                         "Composes multiplicatively with --recency_tau or "
+                         "--climate_similarity_csv (per-year weight × "
+                         "per-patch weight).")
     ap.add_argument("--climate_similarity_csv", type=str, default=None,
                     help="Path to a CSV with columns 'year,weight' giving "
                          "per-year sample weights based on climate similarity "
@@ -2549,8 +2559,36 @@ def main():
         print(f"  [recency] sample weights mean={sample_weights_arr.mean():.3f} "
               f"(should be 1.0 by normalization)")
 
+    # ── Anomaly-aware loss weighting (per-patch) ───────────────────────
+    # Compose multiplicatively with per-year weight (or initialise to 1
+    # if no per-year weighting active). Each sample's weight is now
+    #   w_year(window) × w_anomaly(patch)
+    # where w_anomaly(patch) ∝ 1 / (clim[patch] + ε)^pow, normalised so
+    # mean(w_anomaly) = 1. Patches in low-climatology zones (where fire
+    # is "surprising") get higher weight, forcing the model to learn the
+    # residual / dynamic signal beyond the climatological prior.
+    if args.anomaly_weight_pow > 0:
+        eps_clim = 1e-3
+        # fire_clim_per_patch is (n_patches,) — already computed at line ~2365
+        patch_w = 1.0 / np.power(fire_clim_per_patch.astype(np.float64) + eps_clim,
+                                 args.anomaly_weight_pow)
+        patch_w = patch_w / patch_w.mean()   # normalise mean → 1
+        print(f"  [anomaly_w] pow={args.anomaly_weight_pow}  ε={eps_clim}")
+        print(f"  [anomaly_w] per-patch weight range: "
+              f"{patch_w.min():.3f} – {patch_w.max():.3f}")
+        # Compose with existing per-year weights (or start fresh)
+        if sample_weights_arr is None:
+            sample_weights_arr = patch_w[all_pairs_eff[:, 1]].astype(np.float32)
+        else:
+            sample_weights_arr = (sample_weights_arr.astype(np.float64)
+                                  * patch_w[all_pairs_eff[:, 1]]).astype(np.float32)
+            sample_weights_arr /= sample_weights_arr.mean()    # re-normalise
+        print(f"  [anomaly_w] composed sample weights mean="
+              f"{sample_weights_arr.mean():.3f}  range="
+              f"{sample_weights_arr.min():.3f}–{sample_weights_arr.max():.3f}")
+
     # Apply weighted-sample wrapper if any per-year weights are active
-    # (climate-similarity OR recency).
+    # (climate-similarity OR recency OR anomaly-aware).
     if sample_weights_arr is not None:
         from torch.utils.data import Dataset as _TorchDataset
         _base_train_ds = train_ds
@@ -2859,9 +2897,14 @@ def main():
         train_loss = 0.0
         train_samples = 0
 
-        # Per-year sample weighting active if either recency or
-        # climate-similarity is set (both produce 5-tuple batches).
-        _has_sample_weight = (args.recency_tau > 0) or bool(args.climate_similarity_csv)
+        # Per-sample weighting active if any of: recency, climate-similarity,
+        # or anomaly-aware (per-patch) loss weighting (all produce 5-tuple
+        # batches via the same _PerYearWeightedDS wrapper).
+        _has_sample_weight = (
+            args.recency_tau > 0
+            or bool(args.climate_similarity_csv)
+            or args.anomaly_weight_pow > 0
+        )
         for batch_idx, batch in enumerate(train_dl):
             # Backward-compatible: 4-tuple (uniform weights) or 5-tuple
             # (per-year sample weight as 5th element)
