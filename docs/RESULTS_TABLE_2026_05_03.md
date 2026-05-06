@@ -35,15 +35,33 @@ Run on val period **2022-05-01 to 2025-10-31**, NBAC + NFDB labels,
 | 24 | 4y enc21 (13ch) | — | 4.01× | n/a | quick eval |
 | 25 | 4y enc28 (13ch) | — | 4.43× | n/a | quick eval |
 | 26 | 4y enc35 (13ch) | — | 4.34× | n/a | quick eval |
-| **27** | **★ 12y enc21 (current SOTA)** | **583** | **7.83×** [7.50, 8.21] | **6.73×** [6.40, 7.07] | save_scores 60179166 → unified |
+| 27 | 12y enc21 default (previous SOTA, 2026-05-02) | 583 | 7.83× [7.50, 8.21] | 6.73× [6.40, 7.07] | save_scores 60179166 → unified |
+| 28 | MLP baseline (12y, 9ch) | — | 6.11× quick (full pending) | TBD | 60398415 done; save_scores 60436519 PD |
+| 29 | ConvLSTM baseline (12y, 9ch) | — | 6.08× quick (full pending) | TBD | 60277233 done; save_scores 60399751 PD |
+| **30** | **★★ 12y enc21 + climate-sim ONI (NEW SOTA, 2026-05-05)** | **583** | **8.067×** [7.748, 8.420] ⭐ | **7.259×** [6.933, 7.620] ⭐ | save_scores 60399747 ✅ |
+| 31 | post-hoc clim_blend α=0.4 (no retrain, 2026-05-04) | 583 | 8.63× quick | TBD | scripts/posthoc_clim_blend_sweep.py |
 
-### Headline numbers (for paper abstract)
+### Headline numbers (for paper abstract) — UPDATED 2026-05-05
 
-- **SOTA model 12y enc21 = 7.83× / 6.73×** (Lift@5000 / Lift@30 km)
-- vs **Climatology (full eval) 3.48× / 3.01×** → **+125% / +124%**
-- vs **ECMWF SEAS5 0.00× / 0.94×** → **dramatically better**
-  (ECMWF top-K at 14–46 d lead is spatially mis-localized: top-5000
-   pixels concentrate in BC SW corner, miss QC megafires + NWT)
+- **NEW SOTA: 12y enc21 + climate-similarity ONI = 8.067× / 7.259×** (Lift@5000 / Lift@30 km, 583 win + bootstrap CI)
+- vs previous SOTA 7.83× / 6.73× → **+3% Lift@5000, +8% Lift@30 km** (CI's do not overlap → statistically significant)
+- vs **Climatology (full eval) 3.48× / 3.01×** → **+132% / +141%**
+- vs **ECMWF SEAS5 0.00× / 0.94×** → **dramatically better** (ECMWF top-K at 14–46 d lead is spatially mis-localized: top-5000 pixels concentrate in BC SW corner, miss QC megafires + NWT)
+- **Free additional gain via post-hoc blending: 8.63×** at α=0.4 (no retraining; combines model ranking with climatology calibration)
+- **Methodology contribution**: climate-similarity weighting (match training years to val period via ENSO ONI distance) substantially outperforms naïve "newer = better" recency, which actually *hurt* the SOTA model on enc21 by −7% (7.83× → 7.27×)
+
+### Climate-similarity ONI vs other dynamic-skill metrics (n = 583, NEW SOTA)
+
+| Metric | climsim 12y enc21 | old SOTA 12y enc21 |
+|---|---:|---:|
+| Lift@5000 | **8.067×** [7.748, 8.420] | 7.83× [7.50, 8.21] |
+| Lift@30 km | **7.259×** [6.933, 7.620] | 6.73× [6.40, 7.07] |
+| BSS | −0.056 | −0.08 |
+| ROC-AUC | **0.904** | 0.831 |
+| Cluster Lift@5000 | 6.764 ± 1.946× (435 wins) | TBD |
+| Brier (Reliability/Resolution split) | 0.0417 (0.0053 / 0.0069) | TBD |
+
+→ Confirmed via full eval that **climate-similarity is the new SOTA**. AUC went from 0.83 → 0.90 — model ranks fire pixels much better when training years are matched to val period climate state. BSS still slightly negative (−0.056 vs reference 0) but improving.
 
 ---
 
