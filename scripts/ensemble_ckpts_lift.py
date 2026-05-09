@@ -82,6 +82,13 @@ def main():
     ap.add_argument("--n_cols", type=int, default=169)
     ap.add_argument("--patch_size", type=int, default=16)
     ap.add_argument("--k", type=int, default=5000)
+    ap.add_argument("--ensemble_mode", choices=["prob_mean", "logit_mean"],
+                    default="prob_mean",
+                    help="prob_mean: arithmetic mean of probs (smooths peaks). "
+                         "logit_mean: arithmetic mean of logit(p) — geometric "
+                         "mean of odds, preserves sharpness for top-K ranking.")
+    ap.add_argument("--logit_eps", type=float, default=1e-6,
+                    help="Clip prob to [eps, 1-eps] before logit (avoid inf).")
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
@@ -102,24 +109,38 @@ def main():
     NR, NC, P = args.n_rows, args.n_cols, args.patch_size
 
     per_window = []
+    eps = args.logit_eps
     for di, date in enumerate(common_dates):
-        # Load + average prob_agg across all ckpts (logit-mean, not prob-mean,
-        # using log-of-prob since outputs are sigmoid'd; we approximate by
-        # averaging the prob — close enough for top-K rank purposes).
-        prob_sum = None
+        # Load + aggregate scores across all ckpts.
+        # prob_mean : arithmetic mean of sigmoid'd probs   (smooths sharp peaks
+        #             — good Lift@5000, hurts 30km max-pool because the per-
+        #             ckpt high-confidence pixels get diluted)
+        # logit_mean: arithmetic mean of logit(p) = log(p/(1-p))
+        #             == geometric mean of odds. Score for ranking is the
+        #             mean-logit itself (sigmoid is monotonic so we skip it).
+        #             This preserves sharpness — a pixel that is "very high"
+        #             in MOST ckpts ends up high; one outlier high doesn't
+        #             dominate as much as in prob_mean.
+        score_sum = None
         label = None
         for sd, files in files_by_dir.items():
             npz = np.load(files[date])
             p = npz["prob_agg"].astype(np.float32)
-            if prob_sum is None:
-                prob_sum = p.copy()
+            if args.ensemble_mode == "logit_mean":
+                p = np.clip(p, eps, 1.0 - eps)
+                s = np.log(p / (1.0 - p))   # logit
+            else:
+                s = p
+            if score_sum is None:
+                score_sum = s.copy()
                 label = npz["label_agg"]
             else:
-                prob_sum += p
-        prob_avg = prob_sum / len(files_by_dir)
+                score_sum += s
+        score_avg = score_sum / len(files_by_dir)
 
-        # 2D reshape
-        score_2d = patches_to_2d(prob_avg, NR, NC, P)
+        # 2D reshape — for ranking, logit and prob give same top-K, so we can
+        # feed the avg directly into lift_at_k.
+        score_2d = patches_to_2d(score_avg, NR, NC, P)
         label_2d = (patches_to_2d(label, NR, NC, P) > 0).astype(np.uint8)
 
         if label_2d.sum() == 0:
@@ -143,7 +164,8 @@ def main():
     print(f"  Lift@{args.k}    : {m5:.3f}× [{lo5:.3f}, {hi5:.3f}]")
     print(f"  Lift@30 km    : {m30:.3f}× [{lo30:.3f}, {hi30:.3f}]")
 
-    out = {"n_ckpts": len(args.score_dirs), "ckpt_dirs": args.score_dirs,
+    out = {"ensemble_mode": args.ensemble_mode,
+           "n_ckpts": len(args.score_dirs), "ckpt_dirs": args.score_dirs,
            "n_windows": len(per_window),
            "lift_5000": {"mean": m5, "ci_lo": lo5, "ci_hi": hi5},
            "lift_30km": {"mean": m30, "ci_lo": lo30, "ci_hi": hi30},
