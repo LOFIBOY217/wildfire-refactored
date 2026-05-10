@@ -61,5 +61,7 @@ $PYTHON -u -m src.training.train_v3 \
     --label_fusion --nfdb_min_size_ha 1.0 \
     --fire_clim_dir data/fire_clim_annual_nbac
 
-echo "=== Done $(date) exit=$? ==="
+PY_EXIT=$?
+echo "=== Done $(date) exit=$PY_EXIT ==="
 ls -lh "$CACHE_DIR"
+exit $PY_EXIT

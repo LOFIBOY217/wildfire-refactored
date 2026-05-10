@@ -59,4 +59,6 @@ $PYTHON -u -m scripts.ensemble_ckpts_lift \
     --k 5000 \
     --output "$OUT"
 
-echo "=== Done $(date) exit=$? ==="
+PY_EXIT=$?
+echo "=== Done $(date) exit=$PY_EXIT ==="
+exit $PY_EXIT

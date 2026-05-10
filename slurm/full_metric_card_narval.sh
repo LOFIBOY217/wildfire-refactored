@@ -64,4 +64,6 @@ case "$SOURCE" in
         ;;
 esac
 
-echo "=== Done $(date) exit=$? ==="
+PY_EXIT=$?
+echo "=== Done $(date) exit=$PY_EXIT ==="
+exit $PY_EXIT

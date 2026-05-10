@@ -272,12 +272,19 @@ def main():
                 if p:
                     out[t_idx, :, :, ch_idx] = _read_tif(p, H, W)
             elif ch_name == "fire_clim":
+                # BUG FIX 2026-05-10: mirror train_v3.py fix at line ~2002.
+                # Old code used min(... key=abs(y-yr)) which could pick a
+                # FUTURE year (e.g. for yr=2022 picks 2023 if available)
+                # → leakage of future fires into encoder cache.
                 yr = cur_date.year
                 if yr in fire_clim_arrays:
                     out[t_idx, :, :, ch_idx] = fire_clim_arrays[yr]
                 elif fire_clim_arrays:
-                    nearest = min(fire_clim_arrays.keys(), key=lambda y: abs(y - yr))
-                    out[t_idx, :, :, ch_idx] = fire_clim_arrays[nearest]
+                    prior_years = [y for y in fire_clim_arrays.keys() if y <= yr]
+                    if prior_years:
+                        nearest = max(prior_years)  # greatest year ≤ target
+                        out[t_idx, :, :, ch_idx] = fire_clim_arrays[nearest]
+                    # else: no prior data → leave as 0 (default of `out` buffer)
             elif ch_name == "NDVI":
                 out[t_idx, :, :, ch_idx] = _interpolate_ndvi(
                     cur_date, ndvi_index, ndvi_cache, H, W)

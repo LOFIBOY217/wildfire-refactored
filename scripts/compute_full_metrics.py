@@ -126,10 +126,13 @@ def mcc_at_k(score_flat, label_flat, k):
     order = np.argsort(score_flat)[::-1]
     pred = np.zeros(n, dtype=np.uint8)
     pred[order[:k]] = 1
-    tp = int(((pred == 1) & (label_flat == 1)).sum())
-    tn = int(((pred == 0) & (label_flat == 0)).sum())
-    fp = int(((pred == 1) & (label_flat == 0)).sum())
-    fn = int(((pred == 0) & (label_flat == 1)).sum())
+    # Cast to float64 — Python int multiplication overflows int64 here
+    # (tn ~ 6M for all-Canada → product ~ 1e26). np.sqrt also fails on
+    # Python int. Same fix as compute_full_metric_card.py / compute_unified_metrics.py.
+    tp = float(((pred == 1) & (label_flat == 1)).sum())
+    tn = float(((pred == 0) & (label_flat == 0)).sum())
+    fp = float(((pred == 1) & (label_flat == 0)).sum())
+    fn = float(((pred == 0) & (label_flat == 1)).sum())
     den = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
     if den == 0:
         return 0.0

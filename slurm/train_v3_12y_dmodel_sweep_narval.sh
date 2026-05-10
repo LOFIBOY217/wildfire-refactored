@@ -85,4 +85,6 @@ $PYTHON -u -m src.training.train_v3 \
     --wandb_tags "9ch,enc${ENC},12y_2014,12y,climsim,dm${D_MODEL}" \
     --save_per_window_json "$SCRATCH/wildfire-refactored/outputs/${RUN_NAME}_per_window.json"
 
-echo "=== Done $(date) exit=$? ==="
+PY_EXIT=$?
+echo "=== Done $(date) exit=$PY_EXIT ==="
+exit $PY_EXIT

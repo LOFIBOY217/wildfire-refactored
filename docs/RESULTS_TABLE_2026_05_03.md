@@ -3,6 +3,63 @@
 Run on val period **2022-05-01 to 2025-10-31**, NBAC + NFDB labels,
 14–46 day lead, EPSG:3978 2 km grid.
 
+> **Update 2026-05-10** — significant new findings logged below in §0.
+> Earlier numbers in §1+ are unchanged.
+
+---
+
+## §0 — Updates after 2026-05-05
+
+### New ensemble SOTA (10-ckpt prob-mean)
+
+| Method | n_win | Lift@5000 | Lift@30 km | Notes |
+|---|---:|---:|---:|---|
+| Single-ckpt SOTA (12y enc21 climsim, row 30 below) | 583 | 8.067× | 7.259× | unchanged |
+| **10-ckpt prob-mean ensemble** | 402 | **9.57×** [9.10, 10.02] | 4.37× [4.34, 4.40] ⚠️ | +18.6% on Lift@5000 |
+| 10-ckpt logit-mean ensemble | running | TBD | TBD | hypothesis: recovers 30 km |
+
+The 10 ckpts span 9ch / 13ch × enc14/21/28/35 + climsim + climblend variants.
+Prob-mean averaging smooths peaks → 30km max-pool loses sharpness; logit-mean
+expected to fix.
+
+### 22y revival fully fails (4 attempts)
+
+| Run | Lift@5000 |
+|---|---:|
+| 22y default | 4.91× |
+| 22y + climsim | 4.31× |
+| 22y + dm384 | 4.73× |
+| 22y + dm512 | 4.63× |
+
+All worse than 12y. 22y revival officially abandoned. Diagnosis: calibration
+drift under cosine-LR + focal loss with 5× more samples, not data quantity.
+
+### d_model = 256 confirmed saturated
+
+| range | dm128 | dm256 | dm384 |
+|---|---:|---:|---:|
+| 12y | 7.32× | **8.07×** | 7.95× |
+| 22y | — | 4.91× | 4.73× |
+
+8.5M-param model is at capacity for current label/data regime. More capacity
+needs more good data — and 22y shows older data hurts.
+
+### CWFIS drift @ 12y — late era still bad
+
+`compare_labels.py` on dilated stacks (job 60675357):
+- 2000–2011 era: NBAC+NFDB has +250% pixel-days vs CWFIS, IoU 0.066
+- **2012–2024 era**: still +55% / IoU 0.077 — i.e. CWFIS misses ~92% of true
+  fire pixels even in late era. Label switch (NBAC+NFDB) was justified for
+  late era too, not just for 2000–2013 coverage.
+
+### NBAC 2025 not yet released
+
+Latest NBAC compilation is `NBAC_1972to2024_*.zip` (2025-05-06 metadata, but
+year coverage ends 2024). NFDB rolling has some 2025 points. Implication:
+val windows after 2025-05-01 have ~empty labels and get silently skipped
+(`if label_2d.sum()==0: continue`). For paper, prefer `pred_end=2024-10-31`
+to avoid silent skips, or treat 2025 as supplement-only with NFDB.
+
 ---
 
 ## Table 1 — Lift@K (pixel-level + event-level)
