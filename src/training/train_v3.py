@@ -1420,7 +1420,7 @@ def main():
             raise RuntimeError(
                 "--master_cache_dir requires --master_data_start"
             )
-        master_start = datetime.strptime(args.master_data_start, "%Y-%m-%d").date()
+        master_start = dt.strptime(args.master_data_start, "%Y-%m-%d").date()
         # Compute aligned-date offset of THIS run's start within master.
         if aligned_dates[0] < master_start:
             raise RuntimeError(

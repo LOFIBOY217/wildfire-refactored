@@ -367,8 +367,13 @@ def compute_window_metrics(score_2d, label_2d, clim_2d, args):
         # ETS chance-corrected
         rand_hits = (tp + fp) * (tp + fn) / max(len(y_flat), 1)
         out["ets@5000"] = (tp - rand_hits) / max(tp + fp + fn - rand_hits, 1)
-        # MCC
-        denom = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+        # MCC — cast to float64 to avoid Python int overflow / np.sqrt failing
+        # on Python int. tn for an all-Canada grid is ~6M, the product can hit
+        # 1e26 which overflows int64 silently — float math is required.
+        denom = float(
+            np.sqrt(float(tp + fp) * float(tp + fn)
+                    * float(tn + fp) * float(tn + fn))
+        )
         out["mcc@5000"] = (tp * tn - fp * fn) / denom if denom > 0 else float("nan")
     else:
         out["f1@5000"] = out["f2@5000"] = out["csi@5000"] = out["ets@5000"] = out["mcc@5000"] = float("nan")
