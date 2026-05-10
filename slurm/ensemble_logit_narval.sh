@@ -2,7 +2,7 @@
 #SBATCH --job-name=wf-ens-logit
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=0-01:00:00
+#SBATCH --time=0-03:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/ens_logit_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/ens_logit_%j.err
 #SBATCH --account=def-inghaw
