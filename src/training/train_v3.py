@@ -974,6 +974,16 @@ def main():
                          "climatology baseline. α=0 disables; α=1 means full "
                          "log-clim added; typical 0.3–1.0. Auto-enables "
                          "--use_patch_embed (needs patch_ids passed).")
+    ap.add_argument("--gating", type=str, default="none",
+                    choices=["none", "global", "per_lead", "per_pixel"],
+                    help="Static-prior gating mode: learnable mixing between "
+                         "model logits and log(fire_clim) bias. Generalizes "
+                         "--clim_blend_alpha: 'none' = no gating; 'global' = "
+                         "scalar α (1 param); 'per_lead' = α per lead day "
+                         "(decoder_days params); 'per_pixel' = α per (lead, "
+                         "sub-pixel) predicted from base logits (~P² params). "
+                         "Auto-enables --use_patch_embed. Mutually exclusive "
+                         "with --clim_blend_alpha > 0.")
     ap.add_argument("--anomaly_weight_pow", type=float, default=0.0,
                     help="If > 0, multiply each (window, patch) sample's loss "
                          "weight by 1/(climatology_at_patch + 1e-3)^pow. "
@@ -1164,6 +1174,15 @@ def main():
     if args.clim_blend_alpha > 0 and not args.use_patch_embed:
         print(f"[clim_blend] auto-enabling --use_patch_embed (alpha={args.clim_blend_alpha})")
         args.use_patch_embed = True
+    # Gating modes also need patch_ids → force --use_patch_embed.
+    if args.gating != "none":
+        if args.clim_blend_alpha > 0:
+            raise SystemExit("[gating] --gating != none is mutually exclusive "
+                             "with --clim_blend_alpha > 0 (both inject a clim "
+                             "bias). Pick one.")
+        if not args.use_patch_embed:
+            print(f"[gating] auto-enabling --use_patch_embed (mode={args.gating})")
+            args.use_patch_embed = True
 
     # ── W&B init (optional) ─────────────────────────────────────────────
     _wandb = None
@@ -2700,6 +2719,73 @@ def main():
                   f"clim_logit shape={_clim_logit_np.shape}, "
                   f"|clim_logit|: min={_clim_logit_np.min():.2f} "
                   f"max={_clim_logit_np.max():.2f}")
+
+    # ── Static-prior gating wrapper ─────────────────────────────────────
+    # Generalizes clim_blend: instead of a fixed α, learn how much to
+    # blend the climatological prior. Generalizes to per-lead and per-
+    # pixel α via sigmoid(parameter). Initialized so sigmoid(0) = 0.5 →
+    # at start, the climatology contributes half the post-hoc α=0.4 effect.
+    if args.gating != "none":
+        if "fire_clim" not in static_arrays:
+            raise SystemExit("[gating] fire_clim not in static_arrays — "
+                             "gating requires the climatology channel.")
+        _fc = static_arrays["fire_clim"][:Hc, :Wc]
+        _fc_patched = _patchify_frame(_fc[:, :, np.newaxis], P)
+        _eps_gate = 1e-6
+        _clim_logit_np = np.log(np.maximum(_fc_patched, _eps_gate)).astype(np.float32)
+        _clim_logit_np = _clim_logit_np - _clim_logit_np.mean()
+        _clim_logit_buf = torch.from_numpy(_clim_logit_np)
+        _base_for_gate = model
+        _gating_mode = args.gating
+        _dec_days = decoder_days
+        _patch_dim_out = patch_dim_out
+
+        class _GatedClimBlendModel(nn.Module):
+            """Learnable mixing between base logits and log(clim) bias.
+
+            Forward:
+                base_logits = base(...)
+                gated_out   = base_logits + alpha * clim_logit
+            where alpha ∈ (0, 1) via sigmoid:
+                global    → 1 scalar
+                per_lead  → (decoder_days,) vector
+                per_pixel → predicted from base logits: Linear(P², P²)
+            """
+            def __init__(self):
+                super().__init__()
+                self.base = _base_for_gate
+                self.register_buffer("clim_logit", _clim_logit_buf)
+                self.gating_mode = _gating_mode
+                if _gating_mode == "global":
+                    # init logit=0 → sigmoid(0)=0.5
+                    self.gate_logit = nn.Parameter(torch.zeros(1))
+                elif _gating_mode == "per_lead":
+                    self.gate_logit = nn.Parameter(torch.zeros(_dec_days))
+                elif _gating_mode == "per_pixel":
+                    # Predict per-pixel gate from base logits. Init to all-zeros
+                    # so initial gate = sigmoid(0) = 0.5 uniformly.
+                    self.gate_head = nn.Linear(_patch_dim_out, _patch_dim_out)
+                    nn.init.zeros_(self.gate_head.weight)
+                    nn.init.zeros_(self.gate_head.bias)
+
+            def forward(self, encoder_input, decoder_input, patch_ids=None):
+                out = self.base(encoder_input, decoder_input, patch_ids)
+                if patch_ids is None:
+                    return out
+                bias = self.clim_logit[patch_ids].unsqueeze(1)   # (B, 1, P²)
+                if self.gating_mode == "global":
+                    alpha = torch.sigmoid(self.gate_logit)        # (1,)
+                elif self.gating_mode == "per_lead":
+                    alpha = torch.sigmoid(self.gate_logit).view(1, -1, 1)
+                else:  # per_pixel
+                    alpha = torch.sigmoid(self.gate_head(out))    # (B, dec, P²)
+                return out + alpha * bias
+
+        model = _GatedClimBlendModel().to(device)
+        _gate_params = sum(p.numel() for n, p in model.named_parameters()
+                           if "gate" in n and p.requires_grad)
+        print(f"  [gating] mode={_gating_mode}  added_params={_gate_params}  "
+              f"clim_logit shape={_clim_logit_np.shape}")
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Parameters: {n_params:,}")
