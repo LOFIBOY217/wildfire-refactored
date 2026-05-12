@@ -19,17 +19,31 @@ on the same checkpoint and same val set, but disagreed by a factor of 1.8×:
 ## Audit: 4 combinations on identical data
 
 Ran `scripts/audit_lift30km_definitions.py` on
-`v3_9ch_enc21_12y_2014_climsim` saved scores (200 windows):
+`v3_9ch_enc21_12y_2014_climsim` saved scores.
 
-| # | Score pool | K | Mean Lift |
-|---|---|---|---|
-| 0 | (fine Lift@5000 control) | 5000 fine | 9.568 |
-| **1** | **mean** | **K_fine // 15² = 22** | **9.122** ← train_v3 / paper |
-| 2 | max | 22 | 8.073 |
-| 3 | mean | 5000 | 4.412 |
-| **4** | **max** | **5000** | **4.202** ← metric_card |
+### Full window set (435 valid out of 583) — DEFINITIVE
 
-(K_fine=5000 throughout, pool factor=15 i.e. 30km tiles from 2km pixels.)
+| # | Score pool | K | Mean Lift | Reproduces |
+|---|---|---|---|---|
+| 0 | (fine Lift@5000 control) | 5000 fine | **8.067** | matches published 8.07 ✅ |
+| **1** | **mean** | **K_fine // 15² = 22** | **7.262** | matches train_v3 7.26 ✅ |
+| 2 | max | 22 | **7.789** | (paper alternative) |
+| 3 | mean | 5000 | 4.298 | — |
+| **4** | **max** | **5000** | **4.090** | matches metric_card 4.09 ✅ |
+
+**Conclusion: both published numbers are correct under their own definitions.**
+They answer different questions; we conflated them.
+
+### Robustness check — 200-window subset
+
+| # | Score pool | K | 200-win | 435-win | Δ |
+|---|---|---|---|---|---|
+| 1 | mean | 22 | 9.122 | 7.262 | high in early-2022 windows |
+| 2 | max | 22 | 8.073 | 7.789 | rank flips with mean! |
+
+**Important**: at K-scaled, **mean-pool vs max-pool can swap which is larger**
+depending on the window subset. The choice is a paper-level decision, not
+a "which is correct" question.
 
 ## Which axis dominates
 
