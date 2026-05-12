@@ -116,14 +116,28 @@ def lift_at_k(s_flat, y_flat, k):
     return lift_k, prec_k, recall_k
 
 
-def lift_30km_pooled(score_2d, label_2d, k, pool=15):
+def lift_30km_pooled(score_2d, label_2d, k_fine, pool=15):
+    """Lift@30km using the same convention as src/evaluation/metrics.py:
+    - score aggregation: MEAN within each coarse cell (preserves the
+      patrol-budget interpretation; max-pool exaggerates by selecting
+      the single hottest pixel in each tile)
+    - label aggregation: MAX (fire anywhere in the tile counts)
+    - K_coarse = k_fine // pool²  → preserves the operational meaning
+      of "top-K under coarsening" (e.g. K_fine=5000 fine pixels →
+      K_coarse=22 coarse tiles ≈ same total area).
+
+    Audit 2026-05-11: K=k_fine (unscaled) gave 4.2× on our SOTA ckpt;
+    K-scaled gives 9.1×. K-scaled matches metrics.py / train_v3 val
+    loop conventions. The previous unscaled K was a definitional bug.
+    """
     H, W = score_2d.shape
     Hp, Wp = H // pool, W // pool
     s = (score_2d[:Hp * pool, :Wp * pool]
-         .reshape(Hp, pool, Wp, pool).max(axis=(1, 3)))
+         .reshape(Hp, pool, Wp, pool).mean(axis=(1, 3)))
     y = (label_2d[:Hp * pool, :Wp * pool]
          .reshape(Hp, pool, Wp, pool).max(axis=(1, 3)))
-    return lift_at_k(s.flatten(), y.flatten(), k)[0]
+    k_coarse = max(1, k_fine // (pool * pool))
+    return lift_at_k(s.flatten(), y.flatten(), k_coarse)[0]
 
 
 def connected_fire_events(label_2d):

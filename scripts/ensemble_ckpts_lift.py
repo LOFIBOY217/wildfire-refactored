@@ -47,12 +47,22 @@ def lift_at_k(s, y, k):
     return float(y[top].mean() / base)
 
 
-def lift_30km(score_2d, label_2d, k, pool=15):
+def lift_30km(score_2d, label_2d, k_fine, pool=15):
+    """Lift@30km, matching src/evaluation/metrics.py / train_v3 val loop:
+    - score: MEAN-pool within each coarse cell
+    - label: MAX-pool (fire anywhere → 1)
+    - K_coarse = k_fine // pool²  → preserves budget interpretation
+
+    Audit 2026-05-11: prior version used max-pool + K_coarse=k_fine
+    (unscaled) which selected ~18% of all coarse cells — way too lenient
+    and inconsistent with train_v3 val loop's Lift@30km. Aligned now.
+    """
     H, W = score_2d.shape
     Hp, Wp = H // pool, W // pool
-    s = score_2d[:Hp * pool, :Wp * pool].reshape(Hp, pool, Wp, pool).max(axis=(1, 3))
+    s = score_2d[:Hp * pool, :Wp * pool].reshape(Hp, pool, Wp, pool).mean(axis=(1, 3))
     y = label_2d[:Hp * pool, :Wp * pool].reshape(Hp, pool, Wp, pool).max(axis=(1, 3))
-    return lift_at_k(s.flatten(), y.flatten(), k)
+    k_coarse = max(1, k_fine // (pool * pool))
+    return lift_at_k(s.flatten(), y.flatten(), k_coarse)
 
 
 def patches_to_2d(patch_arr, n_rows, n_cols, P):
