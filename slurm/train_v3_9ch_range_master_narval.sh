@@ -33,7 +33,10 @@ ENC=${ENC:?Must set ENC}
 DATA_START=${DATA_START:?Must set DATA_START (YYYY-MM-DD)}
 RANGE_TAG=${RANGE_TAG:?Must set RANGE_TAG (e.g. 14y_2008)}
 PRED_START=${PRED_START:-2022-05-01}
-PRED_END=${PRED_END:-2025-10-31}
+# Master cache v3_9ch_2000 ends 2025-11-17 (T=9332). Need data through
+# pred_end + 46d lead, so max safe pred_end = 2025-10-02. Picking
+# 2025-09-30 for a round date with 1-week margin.
+PRED_END=${PRED_END:-2025-09-30}
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
