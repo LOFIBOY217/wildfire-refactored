@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-12y-gating
 #SBATCH --gpus-per-node=1
-#SBATCH --time=0-12:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --mem=400G
 #SBATCH --output=/scratch/jiaqi217/logs/train_12y_gating_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/train_12y_gating_%j.err
@@ -83,7 +83,7 @@ echo "============================================="
 $PYTHON -u -m src.training.train_v3 \
     --config configs/paths_narval.yaml \
     --run_name "$RUN_NAME" \
-    --data_start 2014-05-01 --pred_start 2022-05-01 --pred_end 2025-09-30 \
+    --data_start 2014-05-01 --pred_start 2022-05-01 --pred_end 2025-10-31 \
     --channels "$CHANNELS" --in_days "$ENC" \
     --decoder s2s_legacy --s2s_cache "$LOCAL_CACHE/s2s_decoder_cache.dat" --s2s_max_issue_lag 3 \
     --loss_fn focal --focal_alpha 0.25 --focal_gamma 2.0 \
