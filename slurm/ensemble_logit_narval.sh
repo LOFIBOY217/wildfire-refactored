@@ -51,11 +51,11 @@ for d in "${DIRS[@]}"; do
 done
 echo "Using ${#EXISTING[@]} ckpt dirs"
 
-OUT="$SCRATCH/wildfire-refactored/outputs/ensemble_logit_10ckpt.json"
+OUT="$SCRATCH/wildfire-refactored/outputs/ensemble_${ENS_MODE:-logit}_10ckpt.json"
 $PYTHON -u -m scripts.ensemble_ckpts_lift \
     --score_dirs "${EXISTING[@]}" \
     --pred_start 2022-05-01 --pred_end 2025-10-31 \
-    --ensemble_mode logit_mean \
+    --ensemble_mode ${ENS_MODE:-logit_mean} \
     --k 5000 \
     --output "$OUT"
 
