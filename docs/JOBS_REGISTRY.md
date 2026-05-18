@@ -71,17 +71,37 @@ Columns:
 
 ---
 
-## Pending follow-ups (not yet submitted)
+## 2026-05-17 batch — full eval (save_window_scores) for 5 new ckpts
 
-1. **save_window_scores for gating + static channels** — to get full 583-win numbers
-   - 5 runs: gate_global, gate_per_lead, gate_per_pixel, 11ch, 12ch_static
-   - Then 5 metric_cards on those
-   - ETA: 5 × ~2h save_scores + 5 × ~1h metric_card
+| jobid | submitted | script | run_name | state | result | failure_reason | resub |
+|---|---|---|---|---|---|---|---|
+| 61135367 | 2026-05-17 | eval_save_scores GATING=global | v3_9ch_enc21_12y_2014_gate_global_eval_full | PD | — | — | — |
+| 61135368 | 2026-05-17 | eval_save_scores GATING=per_lead | v3_9ch_enc21_12y_2014_gate_per_lead_eval_full | PD | — | — | — |
+| 61135369 | 2026-05-17 | eval_save_scores GATING=per_pixel | v3_9ch_enc21_12y_2014_gate_per_pixel_eval_full | PD | — | — | — |
+| 61135370 | 2026-05-17 | eval_save_scores 11ch | v3_11ch_enc21_12y_2014_eval_full | PD | — | — | — |
+| 61135371 | 2026-05-17 | eval_save_scores 12ch_static | v3_12ch_static_enc21_12y_2014_eval_full | PD | — | — | — |
 
-2. **Scaling sweep re-architect** — code fix for master_cache memmap path
-   - Then resubmit 8y/10y/14y/16y/18y/20y with 24h walltime
+★ Earlier batch 61135318-323 was submitted before the latest commit landed on narval (CACHE_LUSTRE_OVERRIDE missing) — CANCELLED.
 
-3. **NBAC 2025 labels** — not released yet (per MEMORY). Val-2025 windows silently skipped (n=536→402 valid).
+## 2026-05-17 batch — scaling sweep RESUBMIT (memmap fix applied)
+
+| jobid | submitted | script | run_name | state | result | failure_reason | resub |
+|---|---|---|---|---|---|---|---|
+| 61135380 | 2026-05-17 | range_master 8y | v3_9ch_enc21_8y_2018 | PD | — | — | — |
+| 61135381 | 2026-05-17 | range_master 10y | v3_9ch_enc21_10y_2016 | PD | — | — | — |
+| 61135382 | 2026-05-17 | range_master 14y | v3_9ch_enc21_14y_2012 | PD | — | — | — |
+| 61135383 | 2026-05-17 | range_master 16y | v3_9ch_enc21_16y_2010 | PD | — | — | — |
+| 61135384 | 2026-05-17 | range_master 18y | v3_9ch_enc21_18y_2008 | PD | — | — | — |
+
+**Fix applied (commits `2ebecf9` + `11773b9`)**:
+- `train_v3.py` line ~1910: when `--master_cache_dir` is set without `--cache_dir`, memmap meteo_tf to `$SLURM_TMPDIR` (was: in-RAM np.zeros, OOM'd at 510–811 GB)
+- Walltime 12h → 24h (8y took ~9h for meteo build alone; 18y needs ~17h)
+
+## Pending follow-ups (after the 10 PD jobs land)
+
+1. **5 metric_cards** on the save_window_scores from 61135367-371 (5 × ~1h)
+2. **Add new scaling ckpts to ensemble** if they help — currently 10-ckpt logit-mean = 8.31× Lift@30km
+3. **NBAC 2025 labels** — not released yet. Val-2025 silently skipped (n=536→402 valid).
 
 ---
 
