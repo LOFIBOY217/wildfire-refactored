@@ -97,11 +97,32 @@ Columns:
 - `train_v3.py` line ~1910: when `--master_cache_dir` is set without `--cache_dir`, memmap meteo_tf to `$SLURM_TMPDIR` (was: in-RAM np.zeros, OOM'd at 510–811 GB)
 - Walltime 12h → 24h (8y took ~9h for meteo build alone; 18y needs ~17h)
 
-## Pending follow-ups (after the 10 PD jobs land)
+## 2026-05-18 batch — paper §5/§6 missing experiments
+
+Baselines (4 stateless + MLP + ConvLSTM) and per-lead-day Lift decay
+for SOTA model. Required to complete the §6 baselines table and the
+Lift-vs-lead-day figure. Commit `570022a`.
+
+| jobid | submitted | script | run_name | state | result | failure_reason | resub |
+|---|---|---|---|---|---|---|---|
+| 61137765 | 2026-05-18 | baselines_all4_full (CPU) | baselines climatology/persistence/fwi_threshold/fwi_oracle, both eval modes | PD | — | — | — |
+| 61137766 | 2026-05-18 | train_baseline_mlp (12y, 9ch) | baseline_mlp_12y_2014_9ch | PD | — | — | — |
+| 61137767 | 2026-05-18 | train_baseline_convlstm (12y, 9ch) | baseline_convlstm_12y_2014_9ch | PD | — | — | — |
+| 61137768 | 2026-05-18 | eval_per_lead on SOTA ckpt | v3_9ch_enc21_12y_2014 per-lead-day JSON | PD | — | — | — |
+
+**What each produces**:
+- 61137765 → `outputs/baselines_per_window.csv` (§6 baselines table headline numbers) + `outputs/baselines_per_leadday.csv` (flat baseline curves for lift-vs-lead figure)
+- 61137766 / 67 → trained MLP / ConvLSTM ckpts in `checkpoints/baseline_{mlp,convlstm}_12y_2014_9ch/`, also produces `outputs/baseline_{mlp,convlstm}_..._per_window.json`
+- 61137768 → `outputs/per_lead/v3_9ch_enc21_12y_2014.json` (model lift-vs-lead curve)
+- Final figure produced by `scripts/plot_per_lead_lift.py` combining the model JSON + baseline per-lead CSV.
+
+## Pending follow-ups (after the 14 PD jobs land)
 
 1. **5 metric_cards** on the save_window_scores from 61135367-371 (5 × ~1h)
 2. **Add new scaling ckpts to ensemble** if they help — currently 10-ckpt logit-mean = 8.31× Lift@30km
 3. **NBAC 2025 labels** — not released yet. Val-2025 silently skipped (n=536→402 valid).
+4. **Eval MLP / ConvLSTM** with `eval_save_scores_full_narval.sh` (MODEL_TYPE=mlp/convlstm) after training (61137766/67) completes, to get matching 583-win Lift@30km numbers for the §6 architecture-ablation row.
+5. **Plot lift-vs-lead figure** once 61137765 + 61137768 finish: `python -m scripts.plot_per_lead_lift --model_json outputs/per_lead/v3_9ch_enc21_12y_2014.json --baselines_csv outputs/baselines_per_leadday.csv --out_dir figures/per_lead`.
 
 ---
 
