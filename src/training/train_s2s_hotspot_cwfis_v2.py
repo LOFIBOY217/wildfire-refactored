@@ -684,10 +684,16 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         coarsen_factor=15,      # 15 × 2km = 30km grid
                         coarsen_k=None,          # top-K in coarse space (default: k / factor²)
                         save_per_window_json=None,  # Analysis 3: dump per-window metrics
-                        save_window_scores_dir=None):  # 2026-04-24: dump raw
+                        save_window_scores_dir=None,  # 2026-04-24: dump raw
                                 # per-pixel scores so we can recompute novel-
                                 # ignition lift / per-region / per-month etc.
                                 # offline without re-running model inference.
+                        per_lead_metrics_json=None):  # 2026-05-17: per-lead-day
+                                # Lift@K + Lift@30km decay curve. Computed from
+                                # the un-aggregated probs tensor inside the val
+                                # loop, so no extra inference cost. Output is a
+                                # JSON with shape: {win_idx, date, per_lead:
+                                # [{lead, lift_k, lift_coarse, n_fire}, ...]}.
     """
     Per-window ranking metrics on a random sample of validation windows.
 
@@ -743,6 +749,11 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                     "lift_coarse", "reliability", "resolution"]
     per_win_metrics = []
     total_n_fire = 0
+    # 2026-05-17: per-lead-day Lift-decay accumulator.
+    # Collected only when per_lead_metrics_json is set. Each entry is one
+    # window; inside, per_lead is a list of dicts (one per lead day) with
+    # lift_k, lift_coarse, n_fire.
+    per_lead_records = [] if per_lead_metrics_json else None
 
     # Default coarsened K: keep same target area as fine K
     _do_coarsen = (hw is not None) and (grid is not None) and (coarsen_factor > 1)
@@ -827,6 +838,55 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
 
             probs  = np.concatenate(prob_chunks, axis=0)  # (n_patches, dec_days, P²)
             labels = fire_patched[ts:te, :, :]            # (dec_days,  n_patches, P²)
+
+            # ----------------------------------------------------------
+            # 2026-05-17 — per-lead-day Lift decay (optional, cheap).
+            # Computed BEFORE aggregation, while probs still has its
+            # decoder_days axis. Skips lead days with zero positive
+            # labels (lift undefined). Uses the same compute_all_metrics
+            # path as the aggregated metric, so numbers are directly
+            # comparable.
+            # ----------------------------------------------------------
+            if per_lead_records is not None:
+                from src.evaluation.metrics import compute_all_metrics as _cam
+                _per_lead_w = []
+                _n_leads = probs.shape[1]
+                for _d in range(_n_leads):
+                    _prob_d  = probs[:, _d, :]              # (n_patches, P²)
+                    _label_d = labels[_d, :, :]             # (n_patches, P²)
+                    _n_fire_d = int(_label_d.sum())
+                    if _n_fire_d == 0:
+                        _per_lead_w.append({"lead": int(_d),
+                                            "n_fire": 0,
+                                            "lift_k": None,
+                                            "lift_coarse": None})
+                        continue
+                    if _do_coarsen:
+                        _p2d = _patches_to_image(_prob_d, _nph, _npw, patch_size)
+                        _l2d = _patches_to_image(_label_d, _nph, _npw, patch_size)
+                        _m_d = _cam(_p2d.ravel(),
+                                    _l2d.ravel().astype(np.float32),
+                                    k_values=[k],
+                                    spatial_shape=_p2d.shape,
+                                    coarsen_factor=coarsen_factor)
+                        del _p2d, _l2d
+                    else:
+                        _m_d = _cam(_prob_d.reshape(-1),
+                                    _label_d.reshape(-1).astype(np.float32),
+                                    k_values=[k])
+                    _per_lead_w.append({
+                        "lead":        int(_d),
+                        "n_fire":      _n_fire_d,
+                        "lift_k":      float(_m_d['lift_k']),
+                        "lift_coarse": float(_m_d.get('lift_coarse', 0.0)),
+                    })
+                per_lead_records.append({
+                    "win_idx": int(win_idx),
+                    "date":    str(win_date) if win_date is not None else None,
+                    "hs": int(hs), "he": int(he),
+                    "ts": int(ts), "te": int(te),
+                    "per_lead": _per_lead_w,
+                })
 
             # Aggregate across lead days
             prob_agg  = probs.max(axis=1)            # (n_patches, P²)  max risk over window
@@ -954,6 +1014,19 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                             if isinstance(vv, (int, float, np.floating))},
             }, _f, indent=2, default=str)
         print(f"  [per-window JSON] saved to {_p}")
+
+    # 2026-05-17: per-lead-day Lift decay dump.
+    if per_lead_records is not None:
+        import json as _json
+        _p = str(per_lead_metrics_json)
+        with open(_p, "w") as _f:
+            _json.dump({
+                "k": int(k),
+                "coarsen_factor": int(coarsen_factor) if _do_coarsen else None,
+                "n_windows": len(per_lead_records),
+                "per_window": per_lead_records,
+            }, _f, indent=2, default=str)
+        print(f"  [per-lead-day JSON] saved to {_p}")
 
     return result
 

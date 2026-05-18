@@ -605,6 +605,7 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                            decoder_ctx_fn=None,
                            save_per_window_json=None,
                            save_window_scores_dir=None,
+                           per_lead_metrics_json=None,
                            skip_cluster=False):
     """V3 validation: standard pixel-level metrics + optional cluster/per-lead.
 
@@ -655,6 +656,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
         save_per_window_json=save_per_window_json,
         # 2026-04-24: per-pixel score dump for offline novel-ignition eval
         save_window_scores_dir=save_window_scores_dir,
+        # 2026-05-17: per-lead-day Lift decay JSON dump
+        per_lead_metrics_json=per_lead_metrics_json,
     )
 
     result = dict(pixel_metrics)
@@ -1064,6 +1067,12 @@ def main():
                          "per-region, per-month) offline without re-running "
                          "model inference. Each window dumps "
                          "window_NNNN_DATE.npz with prob_agg + label_agg.")
+    ap.add_argument("--per_lead_metrics_json", type=str, default=None,
+                    help="Path to dump per-lead-day Lift@K + Lift@30km decay "
+                         "as JSON. Computed inside the val loop from the "
+                         "un-aggregated probs tensor (no extra inference cost). "
+                         "Output: {win_idx, date, per_lead: [{lead, lift_k, "
+                         "lift_coarse, n_fire}, ...]}.")
     # --- Anti-drift label fusion (2026-04-21, revised after polygon-detection test) ---
     ap.add_argument("--label_fusion", action="store_true",
                     help="Switch fire labels from CWFIS hotspots to NBAC "
@@ -2932,6 +2941,7 @@ def main():
             decoder_ctx_fn=_eval_ctx_fn,
             save_per_window_json=args.save_per_window_json,
             save_window_scores_dir=args.save_window_scores_dir,
+            per_lead_metrics_json=args.per_lead_metrics_json,
         )
         # ═════════════════════════════════════════════════════════════════
         # BUSINESS SUMMARY CARD — what matters for financial risk ranking.

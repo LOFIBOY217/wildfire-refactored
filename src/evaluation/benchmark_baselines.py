@@ -646,9 +646,30 @@ def main():
             """Static climatology — same score regardless of lead day."""
             return clim_patched.astype(np.float32)
 
+        def _persistence_day(win, d_offset):
+            """Persistence in per-lead-day mode: the encoder-window mean
+            density is broadcast to every lead day (the baseline has no
+            lead-day dependence). This is the correct comparator for the
+            model's per-lead-day curve — if persistence's curve is flat
+            and the model's curve declines, that decline is real."""
+            hs, he, ts, te = win
+            return fire_patched[hs:he].astype(np.float32).mean(axis=0)
+
+        def _fwi_threshold_day(win, d_offset):
+            """FWI-threshold in per-lead-day mode: mean FWI over the full
+            lead window (no lead dependence). Same broadcast logic as
+            persistence — gives a flat-curve operational baseline against
+            which a non-flat model curve can be interpreted."""
+            hs, he, ts, te = win
+            return np.nan_to_num(
+                fwi_patched[:, ts:te, :].astype(np.float32), nan=0.0
+            ).mean(axis=1)
+
         score_fns = {
-            "fwi_oracle":  _fwi_day,
-            "climatology": _clim_day,
+            "fwi_oracle":    _fwi_day,
+            "climatology":   _clim_day,
+            "persistence":   _persistence_day,
+            "fwi_threshold": _fwi_threshold_day,
         }
 
         for name in args.baseline:
