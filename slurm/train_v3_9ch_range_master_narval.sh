@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-9ch-range-master
 #SBATCH --gpus-per-node=1
-#SBATCH --time=0-12:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --mem=480G
 #SBATCH --output=/scratch/jiaqi217/logs/train_v3_9ch_range_master_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/train_v3_9ch_range_master_%j.err
