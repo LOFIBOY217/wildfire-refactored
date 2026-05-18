@@ -35,6 +35,8 @@ case "$RANGE" in
     4y)  DATA_START=2018-05-01; CACHE_LUSTRE=v3_9ch_4y_2018;  RUN_TAG=4y_2018 ;;
     *) echo "ERROR: unknown RANGE=$RANGE"; exit 1 ;;
 esac
+# CACHE_LUSTRE_OVERRIDE for non-9ch ckpts (11ch/12ch_static have their own cache).
+CACHE_LUSTRE=${CACHE_LUSTRE_OVERRIDE:-$CACHE_LUSTRE}
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
