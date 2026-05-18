@@ -1908,8 +1908,19 @@ def main():
             print(f"  Copying to RAM...")
             meteo_patched = np.array(meteo_patched)
     else:
-        # Build time-first, then transpose
+        # Build time-first, then transpose.
+        # Three cases for the temp builder buffer:
+        #   1. cache_dir set     → use cache_dir/*_tf.dat (persisted)
+        #   2. master_cache set  → use $SLURM_TMPDIR/meteo_tf_temp_<pid>.dat
+        #                          (scaling sweep path: T can be 7000+ days,
+        #                           in-RAM allocation OOMs the 400GB node)
+        #   3. neither           → in-RAM np.zeros (small enough for 4y data)
         tf_path = mmap_path.replace("_pf.dat", "_tf.dat") if mmap_path else None
+        if tf_path is None and args.master_cache_dir and master_info is not None:
+            tmp_root = os.environ.get("SLURM_TMPDIR", "/tmp")
+            tf_path = os.path.join(tmp_root, f"meteo_tf_temp_{os.getpid()}.dat")
+            print(f"  master_cache active without cache_dir → memmap to {tf_path} "
+                  f"(in-RAM build would need {T * n_patches * enc_dim * 2 / 1e9:.0f} GB)")
 
         if tf_path:
             meteo_tf = np.memmap(tf_path, dtype='float16', mode='w+',
