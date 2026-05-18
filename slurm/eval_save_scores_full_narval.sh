@@ -66,15 +66,18 @@ for f in "$CACHE_DIR_LUSTRE"/*; do
 done
 echo "  done in $((SECONDS - t0))s"
 
-CHANNELS="FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"
+CHANNELS=${CHANNELS_OVERRIDE:-"FWI,2t,fire_clim,2d,tcw,sm20,population,slope,burn_age"}
 # Optional overrides:
 #  SUFFIX = '_ep1' / '_strongreg' / '_recency_tau10' / '_climsim' / '_climblend_a0.3' …
 #  RUN_NAME_OVERRIDE = full run name (skips ENC/RUN_TAG/SUFFIX construction;
 #    use for non-standard ckpts like ConvLSTM/MLP baseline_*).
 #  MODEL_TYPE = 'transformer' (default) | 'mlp' | 'convlstm' — passes
 #    --model_type to train_v3 for proper architecture instantiation.
+#  CHANNELS_OVERRIDE = full comma list (e.g. for 11ch/12ch_static ckpts).
+#  GATING = none|global|per_lead|per_pixel (auto-enables use_patch_embed).
 SUFFIX=${SUFFIX:-}
 MODEL_TYPE=${MODEL_TYPE:-transformer}
+GATING=${GATING:-none}
 # Optional: explicit α for clim_blend ckpts (detected from SUFFIX too).
 CLIM_BLEND_ALPHA=${CLIM_BLEND_ALPHA:-0}
 if [ -n "${RUN_NAME_OVERRIDE:-}" ]; then
@@ -125,8 +128,11 @@ $PYTHON -u -m src.training.train_v3 \
     --cache_dir "$LOCAL_METEO" --chunk_patches 2000 --num_workers 4 \
     --skip_forecast \
     --label_fusion --nfdb_min_size_ha 1.0 \
-    --fire_clim_dir data/fire_clim_annual_nbac
+    --fire_clim_dir data/fire_clim_annual_nbac \
+    --gating "$GATING"
 
-echo "=== done $(date) ==="
+PY_EXIT=$?
+echo "=== done $(date) exit=$PY_EXIT ==="
 ls "$SCORES_DIR/" | wc -l
 echo "saved $(ls $SCORES_DIR/ | wc -l) window score files"
+exit $PY_EXIT
