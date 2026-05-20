@@ -87,11 +87,11 @@ Columns:
 
 | jobid | submitted | script | run_name | state | result | failure_reason | resub |
 |---|---|---|---|---|---|---|---|
-| 61135380 | 2026-05-17 | range_master 8y | v3_9ch_enc21_8y_2018 | PD | — | — | — |
-| 61135381 | 2026-05-17 | range_master 10y | v3_9ch_enc21_10y_2016 | PD | — | — | — |
-| 61135382 | 2026-05-17 | range_master 14y | v3_9ch_enc21_14y_2012 | PD | — | — | — |
-| 61135383 | 2026-05-17 | range_master 16y | v3_9ch_enc21_16y_2010 | PD | — | — | — |
-| 61135384 | 2026-05-17 | range_master 18y | v3_9ch_enc21_18y_2008 | PD | — | — | — |
+| 61135380 | 2026-05-17 | range_master 8y | v3_9ch_enc21_8y_2018 | FAILED | — | date overflow: master_T=9332 too short, need 9334 (pred_end+lead 2d past master cache) | 61231833 |
+| 61135381 | 2026-05-17 | range_master 10y | v3_9ch_enc21_10y_2016 | OOM | — | transpose np.ascontiguousarray materialized 386 GB (memmap fix was incomplete) | 61231834 |
+| 61135382 | 2026-05-17 | range_master 14y | v3_9ch_enc21_14y_2012 | OOM | — | same transpose OOM (13h) | 61231835 |
+| 61135383 | 2026-05-17 | range_master 16y | v3_9ch_enc21_16y_2010 | OOM | — | same transpose OOM (15h) | 61231836 |
+| 61135384 | 2026-05-17 | range_master 18y | v3_9ch_enc21_18y_2008 | OOM | — | same transpose OOM (18h) | 61231837 |
 
 **Fix applied (commits `2ebecf9` + `11773b9`)**:
 - `train_v3.py` line ~1910: when `--master_cache_dir` is set without `--cache_dir`, memmap meteo_tf to `$SLURM_TMPDIR` (was: in-RAM np.zeros, OOM'd at 510–811 GB)
@@ -105,10 +105,27 @@ Lift-vs-lead-day figure. Commit `570022a`.
 
 | jobid | submitted | script | run_name | state | result | failure_reason | resub |
 |---|---|---|---|---|---|---|---|
-| 61137765 | 2026-05-18 | baselines_all4_full (CPU) | baselines climatology/persistence/fwi_threshold/fwi_oracle, both eval modes | PD | — | — | — |
-| 61137766 | 2026-05-18 | train_baseline_mlp (12y, 9ch) | baseline_mlp_12y_2014_9ch | PD | — | — | — |
-| 61137767 | 2026-05-18 | train_baseline_convlstm (12y, 9ch) | baseline_convlstm_12y_2014_9ch | PD | — | — | — |
-| 61137768 | 2026-05-18 | eval_per_lead on SOTA ckpt | v3_9ch_enc21_12y_2014 per-lead-day JSON | PD | — | — | — |
+| 61137765 | 2026-05-18 | baselines_all4_full (CPU) | baselines, both modes in one job | TIMEOUT | per_window finished (611 win) but on WRONG labels (legacy CWFIS); per_leadday timed out | (a) used CWFIS not NBAC+NFDB (b) both modes in one 12h job | 61231830/831 |
+| 61137766 | 2026-05-18 | train_baseline_mlp (12y, 9ch) | baseline_mlp_12y_2014_9ch | COMPLETED | trained ok (4h55m) — needs full-eval for §6 number | — | — |
+| 61137767 | 2026-05-18 | train_baseline_convlstm (12y, 9ch) | baseline_convlstm_12y_2014_9ch | COMPLETED | trained ok (6h09m) — needs full-eval for §6 number | — | — |
+| 61137768 | 2026-05-18 | eval_per_lead on SOTA ckpt | v3_9ch_enc21_12y_2014 per-lead JSON | TIMEOUT | spent all 8h on meteo cache build, never reached eval; also full-card metric 33×/win too slow | — | 61231832 |
+
+## 2026-05-18 batch B — bug-fix resubmits (commit `8f0d58b`)
+
+Fixes: transpose memmap OOM, load_train_to_ram toggle for 16y/18y,
+8y date margin, NBAC+NFDB labels for baselines, per-lead metric
+slimmed to lift-only + 24h walltime.
+
+| jobid | submitted | script | run_name | state | result | failure_reason | resub |
+|---|---|---|---|---|---|---|---|
+| 61231830 | 2026-05-18 | baselines EVAL_MODE=per_window (NBAC) | baselines_per_window.csv | PD | — | — | — |
+| 61231831 | 2026-05-18 | baselines EVAL_MODE=per_leadday (NBAC) | baselines_per_leadday.csv | PD | — | — | — |
+| 61231832 | 2026-05-18 | eval_per_lead 24h | v3_9ch_enc21_12y_2014 per-lead JSON | PD | — | — | — |
+| 61231833 | 2026-05-18 | range_master 8y (RAM) | v3_9ch_enc21_8y_2018 | PD | — | — | — |
+| 61231834 | 2026-05-18 | range_master 10y (RAM) | v3_9ch_enc21_10y_2016 | PD | — | — | — |
+| 61231835 | 2026-05-18 | range_master 14y (RAM) | v3_9ch_enc21_14y_2012 | PD | — | — | — |
+| 61231836 | 2026-05-18 | range_master 16y (SSD memmap) | v3_9ch_enc21_16y_2010 | PD | — | — | — |
+| 61231837 | 2026-05-18 | range_master 18y (SSD memmap) | v3_9ch_enc21_18y_2008 | PD | — | — | — |
 
 **What each produces**:
 - 61137765 → `outputs/baselines_per_window.csv` (§6 baselines table headline numbers) + `outputs/baselines_per_leadday.csv` (flat baseline curves for lift-vs-lead figure)
