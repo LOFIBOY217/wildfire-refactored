@@ -848,7 +848,13 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
             # comparable.
             # ----------------------------------------------------------
             if per_lead_records is not None:
-                from src.evaluation.metrics import compute_all_metrics as _cam
+                # Call ONLY the two lift functions (not compute_all_metrics)
+                # — the PR-AUC / ROC-AUC / MCC-threshold-search inside the
+                # full card is ~30× the cost and we do not need it per lead.
+                from src.evaluation.metrics import (compute_ranking_metrics
+                                                    as _crm,
+                                                    compute_coarsened_lift
+                                                    as _ccl)
                 _per_lead_w = []
                 _n_leads = probs.shape[1]
                 for _d in range(_n_leads):
@@ -861,24 +867,24 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                                             "lift_k": None,
                                             "lift_coarse": None})
                         continue
+                    _lift_coarse = 0.0
                     if _do_coarsen:
                         _p2d = _patches_to_image(_prob_d, _nph, _npw, patch_size)
                         _l2d = _patches_to_image(_label_d, _nph, _npw, patch_size)
-                        _m_d = _cam(_p2d.ravel(),
-                                    _l2d.ravel().astype(np.float32),
-                                    k_values=[k],
-                                    spatial_shape=_p2d.shape,
-                                    coarsen_factor=coarsen_factor)
+                        _rk = _crm(_p2d.ravel(),
+                                   _l2d.ravel().astype(np.float32), k)
+                        _cc = _ccl(_p2d, _l2d.astype(np.float32),
+                                   coarsen_factor, k_fine=k)
+                        _lift_coarse = float(_cc.get('lift_coarse', 0.0))
                         del _p2d, _l2d
                     else:
-                        _m_d = _cam(_prob_d.reshape(-1),
-                                    _label_d.reshape(-1).astype(np.float32),
-                                    k_values=[k])
+                        _rk = _crm(_prob_d.reshape(-1),
+                                   _label_d.reshape(-1).astype(np.float32), k)
                     _per_lead_w.append({
                         "lead":        int(_d),
                         "n_fire":      _n_fire_d,
-                        "lift_k":      float(_m_d['lift_k']),
-                        "lift_coarse": float(_m_d.get('lift_coarse', 0.0)),
+                        "lift_k":      float(_rk['lift_k']),
+                        "lift_coarse": _lift_coarse,
                     })
                 per_lead_records.append({
                     "win_idx": int(win_idx),

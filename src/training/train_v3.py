@@ -2134,7 +2134,26 @@ def main():
             os.remove(tf_path)
             meteo_patched = np.memmap(mmap_path, dtype='float16', mode='r',
                                       shape=(n_patches, T, enc_dim))
+        elif tf_path is not None:
+            # master_cache without cache_dir: meteo_tf was memmap'd to
+            # SLURM_TMPDIR (case 2 above). Transpose via the SAME chunked
+            # memmap path. The previous np.ascontiguousarray(transpose)
+            # materialized the full (n_patches, T, enc_dim) array in RAM
+            # → OOM at 383-810 GB for 10-18y ranges (the build memmap
+            # fix was incomplete: it memmap'd the builder buffer but the
+            # transpose still realized everything back into RAM).
+            meteo_tf.flush()
+            del meteo_tf
+            gc.collect()
+            pf_path = tf_path.replace("_tf_temp_", "_pf_temp_")
+            print(f"\n  Transposing to patch-first (chunked memmap) → {pf_path}")
+            _transpose_tf_to_pf(tf_path, pf_path, T, n_patches, enc_dim,
+                                chunk_patches=args.chunk_patches)
+            os.remove(tf_path)
+            meteo_patched = np.memmap(pf_path, dtype='float16', mode='r',
+                                      shape=(n_patches, T, enc_dim))
         else:
+            # case 3: in-RAM np.zeros build (4y, small) — safe to realize.
             _tmp = np.ascontiguousarray(meteo_tf.transpose(1, 0, 2))
             del meteo_tf
             gc.collect()
@@ -2526,6 +2545,17 @@ def main():
         n_p = meteo_patched.shape[0]
         n_t = len(t_indices)
         n_d = meteo_patched.shape[2]
+        # 2026-05-18: warn when the RAM destination is dangerously large.
+        # The np.empty below allocates the FULL train tensor; for long
+        # ranges this OOMs even with chunked filling (16y≈410, 18y≈464 GB
+        # on a 480 GB node, plus memmap page cache). For those ranges,
+        # drop --load_train_to_ram at the SLURM level (train from SSD
+        # memmap). See slurm/train_v3_9ch_range_master_narval.sh.
+        est_gb = n_p * n_t * n_d * 2 / 1e9
+        if est_gb > 380:
+            print(f"  [load_train_to_ram] WARNING: est {est_gb:.0f} GB RAM "
+                  f"destination — risk of OOM on a 480 GB node. Consider "
+                  f"dropping --load_train_to_ram for this range.")
         bytes_per_chunk = 1000 * n_t * n_d * 2 / 1e9
         print(f"  Copying train data to RAM (chunked, "
               f"{n_p} patches in chunks of 1000 ≈ {bytes_per_chunk:.1f} GB/chunk)...")

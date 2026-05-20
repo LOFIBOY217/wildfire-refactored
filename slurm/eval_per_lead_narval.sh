@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-per-lead
 #SBATCH --gpus-per-node=1
-#SBATCH --time=0-08:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --mem=400G
 #SBATCH --output=/scratch/jiaqi217/logs/per_lead_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/per_lead_%j.err

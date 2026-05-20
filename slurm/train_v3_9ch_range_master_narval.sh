@@ -34,9 +34,11 @@ DATA_START=${DATA_START:?Must set DATA_START (YYYY-MM-DD)}
 RANGE_TAG=${RANGE_TAG:?Must set RANGE_TAG (e.g. 14y_2008)}
 PRED_START=${PRED_START:-2022-05-01}
 # Master cache v3_9ch_2000 ends 2025-11-17 (T=9332). Need data through
-# pred_end + 46d lead, so max safe pred_end = 2025-10-02. Picking
-# 2025-09-30 for a round date with 1-week margin.
-PRED_END=${PRED_END:-2025-09-30}
+# pred_end + 46d lead, so max safe pred_end = 2025-10-02. The 2026-05-17
+# batch hit "master_T=9332 too short: need 9334" for 8y at pred_end
+# 2025-09-30 (channel-availability intersection pushed the end index 2d
+# past the master cache). Pull back to 2025-09-23 for ~9-day margin.
+PRED_END=${PRED_END:-2025-09-23}
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
@@ -92,6 +94,15 @@ echo "  master     = $LOCAL_METEO  (start=$MASTER_DATA_START)"
 echo "  Run name   = $RUN_NAME"
 echo "============================================="
 
+# Long ranges (16y≈410 GB, 18y≈464 GB) OOM when copying the train tensor
+# to RAM on a 480 GB node. Set LOAD_TRAIN_TO_RAM=0 to train from the SSD
+# memmap instead (slower per step, OOM-safe). Default on (preserves the
+# fast path for ≤14y, which fits).
+LOAD_TRAIN_TO_RAM=${LOAD_TRAIN_TO_RAM:-1}
+RAM_FLAG=""
+[ "$LOAD_TRAIN_TO_RAM" = "1" ] && RAM_FLAG="--load_train_to_ram"
+echo "  load_train_to_ram = $LOAD_TRAIN_TO_RAM  (flag: '$RAM_FLAG')"
+
 $PYTHON -u -m src.training.train_v3 \
     --config configs/paths_narval.yaml \
     --run_name "$RUN_NAME" \
@@ -103,7 +114,7 @@ $PYTHON -u -m src.training.train_v3 \
     --batch_size 4096 --epochs 4 --lr 1e-4 --weight_decay 0.01 --dropout 0.2 \
     --d_model 256 --nhead 8 --enc_layers 4 --dec_layers 4 --patch_size 16 \
     --dilate_radius 14 --val_lift_k 5000 --val_lift_sample_wins 20 \
-    --fire_season_only --cluster_eval --decoder_ctx --load_train_to_ram \
+    --fire_season_only --cluster_eval --decoder_ctx $RAM_FLAG \
     --master_cache_dir "$LOCAL_METEO" --master_data_start "$MASTER_DATA_START" \
     --chunk_patches 2000 --num_workers 4 \
     --log_interval 200 --skip_forecast \
