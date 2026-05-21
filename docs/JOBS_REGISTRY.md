@@ -136,6 +136,24 @@ slimmed to lift-only + 24h walltime.
 
 **Scaling sweep is HEALTHY this time** (commit `8f0d58b` transpose fix verified in 61231834 log: "Transposing to patch-first (chunked memmap)" — no np.ascontiguousarray, no OOM). 4/5 running past the point where batch A died.
 
+## 2026-05-20 batch D — pending follow-ups (metric_cards + baseline re-eval)
+
+5 ckpt evals (gating/11ch/12ch) finished with fresh 2026-05-18 scores →
+metric_cards. MLP/ConvLSTM ckpts retrained 2026-05-18 but their saved
+scores are stale (2026-05-07) → re-eval first, metric_card after.
+
+| jobid | submitted | script | run_name | state | result | failure_reason | resub |
+|---|---|---|---|---|---|---|---|
+| 61293772 | 2026-05-20 | metric_card model | v3_9ch_enc21_12y_2014_gate_global | PD | — | — | — |
+| 61293773 | 2026-05-20 | metric_card model | v3_9ch_enc21_12y_2014_gate_per_lead | PD | — | — | — |
+| 61293774 | 2026-05-20 | metric_card model | v3_9ch_enc21_12y_2014_gate_per_pixel | PD | — | — | — |
+| 61293775 | 2026-05-20 | metric_card model | v3_11ch_enc21_12y_2014 | PD | — | — | — |
+| 61293776 | 2026-05-20 | metric_card model | v3_12ch_static_enc21_12y_2014 | PD | — | — | — |
+| 61293777 | 2026-05-20 | eval_save_scores MODEL_TYPE=mlp | baseline_mlp_12y_2014_9ch | PD | — | — | — |
+| 61293778 | 2026-05-20 | eval_save_scores MODEL_TYPE=convlstm | baseline_convlstm_12y_2014_9ch | PD | — | — | — |
+
+★ After 61293777/778 finish → run metric_card on baseline_{mlp,convlstm}_12y_2014_9ch.
+
 **What each produces**:
 - 61137765 → `outputs/baselines_per_window.csv` (§6 baselines table headline numbers) + `outputs/baselines_per_leadday.csv` (flat baseline curves for lift-vs-lead figure)
 - 61137766 / 67 → trained MLP / ConvLSTM ckpts in `checkpoints/baseline_{mlp,convlstm}_12y_2014_9ch/`, also produces `outputs/baseline_{mlp,convlstm}_..._per_window.json`
