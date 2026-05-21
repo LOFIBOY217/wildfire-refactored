@@ -118,14 +118,23 @@ slimmed to lift-only + 24h walltime.
 
 | jobid | submitted | script | run_name | state | result | failure_reason | resub |
 |---|---|---|---|---|---|---|---|
-| 61231830 | 2026-05-18 | baselines EVAL_MODE=per_window (NBAC) | baselines_per_window.csv | PD | — | — | — |
-| 61231831 | 2026-05-18 | baselines EVAL_MODE=per_leadday (NBAC) | baselines_per_leadday.csv | PD | — | — | — |
-| 61231832 | 2026-05-18 | eval_per_lead 24h | v3_9ch_enc21_12y_2014 per-lead JSON | PD | — | — | — |
-| 61231833 | 2026-05-18 | range_master 8y (RAM) | v3_9ch_enc21_8y_2018 | PD | — | — | — |
-| 61231834 | 2026-05-18 | range_master 10y (RAM) | v3_9ch_enc21_10y_2016 | PD | — | — | — |
-| 61231835 | 2026-05-18 | range_master 14y (RAM) | v3_9ch_enc21_14y_2012 | PD | — | — | — |
-| 61231836 | 2026-05-18 | range_master 16y (SSD memmap) | v3_9ch_enc21_16y_2010 | PD | — | — | — |
+| 61231830 | 2026-05-18 | baselines per_window (NBAC) | baselines_per_window.csv | FAILED | computed 5h then crashed at CSV write (TypeError: per_window result is {per_win,summary} not {k:{...}}) | 61293625 |
+| 61231831 | 2026-05-18 | baselines per_leadday (NBAC) | baselines_per_leadday.csv | OOM | 256G insufficient for per-lead loop | 61293626 |
+| 61231832 | 2026-05-18 | eval_per_lead 24h | v3_9ch_enc21_12y_2014 per-lead JSON | R | running 13h+ (past cache build into eval) | — |
+| 61231833 | 2026-05-18 | range_master 8y (RAM) | v3_9ch_enc21_8y_2018 | R | running 13h+, past transpose ✓ no OOM | — |
+| 61231834 | 2026-05-18 | range_master 10y (RAM) | v3_9ch_enc21_10y_2016 | R | running 12.5h+, chunked memmap transpose confirmed working ✓ | — |
+| 61231835 | 2026-05-18 | range_master 14y (RAM) | v3_9ch_enc21_14y_2012 | R | running 10h+ ✓ | — |
+| 61231836 | 2026-05-18 | range_master 16y (SSD memmap) | v3_9ch_enc21_16y_2010 | R | running 9.6h+ ✓ | — |
 | 61231837 | 2026-05-18 | range_master 18y (SSD memmap) | v3_9ch_enc21_18y_2008 | PD | — | — | — |
+
+## 2026-05-20 batch C — baselines re-resubmit (CSV + mem fix)
+
+| jobid | submitted | script | run_name | state | result | failure_reason | resub |
+|---|---|---|---|---|---|---|---|
+| 61293625 | 2026-05-20 | baselines per_window (NBAC, 400G) | baselines_per_window.csv | PD | — | — | — |
+| 61293626 | 2026-05-20 | baselines per_leadday (NBAC, 400G) | baselines_per_leadday.csv | PD | — | — | — |
+
+**Scaling sweep is HEALTHY this time** (commit `8f0d58b` transpose fix verified in 61231834 log: "Transposing to patch-first (chunked memmap)" — no np.ascontiguousarray, no OOM). 4/5 running past the point where batch A died.
 
 **What each produces**:
 - 61137765 → `outputs/baselines_per_window.csv` (§6 baselines table headline numbers) + `outputs/baselines_per_leadday.csv` (flat baseline curves for lift-vs-lead figure)
