@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=256G
+#SBATCH --mem=400G
 #SBATCH --time=16:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/baselines_all4_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/baselines_all4_%j.err

@@ -937,15 +937,27 @@ def main():
                                 f"{r.get('baseline',0):.8f}",
                             ])
             else:
-                writer.writerow(["baseline", "k", "lift_k", "precision_k",
-                                 "recall_k", "pr_auc", "n_fire", "baseline_rate"])
-                for name, k_results in all_results.items():
-                    for k, r in sorted(k_results.items()):
+                # per_window mode: all_results[name] = {"per_win":[...],
+                # "summary": {k: {lift_k, lift_coarse, ...}}}. (Old `window`
+                # mode stored {name: {k: {...}}} directly — handle both.)
+                writer.writerow(["baseline", "k", "lift_k", "lift_k_std",
+                                 "lift_coarse", "lift_coarse_std",
+                                 "precision_k", "pr_auc", "bss", "f2", "mcc",
+                                 "n_fire", "baseline_rate"])
+                for name, res in all_results.items():
+                    summary = res["summary"] if isinstance(res, dict) and "summary" in res else res
+                    for k, r in sorted(summary.items()):
                         writer.writerow([
-                            name, k, f"{r['lift_k']:.4f}",
+                            name, k,
+                            f"{r.get('lift_k',0):.4f}",
+                            f"{r.get('lift_k_std',0):.4f}",
+                            f"{r.get('lift_coarse',0):.4f}",
+                            f"{r.get('lift_coarse_std',0):.4f}",
                             f"{r.get('precision_k',0):.6f}",
-                            f"{r.get('recall_k',0):.6f}",
                             f"{r.get('pr_auc',0):.6f}",
+                            f"{r.get('bss',0):.4f}",
+                            f"{r.get('f2',0):.4f}",
+                            f"{r.get('mcc',0):.4f}",
                             r.get("n_fire", ""),
                             f"{r.get('baseline',0):.8f}",
                         ])
