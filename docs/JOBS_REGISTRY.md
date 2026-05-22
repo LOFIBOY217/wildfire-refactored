@@ -154,6 +154,48 @@ scores are stale (2026-05-07) → re-eval first, metric_card after.
 
 ★ After 61293777/778 finish → run metric_card on baseline_{mlp,convlstm}_12y_2014_9ch.
 
+## 2026-05-21 — batch B/C/D outcomes + batch E resubmits
+
+### ✅ Completed
+- **per-lead model curve** (61231832): DONE 17h55m → `outputs/per_lead/v3_9ch_enc21_12y_2014.json` (2.7 MB)
+- **scaling 8y** (61231833): DONE → 20-win sample L5k=4.37 L30k=3.86
+- **scaling 10y** (61231834): DONE → 20-win sample L5k=5.61 L30k=6.10
+  - Scaling trend (20-win samples, noisy): 8y=4.37 → 10y=5.61 → 12y=8.07(SOTA). Need full-eval on the ckpts for paper numbers.
+- **baselines per_window** (61293625): DONE 4h48m → `outputs/baselines_per_window.csv`
+  - climatology: L5k=7.04 L30k=2.36 ✓ | persistence: L5k=20.3 L30k=12.0 ⚠️ (suspiciously high — active large fires persist through the 14d gap; investigate leak vs real)
+  - ★ **fwi_threshold + fwi_oracle BROKEN: Lift≈0, BSS=-14172**. lift<1 means FWI top-K avoids fire (anti-correlated) → date misalignment or spatial-layout bug in fwi_patched. NEEDS FIX before §6 table.
+- **5 metric_cards** (61293772-776): DONE — full 583-win:
+
+  | run | L5k | L30k | vs SOTA(7.83/6.73) |
+  |---|---|---|---|
+  | gate_global   | 7.00 | 7.43 | L30k +0.7 |
+  | gate_per_lead | 7.00 | 7.35 | L30k +0.6 |
+  | **gate_per_pixel** | **9.59** | **8.10** | **both win clearly** ★ |
+  | 11ch (+pop+slope) | 8.14 | 6.78 | L5k +0.3, L30k flat |
+  | 12ch_static | 8.41 | 7.44 | both modestly up |
+
+  → **per_pixel gating is a real win on full eval** (L5k 9.59 vs 7.83, L30k 8.10 vs 6.73), not just a calibration win.
+- **MLP/ConvLSTM re-eval** (61293777/778): DONE → fresh scores; metric_cards submitted (61369513/515).
+
+### ⏱️ TIMEOUT → fixed & resubmitted (batch E)
+- **scaling 14y** (61231835): TIMEOUT at ep3 47% (24h). RAM ok (233 GB). Just needed more time.
+- **scaling 16y** (61231836): TIMEOUT at ep1 60% (24h). Root cause: I set LOAD_TRAIN_TO_RAM=0 (SSD, 0.6 b/s) out of OOM caution — but fire-season RAM is only ~284 GB, fits 480G. SSD was 1.8× slower → timeout.
+- **scaling 18y** (61231837): same SSD mistake; cancelled (would not finish).
+- **baselines per_leadday** (61293626): TIMEOUT 16h — only got through climatology's 33 leads. NOT resubmitted: the 3 stateless baselines are flat in lead, so the per_window values ARE the flat-line values for the figure. Only fwi_oracle varies by lead (and it's the broken one).
+
+| jobid | submitted | script | run_name | state | result | failure_reason | resub |
+|---|---|---|---|---|---|---|---|
+| 61369513 | 2026-05-21 | metric_card model | baseline_mlp_12y_2014_9ch | PD | — | — | — |
+| 61369515 | 2026-05-21 | metric_card model | baseline_convlstm_12y_2014_9ch | PD | — | — | — |
+| 61369659 | 2026-05-21 | range_master 14y (RAM, 48h) | v3_9ch_enc21_14y_2012 | PD | — | — | — |
+| 61369660 | 2026-05-21 | range_master 16y (RAM, 48h) | v3_9ch_enc21_16y_2010 | PD | — | — | — |
+| 61369661 | 2026-05-21 | range_master 18y (RAM, 48h) | v3_9ch_enc21_18y_2008 | PD | — | — | — |
+
+### Open items (not yet actioned)
+1. **FWI baseline bug** — fwi_threshold/fwi_oracle Lift≈0. Debug fwi_patched date/spatial alignment in benchmark_baselines.load_data.
+2. **persistence sanity** — L30k=12 > model; confirm not a leak (14d gap should prevent direct leak; large fires legitimately persist).
+3. **Scaling full-eval** — run eval_save_scores + metric_card on 8y/10y/14y/16y/18y ckpts for paper-grade 583-win numbers (currently only 20-win samples).
+
 **What each produces**:
 - 61137765 → `outputs/baselines_per_window.csv` (§6 baselines table headline numbers) + `outputs/baselines_per_leadday.csv` (flat baseline curves for lift-vs-lead figure)
 - 61137766 / 67 → trained MLP / ConvLSTM ckpts in `checkpoints/baseline_{mlp,convlstm}_12y_2014_9ch/`, also produces `outputs/baseline_{mlp,convlstm}_..._per_window.json`
