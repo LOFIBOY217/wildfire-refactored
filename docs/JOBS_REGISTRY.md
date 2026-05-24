@@ -223,7 +223,21 @@ Also cancelled 3 unknown PD jobs (61369659–661, submitted 2026-05-22 03:11 —
 
 ### Known follow-ups
 
-1. **FWI baseline bug** (lift ≈ 0) — diagnostic running 2026-05-23. Suspect: nodata-as-nan→0 OK, value range OK, grid OK; remaining hypotheses are (a) spatial mismatch when 2D-reshaped for coarsening, (b) metric path bug for non-[0,1] scores.
+1. **FWI baseline lift ≈ 0 — NOT a bug, real geophysical finding.** Direct
+   diagnostic (2026-05-23, issue 2023-06-15, 33-day lead window):
+   - FWI top-5000 pixels: range 105–135, all in rows 1853–2280 × cols
+     262–683 = **southern Saskatchewan / Alberta dry prairie**.
+   - FWI at *real* fire pixels: mean ≈ 25 (moderate, boreal forest).
+   - Both `max` (fwi_oracle) and `mean` (fwi_threshold) over the lead
+     window peak in the same dry-prairie region — that region has
+     consistently extreme FWI all summer but **NBAC+NFDB rarely records
+     fires there** (NBAC ≥10 ha threshold + grassland under-coverage).
+   - Conclusion: FWI as a pure pixel-level ranker against NBAC+NFDB
+     labels is uninformative at 14–46 d lead. This is paper-worthy
+     ("standard fire-weather guidance fails as a pixel ranker for
+     this label set"), not a fix. Report as-is with this discussion.
+   - Optional sanity: clip FWI > 100 (some 2023-07 values reach 134,
+     likely real but extreme); won't change the conclusion materially.
 2. **Lift@30km in metric_card** — currently `None`. Need to either (a) re-eval saving per-patch + grid info, or (b) load fire labels in compute_full_metric_card and reconstruct 2D from the existing prob_agg + grid metadata in the npz.
 3. **18y scaling** — skipped for now (meteo build alone > 24 h). Paper story works with 8/10/12/14/16y.
 
