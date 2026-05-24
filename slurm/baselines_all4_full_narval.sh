@@ -32,6 +32,9 @@
 
 set -uo pipefail
 EVAL_MODE=${EVAL_MODE:-per_window}
+# Optional: restrict to a single baseline (per-leadday parallelism).
+# Default = all 4 in one job. Set BASELINE=climatology to run only that.
+BASELINE_LIST=${BASELINE:-climatology persistence fwi_threshold fwi_oracle}
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
@@ -59,9 +62,12 @@ $PYTHON -c "import rasterio; print('rasterio:', rasterio.__version__)" || exit 1
 [ -f "$CLIM_TIF" ]       || { echo "ERROR: clim tif missing: $CLIM_TIF"; exit 1; }
 echo "=== PREFLIGHT OK ==="
 
+CSV_TAG="${EVAL_MODE}"
+[ -n "${BASELINE:-}" ] && CSV_TAG="${EVAL_MODE}_${BASELINE}"
+
 $PYTHON -m src.evaluation.benchmark_baselines \
     --config configs/paths_narval.yaml \
-    --baseline climatology persistence fwi_threshold fwi_oracle \
+    --baseline $BASELINE_LIST \
     --eval_mode "$EVAL_MODE" \
     --fire_label_npy "$FIRE_LABEL_NPY" \
     --climatology_tif "$CLIM_TIF" \
@@ -75,7 +81,7 @@ $PYTHON -m src.evaluation.benchmark_baselines \
     --k_values 1000 2500 5000 10000 25000 \
     --n_sample_wins 1000 \
     --fire_season_only \
-    --output_csv "outputs/baselines_${EVAL_MODE}.csv"
+    --output_csv "outputs/baselines_${CSV_TAG}.csv"
 
 PY_EXIT=$?
 echo "=== DONE $(date)  EVAL_MODE=$EVAL_MODE exit=$PY_EXIT ==="
