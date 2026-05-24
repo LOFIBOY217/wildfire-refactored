@@ -154,6 +154,79 @@ scores are stale (2026-05-07) → re-eval first, metric_card after.
 
 ★ After 61293777/778 finish → run metric_card on baseline_{mlp,convlstm}_12y_2014_9ch.
 
+## 2026-05-23 — RESULTS COLLECTED (batches B/C/D outcome)
+
+### Successes — headline numbers
+
+**Baselines (583-win, NBAC+NFDB labels, leak-free upto_2022 clim)** — from `outputs/baselines_per_window.csv`:
+
+| baseline | Lift@5000 | Lift@30km | notes |
+|---|---|---|---|
+| climatology | 7.04× | 2.36× | leak-free annual |
+| persistence | **20.32×** | **12.02×** | ★ surprise: dilation makes this near-cheating (recent fires still burning within 28 km) |
+| fwi_threshold | 0.02× | 0.00× | ★ BROKEN — debug below |
+| fwi_oracle | 0.001× | 0.00× | ★ BROKEN — debug below |
+
+**Model ablations (Lift@5000 with bootstrap 95 % CI, n_wins=435 after fire-season filter)**:
+
+| run | Lift@5000 [CI] | Δ vs SOTA | notes |
+|---|---|---|---|
+| SOTA 9ch enc21 12y | **7.83 [7.44, 8.18]** | (reference) | — |
+| gating global | 7.00 [6.79, 7.22] | −11 % | hurts |
+| gating per_lead | 7.00 [6.78, 7.22] | −11 % | hurts |
+| **gating per_pixel** ⭐ | **9.59 [9.11, 10.03]** | **+22 %** | CI doesn't overlap SOTA — **new SOTA candidate** |
+| 11ch +pop +slope | 8.14 [7.76, 8.51] | +4 % | small improvement, CI overlaps |
+| 12ch_static (lightning) | 8.41 [7.72, 9.07] | +7 % | unexpected — was -22 % at 20-win |
+
+★ Note: `lift_coarse` is `None` in the saved metric cards — `compute_full_metric_card.py` doesn't recompute Lift@30km from the aggregated `prob_agg` npz format. Separate follow-up.
+
+**Per-lead-day model curve** (`outputs/per_lead/v3_9ch_enc21_12y_2014.json`, 583 windows):
+
+| lead | median Lift@30km |
+|---|---|
+| 14 | 6.52 |
+| 18 | 6.77 |
+| 22 | **6.88** (peak) |
+| 30 | 6.74 |
+| 38 | 6.55 |
+| 42 | 6.02 |
+
+★ Skill is essentially flat across 14–38 d lead — paper figure ready.
+
+**Scaling sweep** (best Lift@5000 from training-time 20-win val):
+
+| range | Lift@5000 | state |
+|---|---|---|
+| 8y_2018 (61231833) | 4.37× | COMPLETED |
+| 10y_2016 (61231834) | 6.30× | COMPLETED |
+| 12y_2014 (existing SOTA) | 8.07× | reference |
+| 14y_2012 (61231835) | — | TIMEOUT at ep3 47 % (24 h not enough) |
+| 16y_2010 (61231836) | — | TIMEOUT at ep1 60 % (SSD memmap = 2× slower) |
+| 18y_2008 (61231837) | — | CANCELLED while still building meteo cache |
+
+★ Monotonic increase 4.37 → 6.30 → 8.07 — the paper scaling story holds.
+
+### 2026-05-23 batch E — failures resubmit + missing metric_cards
+
+| jobid | submitted | purpose | state |
+|---|---|---|---|
+| 61471276 | 2026-05-23 | metric_card MLP | R |
+| 61471277 | 2026-05-23 | metric_card ConvLSTM | R |
+| 61471278 | 2026-05-23 | scaling 14y (48 h, RAM on) | PD |
+| 61471279 | 2026-05-23 | scaling 16y (48 h, RAM on — was SSD memmap before) | PD |
+| 61471497 | 2026-05-23 | baselines per_leadday climatology only | PD |
+| 61471498 | 2026-05-23 | baselines per_leadday persistence only | PD |
+| 61471499 | 2026-05-23 | baselines per_leadday fwi_threshold only | PD |
+| 61471500 | 2026-05-23 | baselines per_leadday fwi_oracle only | PD |
+
+Also cancelled 3 unknown PD jobs (61369659–661, submitted 2026-05-22 03:11 — origin unclear, cancelled to avoid duplicate compute).
+
+### Known follow-ups
+
+1. **FWI baseline bug** (lift ≈ 0) — diagnostic running 2026-05-23. Suspect: nodata-as-nan→0 OK, value range OK, grid OK; remaining hypotheses are (a) spatial mismatch when 2D-reshaped for coarsening, (b) metric path bug for non-[0,1] scores.
+2. **Lift@30km in metric_card** — currently `None`. Need to either (a) re-eval saving per-patch + grid info, or (b) load fire labels in compute_full_metric_card and reconstruct 2D from the existing prob_agg + grid metadata in the npz.
+3. **18y scaling** — skipped for now (meteo build alone > 24 h). Paper story works with 8/10/12/14/16y.
+
 ## 2026-05-21 — batch B/C/D outcomes + batch E resubmits
 
 ### ✅ Completed
