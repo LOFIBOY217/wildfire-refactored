@@ -6,7 +6,7 @@
 # daily channel stack (T*n_patches*P*P*2 bytes) ~ 65 GB; with 2t + sm20
 # + FWI + fire_label ~ 227 GB > 200 GB cap. 400G covers all 5 channels
 # plus logreg fit + scoring.
-#SBATCH --time=0-06:00:00
+#SBATCH --time=0-12:00:00
 #SBATCH --output=/scratch/jiaqi217/logs/logreg_baseline_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/logreg_baseline_%j.err
 #SBATCH --account=def-inghaw
@@ -62,7 +62,7 @@ python3 -u -m scripts.benchmark_logreg \
     --fire_label_npy "$LABEL_NPY" \
     --climatology_tif "$CLIM_TIF" \
     --n_train_wins 80 \
-    --n_sample_wins 20 \
+    --n_sample_wins ${N_SAMPLE_WINS:-9999} \
     --output_csv "$OUT_CSV"
 
 echo "=== done $(date) ==="
