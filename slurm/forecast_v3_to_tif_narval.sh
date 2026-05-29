@@ -46,18 +46,10 @@ cuda_probe || exit 1
 # eval jobs and avoids per-day Lustre reads.
 LOCAL_CACHE=$SLURM_TMPDIR/cache
 mkdir -p "$LOCAL_CACHE"
+# Only the S2S decoder cache is needed locally — forecast_v3_to_tif.py
+# reads raw FWI/ERA5 tifs straight from config paths (just ~21 days per
+# issue date), so the pre-patched 12y meteo memmap is NOT required.
 copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
-
-CACHE_DIR_LUSTRE="$SCRATCH/meteo_cache/v3_9ch_12y_2014"
-LOCAL_METEO="$LOCAL_CACHE/meteo"
-mkdir -p "$LOCAL_METEO"
-echo "=== copy 12y meteo to local SSD ==="
-t0=$SECONDS
-for f in "$CACHE_DIR_LUSTRE"/*; do
-    [ -f "$f" ] || continue
-    cp "$f" "$LOCAL_METEO/" || { echo "FATAL: cache copy failed"; exit 1; }
-done
-echo "  done in $((SECONDS - t0))s"
 
 [ -f "$CKPT" ] || { echo "ERROR: checkpoint missing: $CKPT"; exit 1; }
 
@@ -73,7 +65,6 @@ $PYTHON -u -m src.forecasting.forecast_v3_to_tif \
     --ckpt "$CKPT" \
     --issue_dates $ISSUE_DATES \
     --out_dir "$OUT_DIR" \
-    --cache_dir "$LOCAL_METEO" \
     --s2s_cache "$LOCAL_CACHE/s2s_decoder_cache.dat"
 
 PY_EXIT=$?
