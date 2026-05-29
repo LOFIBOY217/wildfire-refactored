@@ -79,7 +79,8 @@ def main():
              "persistence", "climatology", "fwi_oracle"]
     order = [m for m in order if m in rows]
 
-    fig, axes = plt.subplots(1, 4, figsize=(15, 4.4))
+    fig, axes2d = plt.subplots(2, 2, figsize=(9.5, 8.4))
+    axes = axes2d.flatten()
     for ax, (m, title, _) in zip(axes, METRICS):
         xs = np.arange(len(order))
         means = np.array([rows[k].get(m, (np.nan,)*3)[0] for k in order])
@@ -114,9 +115,9 @@ def main():
         ax.set_xticks(xs)
         ax.set_xticklabels([LABELS[k] for k in order], rotation=40, ha="right", fontsize=7)
         ax.set_title(title, fontsize=9.5)
-    fig.suptitle("Multi-metric comparison (full 435-window validation, NBAC+NFDB)  "
+    fig.suptitle("Multi-metric comparison (full 435-window validation, NBAC+NFDB)\n"
                  "▼ = best.  Persistence wins rank metrics (degenerate); "
-                 "SOTA wins recall-weighted F2.", fontsize=10, y=1.04)
+                 "SOTA wins recall-weighted F2.", fontsize=10, y=1.0)
     fig.tight_layout()
     for ext in ("pdf", "png"):
         fig.savefig(os.path.join(OUT_DIR, f"fig2b_multimetric.{ext}"), bbox_inches="tight")
