@@ -33,6 +33,11 @@
 set -uo pipefail
 RANGE_TAG=${RANGE_TAG:?Must set RANGE_TAG (e.g. 10y_2016)}
 DATA_START=${DATA_START:?Must set DATA_START (e.g. 2016-05-01)}
+# Master-cache slices must stop within the master cache length
+# (v3_9ch_2000 T=9332 ≈ 2025-11-17). Default pred_end 2025-09-23 keeps
+# t_offset+T <= 9332 for all start years; late-2025 windows are ~empty
+# (NBAC 2025 not released) so dropping them is harmless.
+PRED_END=${PRED_END:-2025-09-23}
 
 export SCRATCH=${SCRATCH:-/scratch/jiaqi217}
 [[ -z "$(command -v module)" ]] && source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
@@ -86,7 +91,7 @@ $PYTHON -u -m src.training.train_v3 \
     --run_name "${RUN_NAME}_eval_full" \
     --eval_checkpoint "$CKPT" \
     --epochs 0 \
-    --data_start "$DATA_START" --pred_start 2022-05-01 --pred_end 2025-10-31 \
+    --data_start "$DATA_START" --pred_start 2022-05-01 --pred_end "$PRED_END" \
     --channels "$CHANNELS" --in_days 21 \
     --decoder s2s_legacy --s2s_cache "$LOCAL_CACHE/s2s_decoder_cache.dat" --s2s_max_issue_lag 3 \
     --loss_fn focal --focal_alpha 0.25 --focal_gamma 2.0 \
