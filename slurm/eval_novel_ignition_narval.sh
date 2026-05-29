@@ -34,7 +34,7 @@ python3 -u -m scripts.evaluate_novel_ignition \
     --fire_label_npy "$LABEL_NPY" \
     --climatology_tif "$CLIM_TIF" \
     --k_values 1000 2500 5000 10000 \
-    --n_sample_wins 20 \
+    --n_sample_wins 9999 \
     --output_csv "$SCRATCH/wildfire-refactored/outputs/benchmark_novel.csv"
 
 echo "=== done $(date) ==="
