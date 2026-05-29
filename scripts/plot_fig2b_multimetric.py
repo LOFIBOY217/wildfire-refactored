@@ -117,7 +117,7 @@ def main():
         ax.set_title(title, fontsize=9.5)
     fig.suptitle("Multi-metric comparison (full 435-window validation, NBAC+NFDB)\n"
                  "▼ = best.  Persistence wins rank metrics (degenerate); "
-                 "SOTA wins recall-weighted F2.", fontsize=10, y=1.0)
+                 "our models win recall-weighted F2.", fontsize=10, y=1.0)
     fig.tight_layout()
     for ext in ("pdf", "png"):
         fig.savefig(os.path.join(OUT_DIR, f"fig2b_multimetric.{ext}"), bbox_inches="tight")
