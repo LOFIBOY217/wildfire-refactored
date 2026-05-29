@@ -68,26 +68,38 @@ def main():
         label_start = date.fromisoformat(json.load(open(sidecar))["date_range"][0])
         print(f"  label_start (sidecar): {label_start}")
 
-    # Window filenames present in the FIRST dir; require in all others.
-    base_files = sorted(os.path.basename(f)
-                        for f in glob.glob(os.path.join(dirs[0], "window_*.npz")))
-    print(f"  {len(base_files)} candidate windows")
+    # Members differ in encoder length → different #windows AND different
+    # window-index numbering. The filename suffix is the forecast DATE
+    # (window_NNNN_YYYY-MM-DD.npz). Index each member by DATE, then keep
+    # dates present in ALL members (= the 10-way ensemble intersection,
+    # matching the ~402-window ensemble Lift JSON).
+    def date_index(d):
+        out = {}
+        for f in glob.glob(os.path.join(d, "window_*.npz")):
+            stem = os.path.basename(f)[:-4]          # window_NNNN_YYYY-MM-DD
+            ds = stem.split("_")[-1]                  # YYYY-MM-DD
+            out[ds] = f
+        return out
+
+    member_idx = [date_index(d) for d in dirs]
+    common = set(member_idx[0])
+    for mi in member_idx[1:]:
+        common &= set(mi)
+    common_dates = sorted(common)
+    print(f"  {len(common_dates)} dates present in ALL {len(dirs)} members")
 
     rows = []
-    for bf in base_files:
-        paths = [os.path.join(d, bf) for d in dirs]
-        if not all(os.path.exists(p) for p in paths):
-            continue  # window missing in some member → skip
+    for ds in common_dates:
+        paths = [mi[ds] for mi in member_idx]
         # prob-mean across members; label + indices from the first member
-        probs = []
         z0 = np.load(paths[0])
-        for p in paths:
-            probs.append(np.load(p)["prob_agg"].astype(np.float32))
+        probs = [np.load(p)["prob_agg"].astype(np.float32) for p in paths]
+        # guard: all members must share the same patch layout for this date
+        if len({pr.shape for pr in probs}) != 1:
+            continue
         prob = np.mean(probs, axis=0)                       # (n_patches, P²)
         label_total = z0["label_agg"].astype(np.uint8)
-        win_date_str = str(z0["win_date"])
-        if not win_date_str:
-            continue
+        win_date_str = str(z0["win_date"]) or ds
         win_date = date.fromisoformat(win_date_str)
 
         rec = {"run": args.run_name, "win_date": win_date_str,
@@ -123,6 +135,8 @@ def main():
               + " ".join(f"novel_{lb}={rec.get(f'lift_novel_{lb}d_5000', 0):.2f}x"
                          for lb in args.lookback_days_list))
 
+    if not rows:
+        sys.exit("ERROR: no common windows across members — nothing to write")
     os.makedirs(os.path.dirname(args.output_csv) or ".", exist_ok=True)
     with open(args.output_csv, "w") as f:
         wr = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
