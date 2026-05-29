@@ -29,9 +29,16 @@ cd $SCRATCH/wildfire-refactored
 export PYTHONPATH=$SCRATCH/wildfire-refactored:$PYTHONPATH
 export PYTHONUNBUFFERED=1
 
-SCORES_DIR="outputs/v3_9ch_enc21_12y_2014_FULL_window_scores"
+# RUN_NAME selects which model's score dump to process. Defaults to SOTA.
+#   RUN_NAME=v3_9ch_enc21_12y_2014        → SOTA            (out tag: SOTA)
+#   RUN_NAME=baseline_convlstm_12y_2014_9ch → ConvLSTM
+#   RUN_NAME=baseline_mlp_12y_2014_9ch      → MLP
+RUN_NAME=${RUN_NAME:-v3_9ch_enc21_12y_2014}
+OUT_TAG=${OUT_TAG:-$RUN_NAME}
+
+SCORES_DIR="outputs/${RUN_NAME}_FULL_window_scores"
 LABEL_NPY="data/fire_labels/fire_labels_nbac_nfdb_2000-05-01_2025-12-21_2281x2709_r14.npy"
-OUT_CSV="outputs/model_novel_lift_SOTA_full.csv"
+OUT_CSV="outputs/model_novel_lift_${OUT_TAG}_full.csv"
 
 [ -d "$SCORES_DIR" ] || { echo "ERROR: scores dir missing: $SCORES_DIR"; exit 1; }
 [ -f "$LABEL_NPY" ]  || { echo "ERROR: label npy missing: $LABEL_NPY"; exit 1; }
@@ -44,7 +51,7 @@ python3 -u -m scripts.compute_lift_from_scores \
     --patch_size 16 \
     --lookback_days_list 7 30 90 \
     --k_values 1000 5000 10000 \
-    --run_name v3_9ch_enc21_12y_2014_SOTA \
+    --run_name "$OUT_TAG" \
     --output_csv "$OUT_CSV"
 
 PY_EXIT=$?

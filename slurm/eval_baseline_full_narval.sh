@@ -59,6 +59,8 @@ CACHE_DIR_LUSTRE="$SCRATCH/meteo_cache/v3_9ch_12y_2014"
 RUN_NAME="baseline_${MODEL_TYPE}_12y_2014_9ch"
 CKPT="$SCRATCH/wildfire-refactored/checkpoints/${RUN_NAME}/best_model.pt"
 OUT_JSON="$SCRATCH/wildfire-refactored/outputs/${RUN_NAME}_FULL_per_window.json"
+SCORES_DIR="$SCRATCH/wildfire-refactored/outputs/${RUN_NAME}_FULL_window_scores"
+mkdir -p "$SCORES_DIR"
 
 [ -f "$CKPT" ] || { echo "ERROR: checkpoint missing: $CKPT"; exit 1; }
 
@@ -100,7 +102,8 @@ $PYTHON -u -m src.training.train_v3 \
     --fire_clim_dir data/fire_clim_annual_nbac \
     --wandb_project wildfire-s2s \
     --wandb_tags "baseline,${MODEL_TYPE},9ch,12y_2014,eval_full" \
-    --save_per_window_json "$OUT_JSON"
+    --save_per_window_json "$OUT_JSON" \
+    --save_window_scores_dir "$SCORES_DIR"
 
 PY_EXIT=$?
 echo "=== Done $(date) exit=$PY_EXIT ==="
