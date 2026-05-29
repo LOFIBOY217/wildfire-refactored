@@ -52,17 +52,32 @@ def baseline_vals(csv_path):
     return out
 
 
-def sota_vals():
-    """Prefer real full-window SOTA novel CSV; fall back to 4y proxy."""
-    full = os.path.join(EVAL_DIR, "model_novel_lift_SOTA_full.csv")
-    proxy = os.path.join(EVAL_DIR, "model_novel_lift_enc21.csv")
-    path = full if os.path.exists(full) else proxy
-    tag = "full-window" if os.path.exists(full) else "4y proxy (preliminary)"
-    m = pd.read_csv(path)
+def model_vals(csv_path):
+    """Read a model_novel_lift_*_full.csv → mean total + novel_30d Lift@5000."""
+    m = pd.read_csv(csv_path)
     return {
         "total":     float(m["lift_total_5000"].mean()),
         "novel_30d": float(m["lift_novel_30d_5000"].mean()),
-    }, tag
+    }
+
+
+def sota_vals():
+    """Prefer real full-window SOTA novel CSV; fall back to 4y proxy."""
+    full = os.path.join(EVAL_DIR, "model_novel_lift_v3_9ch_enc21_12y_2014_full.csv")
+    full2 = os.path.join(EVAL_DIR, "model_novel_lift_SOTA_full.csv")
+    proxy = os.path.join(EVAL_DIR, "model_novel_lift_enc21.csv")
+    if os.path.exists(full):
+        return model_vals(full), "full-window"
+    if os.path.exists(full2):
+        return model_vals(full2), "full-window"
+    return model_vals(proxy), "4y proxy (preliminary)"
+
+
+# Optional DL-baseline novel CSVs (present once their re-eval + compute lands)
+DL_MODELS = {
+    "convlstm": "model_novel_lift_baseline_convlstm_12y_2014_9ch_full.csv",
+    "mlp":      "model_novel_lift_baseline_mlp_12y_2014_9ch_full.csv",
+}
 
 
 def main():
@@ -76,6 +91,11 @@ def main():
         "persistence": base["persistence"],
         "fwi_oracle":  base["fwi_oracle"],
     }
+    # add ConvLSTM / MLP novel if their CSVs have landed
+    for key, fname in DL_MODELS.items():
+        p = os.path.join(EVAL_DIR, fname)
+        if os.path.exists(p):
+            rows[key] = model_vals(p)
     # order by standard Lift descending so persistence (highest) is first
     order = sorted(rows, key=lambda m: rows[m]["total"], reverse=True)
 
