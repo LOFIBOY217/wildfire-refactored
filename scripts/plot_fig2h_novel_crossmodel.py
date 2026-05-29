@@ -73,10 +73,12 @@ def sota_vals():
     return model_vals(proxy), "4y proxy (preliminary)"
 
 
-# Optional DL-baseline novel CSVs (present once their re-eval + compute lands)
+# Optional model novel CSVs (present once their compute job lands).
+# Auto-included in Fig 2-H when the file exists.
 DL_MODELS = {
-    "convlstm": "model_novel_lift_baseline_convlstm_12y_2014_9ch_full.csv",
-    "mlp":      "model_novel_lift_baseline_mlp_12y_2014_9ch_full.csv",
+    "ensemble_prob": "model_novel_lift_ensemble_full.csv",
+    "convlstm":      "model_novel_lift_baseline_convlstm_12y_2014_9ch_full.csv",
+    "mlp":           "model_novel_lift_baseline_mlp_12y_2014_9ch_full.csv",
 }
 
 
