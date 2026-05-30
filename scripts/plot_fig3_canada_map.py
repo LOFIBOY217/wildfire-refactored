@@ -46,9 +46,9 @@ OUT_DIR = os.path.join(ROOT, "figures")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 PROB_TIFS = [
-    ("v2_prob_20230515_lead14d.tif", "Lead 14 d  →  2023-05-29"),
-    ("v2_prob_20230515_lead30d.tif", "Lead 30 d  →  2023-06-14"),
-    ("v2_prob_20230515_lead45d.tif", "Lead 45 d  →  2023-06-29"),
+    ("sota_prob_20230515_lead14d.tif", "Lead 14 d  →  2023-05-29"),
+    ("sota_prob_20230515_lead30d.tif", "Lead 30 d  →  2023-06-14"),
+    ("sota_prob_20230515_lead45d.tif", "Lead 45 d  →  2023-06-29"),
 ]
 ACTUAL_TIF = "fire_actual_20230529_20230629.tif"
 SHP = os.path.join(MAPS_DIR, "ne_50m_admin_1",
@@ -181,7 +181,7 @@ def main():
     cbar.set_label("Predicted fire probability", fontsize=9)
 
     fig.suptitle(
-        "Forecast issued 2023-05-15  —  Patch Transformer (V2, 8.5 M params)",
+        "Forecast issued 2023-05-15  —  Patch Transformer (V3 SOTA, 8.5 M params)",
         fontsize=12, y=0.96,
     )
     pdf = os.path.join(OUT_DIR, "fig3_canada_map_20230515.pdf")
