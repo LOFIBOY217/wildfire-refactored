@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-scaling-eval
 #SBATCH --gpus-per-node=1
-#SBATCH --time=0-09:00:00
+#SBATCH --time=0-14:00:00
 #SBATCH --mem=400G
 #SBATCH --output=/scratch/jiaqi217/logs/scaling_eval_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/scaling_eval_%j.err
@@ -68,15 +68,29 @@ if [ -d "$SCRATCH/meteo_cache/${RUN_NAME#v3_9ch_enc21_}" ]; then : ; fi
 OWN_CACHE="$SCRATCH/meteo_cache/v3_9ch_${RANGE_TAG}"
 MASTER_CACHE="$SCRATCH/meteo_cache/v3_9ch_2000"
 if [ -d "$OWN_CACHE" ] && [ -n "$(ls -A "$OWN_CACHE" 2>/dev/null)" ]; then
-    CACHE_DIR="$OWN_CACHE"
-    echo "  using OWN cache: $CACHE_DIR"
-elif [ "$DATA_START" = "2000-05-01" ]; then
-    CACHE_DIR="$MASTER_CACHE"
-    echo "  using MASTER cache directly (22y): $CACHE_DIR"
+    SRC_CACHE="$OWN_CACHE"; USE_MASTER=0
+    echo "  source cache: OWN $SRC_CACHE"
 else
-    CACHE_DIR="$MASTER_CACHE"
-    MASTER_ARGS="--master_cache_dir $MASTER_CACHE --master_data_start 2000-05-01"
-    echo "  using MASTER cache with time-slice: $CACHE_DIR  (data_start=$DATA_START)"
+    SRC_CACHE="$MASTER_CACHE"
+    USE_MASTER=$([ "$DATA_START" = "2000-05-01" ] && echo 0 || echo 1)
+    echo "  source cache: MASTER $SRC_CACHE (time-slice=$USE_MASTER)"
+fi
+
+# Copy cache to local SSD — reading the 1.2 TB master cache straight
+# from Lustre timed out at 9 h (random per-window reads). The SOTA eval
+# that COMPLETED in 4.4 h copied its cache to SSD first; do the same.
+LOCAL_METEO="$LOCAL_CACHE/meteo"
+mkdir -p "$LOCAL_METEO"
+echo "=== copy cache to local SSD: $SRC_CACHE ==="
+t0=$SECONDS
+for f in "$SRC_CACHE"/*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$LOCAL_METEO/" || { echo "FATAL: cache copy failed"; exit 1; }
+done
+echo "  done in $((SECONDS - t0))s"
+CACHE_DIR="$LOCAL_METEO"
+if [ "$USE_MASTER" = "1" ]; then
+    MASTER_ARGS="--master_cache_dir $LOCAL_METEO --master_data_start 2000-05-01"
 fi
 
 echo "============================================="
