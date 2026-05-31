@@ -67,7 +67,14 @@ MASTER_ARGS=""
 if [ -d "$SCRATCH/meteo_cache/${RUN_NAME#v3_9ch_enc21_}" ]; then : ; fi
 OWN_CACHE="$SCRATCH/meteo_cache/v3_9ch_${RANGE_TAG}"
 MASTER_CACHE="$SCRATCH/meteo_cache/v3_9ch_2000"
-if [ -d "$OWN_CACHE" ] && [ -n "$(ls -A "$OWN_CACHE" 2>/dev/null)" ]; then
+# FORCE_MASTER=1 forces master-slice from v3_9ch_2000 regardless of an
+# own-cache match. Required when DATA_START differs from the cache's
+# natural start (e.g. a late eval-only DATA_START=2021 against the 22y
+# model), so frame indexing uses master_data_start=2000-05-01.
+if [ "${FORCE_MASTER:-0}" = "1" ]; then
+    SRC_CACHE="$MASTER_CACHE"; USE_MASTER=1
+    echo "  source cache: MASTER (forced) $SRC_CACHE"
+elif [ -d "$OWN_CACHE" ] && [ -n "$(ls -A "$OWN_CACHE" 2>/dev/null)" ]; then
     SRC_CACHE="$OWN_CACHE"; USE_MASTER=0
     echo "  source cache: OWN $SRC_CACHE"
 else
@@ -76,21 +83,29 @@ else
     echo "  source cache: MASTER $SRC_CACHE (time-slice=$USE_MASTER)"
 fi
 
-# Copy cache to local SSD — reading the 1.2 TB master cache straight
-# from Lustre timed out at 9 h (random per-window reads). The SOTA eval
-# that COMPLETED in 4.4 h copied its cache to SSD first; do the same.
-LOCAL_METEO="$LOCAL_CACHE/meteo"
-mkdir -p "$LOCAL_METEO"
-echo "=== copy cache to local SSD: $SRC_CACHE ==="
-t0=$SECONDS
-for f in "$SRC_CACHE"/*; do
-    [ -f "$f" ] || continue
-    cp "$f" "$LOCAL_METEO/" || { echo "FATAL: cache copy failed"; exit 1; }
-done
-echo "  done in $((SECONDS - t0))s"
-CACHE_DIR="$LOCAL_METEO"
+# SKIP_COPY=1 reads the cache straight from Lustre (no SSD copy). Safe
+# and fast ONLY with a late DATA_START (e.g. 2021-05-01) so eval touches
+# just ~4y of frames — Lustre IO then stays small. Eval results are
+# identical to a full-range data_start because val windows (2022+),
+# encoder inputs, and norm stats (from ckpt) do not depend on data_start;
+# data_start only controls how many frames get loaded at setup.
+if [ "${SKIP_COPY:-0}" = "1" ]; then
+    CACHE_DIR="$SRC_CACHE"
+    echo "=== SKIP_COPY: reading cache from Lustre directly: $SRC_CACHE ==="
+else
+    LOCAL_METEO="$LOCAL_CACHE/meteo"
+    mkdir -p "$LOCAL_METEO"
+    echo "=== copy cache to local SSD: $SRC_CACHE ==="
+    t0=$SECONDS
+    for f in "$SRC_CACHE"/*; do
+        [ -f "$f" ] || continue
+        cp "$f" "$LOCAL_METEO/" || { echo "FATAL: cache copy failed"; exit 1; }
+    done
+    echo "  done in $((SECONDS - t0))s"
+    CACHE_DIR="$LOCAL_METEO"
+fi
 if [ "$USE_MASTER" = "1" ]; then
-    MASTER_ARGS="--master_cache_dir $LOCAL_METEO --master_data_start 2000-05-01"
+    MASTER_ARGS="--master_cache_dir $CACHE_DIR --master_data_start 2000-05-01"
 fi
 
 echo "============================================="
