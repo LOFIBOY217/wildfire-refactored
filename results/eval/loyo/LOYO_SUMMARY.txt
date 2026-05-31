@@ -1,0 +1,7 @@
+LOYO macro Lift@5000=8.05±2.10, Lift@30km=7.21±1.84
+LOYO micro Lift@5000=8.05[7.04,9.05], Lift@30km=7.21[6.32,8.19]
+  val2020: Lift5k=8.54 Lift30km=7.81 BSS=-0.928 n=20
+  val2021: Lift5k=10.38 Lift30km=8.67 BSS=-0.116 n=20
+  val2022: Lift5k=9.07 Lift30km=8.99 BSS=-0.154 n=20
+  val2023: Lift5k=4.80 Lift30km=4.74 BSS=0.063 n=20
+  val2024: Lift5k=7.47 Lift30km=5.86 BSS=0.048 n=20
