@@ -24,7 +24,7 @@ for tag,t0,t1 in [('20220829_20220929',date(2022,8,29),date(2022,9,29)),
                   ('20230829_20230929',date(2023,8,29),date(2023,9,29))]:
     i0=(t0-S0).days; i1=(t1-S0).days
     u=(labels[i0:i1+1].sum(0)>0).astype('uint8')
-    out=f'/tmp/fire_actual_{tag}.tif'
+    out=f'outputs/fire_actual_{tag}.tif'
     with rasterio.open(out,'w',**prof) as d: d.write(u,1)
     print(tag,'fire px',int(u.sum()),'->',out)
 PY
