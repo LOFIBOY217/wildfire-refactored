@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf-encsweep-eval
 #SBATCH --gpus-per-node=1
-#SBATCH --time=0-04:00:00
+#SBATCH --time=0-16:00:00
 #SBATCH --mem=400G
 #SBATCH --output=/scratch/jiaqi217/logs/encsweep_eval_%j.log
 #SBATCH --error=/scratch/jiaqi217/logs/encsweep_eval_%j.err

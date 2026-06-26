@@ -79,7 +79,7 @@ $PYTHON -m src.evaluation.benchmark_baselines \
     --patch_size 16 \
     --dilate_radius 14 \
     --k_values 1000 2500 5000 10000 25000 \
-    --n_sample_wins 1000 \
+    --n_sample_wins ${N_SAMPLE_WINS:-1000} \
     --fire_season_only \
     --output_csv "outputs/baselines_${CSV_TAG}.csv"
 
