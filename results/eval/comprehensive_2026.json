@@ -1,0 +1,3086 @@
+{
+ "convstem": {
+  "20260323": {
+   "total": {
+    "lift_5000": 13.026459833148824,
+    "recall_5000": 0.012961937898676789,
+    "lift_30km": {
+     "lift_coarse": 12.851568145685794,
+     "baseline_coarse": 0.04597953216374269,
+     "n_fire_coarse": 1258,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 13.66998687821136,
+    "recall_5000": 0.013602277461463686,
+    "lift_30km": {
+     "lift_coarse": 13.038123167155426,
+     "baseline_coarse": 0.04532163742690058,
+     "n_fire_coarse": 1240,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 13.520042219864967,
+    "recall_5000": 0.013453075500637892,
+    "lift_30km": {
+     "lift_coarse": 13.251862891207155,
+     "baseline_coarse": 0.0445906432748538,
+     "n_fire_coarse": 1220,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260326": {
+   "total": {
+    "lift_5000": 9.155501304656367,
+    "recall_5000": 0.009110152786117631,
+    "lift_30km": {
+     "lift_coarse": 15.602817846360281,
+     "baseline_coarse": 0.04952485380116959,
+     "n_fire_coarse": 1355,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 9.479269985086479,
+    "recall_5000": 0.009432317793573628,
+    "lift_30km": {
+     "lift_coarse": 15.82471420794774,
+     "baseline_coarse": 0.04883040935672515,
+     "n_fire_coarse": 1336,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 9.410568323605554,
+    "recall_5000": 0.009363956421331452,
+    "lift_30km": {
+     "lift_coarse": 16.089663760896638,
+     "baseline_coarse": 0.04802631578947368,
+     "n_fire_coarse": 1314,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260330": {
+   "total": {
+    "lift_5000": 14.861633627586663,
+    "recall_5000": 0.014788021812607863,
+    "lift_30km": {
+     "lift_coarse": 16.041473801147937,
+     "baseline_coarse": 0.053837719298245615,
+     "n_fire_coarse": 1473,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 15.158690474444786,
+    "recall_5000": 0.015083607294056433,
+    "lift_30km": {
+     "lift_coarse": 16.307171089779786,
+     "baseline_coarse": 0.05296052631578947,
+     "n_fire_coarse": 1449,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 15.282389994153615,
+    "recall_5000": 0.015206694112201895,
+    "lift_30km": {
+     "lift_coarse": 16.57018997832462,
+     "baseline_coarse": 0.05211988304093567,
+     "n_fire_coarse": 1426,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260402": {
+   "total": {
+    "lift_5000": 9.79645404355859,
+    "recall_5000": 0.009747930793653938,
+    "lift_30km": {
+     "lift_coarse": 11.423481601068863,
+     "baseline_coarse": 0.059685672514619884,
+     "n_fire_coarse": 1633,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 10.192361763218429,
+    "recall_5000": 0.010141877525273124,
+    "lift_30km": {
+     "lift_coarse": 11.67368301285698,
+     "baseline_coarse": 0.05840643274853801,
+     "n_fire_coarse": 1598,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 10.509019327165685,
+    "recall_5000": 0.010456966638631904,
+    "lift_30km": {
+     "lift_coarse": 11.851680720803973,
+     "baseline_coarse": 0.057529239766081874,
+     "n_fire_coarse": 1574,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260406": {
+   "total": {
+    "lift_5000": 8.889438322130989,
+    "recall_5000": 0.008845407651921256,
+    "lift_30km": {
+     "lift_coarse": 10.635430703845755,
+     "baseline_coarse": 0.06410818713450292,
+     "n_fire_coarse": 1754,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 8.360507205320976,
+    "recall_5000": 0.008319096407225092,
+    "lift_30km": {
+     "lift_coarse": 10.175867382179481,
+     "baseline_coarse": 0.06253654970760233,
+     "n_fire_coarse": 1711,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 8.619111282990277,
+    "recall_5000": 0.008576419581597003,
+    "lift_30km": {
+     "lift_coarse": 10.339019650183545,
+     "baseline_coarse": 0.06154970760233918,
+     "n_fire_coarse": 1684,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260409": {
+   "total": {
+    "lift_5000": 7.444634736764585,
+    "recall_5000": 0.00740776038710963,
+    "lift_30km": {
+     "lift_coarse": 7.390599675850892,
+     "baseline_coarse": 0.06765350877192983,
+     "n_fire_coarse": 1851,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.871651343223254,
+    "recall_5000": 0.006837615062962838,
+    "lift_30km": {
+     "lift_coarse": 7.60845383759733,
+     "baseline_coarse": 0.06571637426900585,
+     "n_fire_coarse": 1798,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.140795716743004,
+    "recall_5000": 0.0071054263255795344,
+    "lift_30km": {
+     "lift_coarse": 7.694038245219348,
+     "baseline_coarse": 0.06498538011695906,
+     "n_fire_coarse": 1778,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260413": {
+   "total": {
+    "lift_5000": 7.223467866657949,
+    "recall_5000": 0.0071876889884114345,
+    "lift_30km": {
+     "lift_coarse": 9.341284654254109,
+     "baseline_coarse": 0.07298976608187134,
+     "n_fire_coarse": 1997,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.425898205367125,
+    "recall_5000": 0.007389116660454715,
+    "lift_30km": {
+     "lift_coarse": 9.655561829474873,
+     "baseline_coarse": 0.0706140350877193,
+     "n_fire_coarse": 1932,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.759199643656897,
+    "recall_5000": 0.007720767208645701,
+    "lift_30km": {
+     "lift_coarse": 9.797555385790679,
+     "baseline_coarse": 0.0695906432748538,
+     "n_fire_coarse": 1904,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260416": {
+   "total": {
+    "lift_5000": 7.674855803077773,
+    "recall_5000": 0.007636841135274604,
+    "lift_30km": {
+     "lift_coarse": 9.43041792330892,
+     "baseline_coarse": 0.07711988304093567,
+     "n_fire_coarse": 2110,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 8.139776204712172,
+    "recall_5000": 0.008099458719100236,
+    "lift_30km": {
+     "lift_coarse": 9.773173781032327,
+     "baseline_coarse": 0.07441520467836257,
+     "n_fire_coarse": 2036,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 8.452120984615386,
+    "recall_5000": 0.00841025641025641,
+    "lift_30km": {
+     "lift_coarse": 9.879931389365352,
+     "baseline_coarse": 0.07361111111111111,
+     "n_fire_coarse": 2014,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260420": {
+   "total": {
+    "lift_5000": 7.8490357799650665,
+    "recall_5000": 0.007810158373612896,
+    "lift_30km": {
+     "lift_coarse": 9.493407356002775,
+     "baseline_coarse": 0.0861842105263158,
+     "n_fire_coarse": 2358,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 8.202236271433174,
+    "recall_5000": 0.008161609412101615,
+    "lift_30km": {
+     "lift_coarse": 9.909453096704093,
+     "baseline_coarse": 0.08256578947368422,
+     "n_fire_coarse": 2259,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 8.503065426387273,
+    "recall_5000": 0.008460948516860047,
+    "lift_30km": {
+     "lift_coarse": 10.02483410006921,
+     "baseline_coarse": 0.08161549707602339,
+     "n_fire_coarse": 2233,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260423": {
+   "total": {
+    "lift_5000": 6.31089789662906,
+    "recall_5000": 0.006279639109071922,
+    "lift_30km": {
+     "lift_coarse": 8.30128569803163,
+     "baseline_coarse": 0.08760964912280701,
+     "n_fire_coarse": 2397,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.319273964687784,
+    "recall_5000": 0.006287973689257399,
+    "lift_30km": {
+     "lift_coarse": 8.7311021580438,
+     "baseline_coarse": 0.083296783625731,
+     "n_fire_coarse": 2279,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.49041665059089,
+    "recall_5000": 0.006458268680751843,
+    "lift_30km": {
+     "lift_coarse": 8.820116054158607,
+     "baseline_coarse": 0.0824561403508772,
+     "n_fire_coarse": 2256,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260427": {
+   "total": {
+    "lift_5000": 5.645338408421576,
+    "recall_5000": 0.005617376233008904,
+    "lift_30km": {
+     "lift_coarse": 7.6767676767676765,
+     "baseline_coarse": 0.08881578947368421,
+     "n_fire_coarse": 2430,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.525447000666954,
+    "recall_5000": 0.0045030318089284704,
+    "lift_30km": {
+     "lift_coarse": 7.7450663215787765,
+     "baseline_coarse": 0.08216374269005848,
+     "n_fire_coarse": 2248,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.582775343241204,
+    "recall_5000": 0.004560076195952989,
+    "lift_30km": {
+     "lift_coarse": 7.8533644974781645,
+     "baseline_coarse": 0.08103070175438597,
+     "n_fire_coarse": 2217,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260430": {
+   "total": {
+    "lift_5000": 4.926518693523897,
+    "recall_5000": 0.004902116935840669,
+    "lift_30km": {
+     "lift_coarse": 5.71667363142499,
+     "baseline_coarse": 0.08746345029239766,
+     "n_fire_coarse": 2393,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.083226389817928,
+    "recall_5000": 0.005058048436311657,
+    "lift_30km": {
+     "lift_coarse": 6.275229357798165,
+     "baseline_coarse": 0.07967836257309942,
+     "n_fire_coarse": 2180,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.260814844309871,
+    "recall_5000": 0.005234757269573388,
+    "lift_30km": {
+     "lift_coarse": 6.38655462184874,
+     "baseline_coarse": 0.07828947368421052,
+     "n_fire_coarse": 2142,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260504": {
+   "total": {
+    "lift_5000": 4.863108859736339,
+    "recall_5000": 0.004839021180106008,
+    "lift_30km": {
+     "lift_coarse": 5.692883895131087,
+     "baseline_coarse": 0.08782894736842105,
+     "n_fire_coarse": 2403,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.051908031024707,
+    "recall_5000": 0.005026885201866855,
+    "lift_30km": {
+     "lift_coarse": 6.359832635983264,
+     "baseline_coarse": 0.07861842105263157,
+     "n_fire_coarse": 2151,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.184662776981182,
+    "recall_5000": 0.0051589823944182475,
+    "lift_30km": {
+     "lift_coarse": 5.877298504897748,
+     "baseline_coarse": 0.07733918128654971,
+     "n_fire_coarse": 2116,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260507": {
+   "total": {
+    "lift_5000": 4.310609950939619,
+    "recall_5000": 0.004289258878096232,
+    "lift_30km": {
+     "lift_coarse": 4.544347248366737,
+     "baseline_coarse": 0.0900219298245614,
+     "n_fire_coarse": 2463,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.400711506484541,
+    "recall_5000": 0.004378914147640416,
+    "lift_30km": {
+     "lift_coarse": 4.618890858445177,
+     "baseline_coarse": 0.07872807017543859,
+     "n_fire_coarse": 2154,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.502284319552002,
+    "recall_5000": 0.004479983855914033,
+    "lift_30km": {
+     "lift_coarse": 4.679722911143419,
+     "baseline_coarse": 0.0777046783625731,
+     "n_fire_coarse": 2126,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260511": {
+   "total": {
+    "lift_5000": 3.292059874812747,
+    "recall_5000": 0.0032757538274106627,
+    "lift_30km": {
+     "lift_coarse": 5.407114624505929,
+     "baseline_coarse": 0.10087719298245613,
+     "n_fire_coarse": 2760,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 3.373329949671374,
+    "recall_5000": 0.0033566213598662316,
+    "lift_30km": {
+     "lift_coarse": 5.608856088560886,
+     "baseline_coarse": 0.08914473684210526,
+     "n_fire_coarse": 2439,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 3.4548787702037655,
+    "recall_5000": 0.0034377662573280374,
+    "lift_30km": {
+     "lift_coarse": 5.702375989995832,
+     "baseline_coarse": 0.0876827485380117,
+     "n_fire_coarse": 2399,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260514": {
+   "total": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.12430555555555556,
+     "n_fire_coarse": 3401,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.11217105263157895,
+     "n_fire_coarse": 3069,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.11074561403508772,
+     "n_fire_coarse": 3030,
+     "k_coarse": 22
+    }
+   }
+  }
+ },
+ "convstem_novel": {
+  "20260323": {
+   "total": {
+    "lift_5000": 13.185399861616322,
+    "recall_5000": 0.013120090674258,
+    "lift_30km": {
+     "lift_coarse": 17.79447897094956,
+     "baseline_coarse": 0.04597953216374269,
+     "n_fire_coarse": 1258,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 13.79559165810304,
+    "recall_5000": 0.013727260102763506,
+    "lift_30km": {
+     "lift_coarse": 18.052785923753667,
+     "baseline_coarse": 0.04532163742690058,
+     "n_fire_coarse": 1240,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 14.240342817620158,
+    "recall_5000": 0.014169808345637247,
+    "lift_30km": {
+     "lift_coarse": 18.34873323397914,
+     "baseline_coarse": 0.0445906432748538,
+     "n_fire_coarse": 1220,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260326": {
+   "total": {
+    "lift_5000": 13.989264643266553,
+    "recall_5000": 0.013919973797696382,
+    "lift_30km": {
+     "lift_coarse": 13.767192217376719,
+     "baseline_coarse": 0.04952485380116959,
+     "n_fire_coarse": 1355,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 14.306495768046329,
+    "recall_5000": 0.014235633630958146,
+    "lift_30km": {
+     "lift_coarse": 13.96298312465977,
+     "baseline_coarse": 0.04883040935672515,
+     "n_fire_coarse": 1336,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 14.747905581769901,
+    "recall_5000": 0.014674857078206007,
+    "lift_30km": {
+     "lift_coarse": 14.196762141967621,
+     "baseline_coarse": 0.04802631578947368,
+     "n_fire_coarse": 1314,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260330": {
+   "total": {
+    "lift_5000": 13.437532269536785,
+    "recall_5000": 0.013370974233994805,
+    "lift_30km": {
+     "lift_coarse": 10.975745232364376,
+     "baseline_coarse": 0.053837719298245615,
+     "n_fire_coarse": 1473,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 13.958355125233556,
+    "recall_5000": 0.013889217378964546,
+    "lift_30km": {
+     "lift_coarse": 11.157538114059854,
+     "baseline_coarse": 0.05296052631578947,
+     "n_fire_coarse": 1449,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 14.376585541156125,
+    "recall_5000": 0.014305376239312075,
+    "lift_30km": {
+     "lift_coarse": 11.33749840622211,
+     "baseline_coarse": 0.05211988304093567,
+     "n_fire_coarse": 1426,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260402": {
+   "total": {
+    "lift_5000": 13.071894470724013,
+    "recall_5000": 0.01300714749193864,
+    "lift_30km": {
+     "lift_coarse": 12.946612481211378,
+     "baseline_coarse": 0.059685672514619884,
+     "n_fire_coarse": 1633,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 12.034091475928676,
+    "recall_5000": 0.011974484885067785,
+    "lift_30km": {
+     "lift_coarse": 13.23017408123791,
+     "baseline_coarse": 0.05840643274853801,
+     "n_fire_coarse": 1598,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 12.40796812783852,
+    "recall_5000": 0.012346509671993272,
+    "lift_30km": {
+     "lift_coarse": 13.43190481691117,
+     "baseline_coarse": 0.057529239766081874,
+     "n_fire_coarse": 1574,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260406": {
+   "total": {
+    "lift_5000": 7.609617939994667,
+    "recall_5000": 0.007571926404737166,
+    "lift_30km": {
+     "lift_coarse": 9.92640199025604,
+     "baseline_coarse": 0.06410818713450292,
+     "n_fire_coarse": 1754,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.33136494116812,
+    "recall_5000": 0.007295051633148634,
+    "lift_30km": {
+     "lift_coarse": 9.449019712023805,
+     "baseline_coarse": 0.06253654970760233,
+     "n_fire_coarse": 1711,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.609141801363808,
+    "recall_5000": 0.007571452624489624,
+    "lift_30km": {
+     "lift_coarse": 9.600518246599007,
+     "baseline_coarse": 0.06154970760233918,
+     "n_fire_coarse": 1684,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260409": {
+   "total": {
+    "lift_5000": 6.042779540718856,
+    "recall_5000": 0.00601284878205156,
+    "lift_30km": {
+     "lift_coarse": 3.3593634890231323,
+     "baseline_coarse": 0.06765350877192983,
+     "n_fire_coarse": 1851,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.948016292867419,
+    "recall_5000": 0.00591855491023525,
+    "lift_30km": {
+     "lift_coarse": 3.458388107998786,
+     "baseline_coarse": 0.06571637426900585,
+     "n_fire_coarse": 1798,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.969926327579655,
+    "recall_5000": 0.005940356421385283,
+    "lift_30km": {
+     "lift_coarse": 3.49729011146334,
+     "baseline_coarse": 0.06498538011695906,
+     "n_fire_coarse": 1778,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260413": {
+   "total": {
+    "lift_5000": 5.716354332227326,
+    "recall_5000": 0.005688040404700806,
+    "lift_30km": {
+     "lift_coarse": 4.982018482268859,
+     "baseline_coarse": 0.07298976608187134,
+     "n_fire_coarse": 1997,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.955701461051062,
+    "recall_5000": 0.005926202012672382,
+    "lift_30km": {
+     "lift_coarse": 4.5059288537549405,
+     "baseline_coarse": 0.0706140350877193,
+     "n_fire_coarse": 1932,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.223015098821926,
+    "recall_5000": 0.006192191607438419,
+    "lift_30km": {
+     "lift_coarse": 4.572192513368984,
+     "baseline_coarse": 0.0695906432748538,
+     "n_fire_coarse": 1904,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260416": {
+   "total": {
+    "lift_5000": 6.494108756450424,
+    "recall_5000": 0.006461942499078511,
+    "lift_30km": {
+     "lift_coarse": 8.251615682895304,
+     "baseline_coarse": 0.07711988304093567,
+     "n_fire_coarse": 2110,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.997119274077781,
+    "recall_5000": 0.006962461533058522,
+    "lift_30km": {
+     "lift_coarse": 7.940703697088766,
+     "baseline_coarse": 0.07441520467836257,
+     "n_fire_coarse": 2036,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.26561728,
+    "recall_5000": 0.007229629629629629,
+    "lift_30km": {
+     "lift_coarse": 8.027444253859349,
+     "baseline_coarse": 0.07361111111111111,
+     "n_fire_coarse": 2014,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260420": {
+   "total": {
+    "lift_5000": 6.6822404302305145,
+    "recall_5000": 0.0066491423295425185,
+    "lift_30km": {
+     "lift_coarse": 7.911172796668979,
+     "baseline_coarse": 0.0861842105263158,
+     "n_fire_coarse": 2358,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.687300819740594,
+    "recall_5000": 0.006654177654213451,
+    "lift_30km": {
+     "lift_coarse": 7.707352408547627,
+     "baseline_coarse": 0.08256578947368422,
+     "n_fire_coarse": 2259,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.737809153657752,
+    "recall_5000": 0.006704435813067465,
+    "lift_30km": {
+     "lift_coarse": 7.797093188942719,
+     "baseline_coarse": 0.08161549707602339,
+     "n_fire_coarse": 2233,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260423": {
+   "total": {
+    "lift_5000": 5.81538573898752,
+    "recall_5000": 0.005786581294619164,
+    "lift_30km": {
+     "lift_coarse": 6.225964273523723,
+     "baseline_coarse": 0.08760964912280701,
+     "n_fire_coarse": 2397,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.716461977141318,
+    "recall_5000": 0.005688147516434013,
+    "lift_30km": {
+     "lift_coarse": 6.002632733655112,
+     "baseline_coarse": 0.083296783625731,
+     "n_fire_coarse": 2279,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.7950148665990096,
+    "recall_5000": 0.00576631132209986,
+    "lift_30km": {
+     "lift_coarse": 6.063829787234042,
+     "baseline_coarse": 0.0824561403508772,
+     "n_fire_coarse": 2256,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260427": {
+   "total": {
+    "lift_5000": 3.3309925458418643,
+    "recall_5000": 0.003314493659304578,
+    "lift_30km": {
+     "lift_coarse": 3.0707070707070705,
+     "baseline_coarse": 0.08881578947368421,
+     "n_fire_coarse": 2430,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 3.6054626152457923,
+    "recall_5000": 0.0035876042388655674,
+    "lift_30km": {
+     "lift_coarse": 2.766095114849563,
+     "baseline_coarse": 0.08216374269005848,
+     "n_fire_coarse": 2248,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 3.7113707705854866,
+    "recall_5000": 0.0036929878158358195,
+    "lift_30km": {
+     "lift_coarse": 2.80477303481363,
+     "baseline_coarse": 0.08103070175438597,
+     "n_fire_coarse": 2217,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260430": {
+   "total": {
+    "lift_5000": 5.541888898563343,
+    "recall_5000": 0.005514439123494413,
+    "lift_30km": {
+     "lift_coarse": 5.196976028568172,
+     "baseline_coarse": 0.08746345029239766,
+     "n_fire_coarse": 2393,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.584251573767787,
+    "recall_5000": 0.006551638826019627,
+    "lift_30km": {
+     "lift_coarse": 5.134278565471226,
+     "baseline_coarse": 0.07967836257309942,
+     "n_fire_coarse": 2180,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.815688497297195,
+    "recall_5000": 0.006781929409084653,
+    "lift_30km": {
+     "lift_coarse": 5.225362872421696,
+     "baseline_coarse": 0.07828947368421052,
+     "n_fire_coarse": 2142,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260504": {
+   "total": {
+    "lift_5000": 4.967344008984199,
+    "recall_5000": 0.004942740037624909,
+    "lift_30km": {
+     "lift_coarse": 4.657814096016343,
+     "baseline_coarse": 0.08782894736842105,
+     "n_fire_coarse": 2403,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.962986864864087,
+    "recall_5000": 0.005933451330829484,
+    "lift_30km": {
+     "lift_coarse": 5.2034994294408525,
+     "baseline_coarse": 0.07861842105263157,
+     "n_fire_coarse": 2151,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.125528037369363,
+    "recall_5000": 0.006095187413462628,
+    "lift_30km": {
+     "lift_coarse": 5.289568654407974,
+     "baseline_coarse": 0.07733918128654971,
+     "n_fire_coarse": 2116,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260507": {
+   "total": {
+    "lift_5000": 1.2751188022500104,
+    "recall_5000": 0.0012688029549011038,
+    "lift_30km": {
+     "lift_coarse": 1.009854944081497,
+     "baseline_coarse": 0.0900219298245614,
+     "n_fire_coarse": 2463,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 1.6899128645396715,
+    "recall_5000": 0.0016815424823709256,
+    "lift_30km": {
+     "lift_coarse": 1.1547227146112942,
+     "baseline_coarse": 0.07872807017543859,
+     "n_fire_coarse": 2154,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 1.7289177398279647,
+    "recall_5000": 0.0017203541608859067,
+    "lift_30km": {
+     "lift_coarse": 1.1699307277858548,
+     "baseline_coarse": 0.0777046783625731,
+     "n_fire_coarse": 2126,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260511": {
+   "total": {
+    "lift_5000": 3.348281011194749,
+    "recall_5000": 0.0033316964923949055,
+    "lift_30km": {
+     "lift_coarse": 3.604743083003953,
+     "baseline_coarse": 0.10087719298245613,
+     "n_fire_coarse": 2760,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.151150788868103,
+    "recall_5000": 0.004130589540254623,
+    "lift_30km": {
+     "lift_coarse": 4.079168064407917,
+     "baseline_coarse": 0.08914473684210526,
+     "n_fire_coarse": 2439,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 3.949041454967806,
+    "recall_5000": 0.003929481283037104,
+    "lift_30km": {
+     "lift_coarse": 4.147182538178787,
+     "baseline_coarse": 0.0876827485380117,
+     "n_fire_coarse": 2399,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260514": {
+   "total": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.12430555555555556,
+     "n_fire_coarse": 3401,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.11217105263157895,
+     "n_fire_coarse": 3069,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.11074561403508772,
+     "n_fire_coarse": 3030,
+     "k_coarse": 22
+    }
+   }
+  }
+ },
+ "fcnhead": {
+  "20260323": {
+   "total": {
+    "lift_5000": 3.1788005693499923,
+    "recall_5000": 0.003163055511624229,
+    "lift_30km": {
+     "lift_coarse": 1.9771643301055066,
+     "baseline_coarse": 0.04597953216374269,
+     "n_fire_coarse": 1258,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 3.3494607971115125,
+    "recall_5000": 0.0033328704346618524,
+    "lift_30km": {
+     "lift_coarse": 2.005865102639296,
+     "baseline_coarse": 0.04532163742690058,
+     "n_fire_coarse": 1240,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 3.4574428692249253,
+    "recall_5000": 0.0034403176559969035,
+    "lift_30km": {
+     "lift_coarse": 2.038748137108793,
+     "baseline_coarse": 0.0445906432748538,
+     "n_fire_coarse": 1220,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260326": {
+   "total": {
+    "lift_5000": 4.187636082755609,
+    "recall_5000": 0.004166894117218917,
+    "lift_30km": {
+     "lift_coarse": 0.9178128144917813,
+     "baseline_coarse": 0.04952485380116959,
+     "n_fire_coarse": 1355,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.457398001200828,
+    "recall_5000": 0.004435319865971994,
+    "lift_30km": {
+     "lift_coarse": 0.9308655416439847,
+     "baseline_coarse": 0.04883040935672515,
+     "n_fire_coarse": 1336,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.594925684660282,
+    "recall_5000": 0.00457216635497847,
+    "lift_30km": {
+     "lift_coarse": 0.9464508094645082,
+     "baseline_coarse": 0.04802631578947368,
+     "n_fire_coarse": 1314,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260330": {
+   "total": {
+    "lift_5000": 6.300401728026113,
+    "recall_5000": 0.006269194929506019,
+    "lift_30km": {
+     "lift_coarse": 5.065728568783558,
+     "baseline_coarse": 0.053837719298245615,
+     "n_fire_coarse": 1473,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.756343029966178,
+    "recall_5000": 0.006722877888413235,
+    "lift_30km": {
+     "lift_coarse": 5.149632975719932,
+     "baseline_coarse": 0.05296052631578947,
+     "n_fire_coarse": 1449,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.958781507149643,
+    "recall_5000": 0.006924313658619766,
+    "lift_30km": {
+     "lift_coarse": 5.232691572102512,
+     "baseline_coarse": 0.05211988304093567,
+     "n_fire_coarse": 1426,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260402": {
+   "total": {
+    "lift_5000": 3.9474532807631917,
+    "recall_5000": 0.003927900975288401,
+    "lift_30km": {
+     "lift_coarse": 4.569392640427545,
+     "baseline_coarse": 0.059685672514619884,
+     "n_fire_coarse": 1633,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.333803151867139,
+    "recall_5000": 0.004312337199754202,
+    "lift_30km": {
+     "lift_coarse": 4.669473205142792,
+     "baseline_coarse": 0.05840643274853801,
+     "n_fire_coarse": 1598,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.468446287636669,
+    "recall_5000": 0.004446313428651528,
+    "lift_30km": {
+     "lift_coarse": 4.740672288321589,
+     "baseline_coarse": 0.057529239766081874,
+     "n_fire_coarse": 1574,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260406": {
+   "total": {
+    "lift_5000": 4.6433916391588586,
+    "recall_5000": 0.004620392250613754,
+    "lift_30km": {
+     "lift_coarse": 4.96320099512802,
+     "baseline_coarse": 0.06410818713450292,
+     "n_fire_coarse": 1754,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.7432249897342045,
+    "recall_5000": 0.004719731112203876,
+    "lift_30km": {
+     "lift_coarse": 5.087933691089741,
+     "baseline_coarse": 0.06253654970760233,
+     "n_fire_coarse": 1711,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.922940248137391,
+    "recall_5000": 0.004898556215010313,
+    "lift_30km": {
+     "lift_coarse": 5.169509825091772,
+     "baseline_coarse": 0.06154970760233918,
+     "n_fire_coarse": 1684,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260409": {
+   "total": {
+    "lift_5000": 7.370623748153475,
+    "recall_5000": 0.0073341159856003535,
+    "lift_30km": {
+     "lift_coarse": 6.718726978046265,
+     "baseline_coarse": 0.06765350877192983,
+     "n_fire_coarse": 1851,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.8291368928067895,
+    "recall_5000": 0.007790358048512903,
+    "lift_30km": {
+     "lift_coarse": 6.916776215997572,
+     "baseline_coarse": 0.06571637426900585,
+     "n_fire_coarse": 1798,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 8.13578343800628,
+    "recall_5000": 0.008095485729143748,
+    "lift_30km": {
+     "lift_coarse": 6.99458022292668,
+     "baseline_coarse": 0.06498538011695906,
+     "n_fire_coarse": 1778,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260413": {
+   "total": {
+    "lift_5000": 8.874311574671875,
+    "recall_5000": 0.008830355829424168,
+    "lift_30km": {
+     "lift_coarse": 8.718532343970502,
+     "baseline_coarse": 0.07298976608187134,
+     "n_fire_coarse": 1997,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 9.790386599888185,
+    "recall_5000": 0.009741893402907193,
+    "lift_30km": {
+     "lift_coarse": 9.011857707509881,
+     "baseline_coarse": 0.0706140350877193,
+     "n_fire_coarse": 1932,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 10.229814914808685,
+    "recall_5000": 0.010179145166001363,
+    "lift_30km": {
+     "lift_coarse": 9.144385026737968,
+     "baseline_coarse": 0.0695906432748538,
+     "n_fire_coarse": 1904,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260416": {
+   "total": {
+    "lift_5000": 7.269697502764468,
+    "recall_5000": 0.007233689642462219,
+    "lift_30km": {
+     "lift_coarse": 7.072813442481689,
+     "baseline_coarse": 0.07711988304093567,
+     "n_fire_coarse": 2110,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.985363105977796,
+    "recall_5000": 0.00794581045071622,
+    "lift_30km": {
+     "lift_coarse": 7.329880335774245,
+     "baseline_coarse": 0.07441520467836257,
+     "n_fire_coarse": 2036,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 8.291782646153846,
+    "recall_5000": 0.00825071225071225,
+    "lift_30km": {
+     "lift_coarse": 7.409948542024013,
+     "baseline_coarse": 0.07361111111111111,
+     "n_fire_coarse": 2014,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260420": {
+   "total": {
+    "lift_5000": 5.563917290870693,
+    "recall_5000": 0.00553635840599732,
+    "lift_30km": {
+     "lift_coarse": 9.493407356002775,
+     "baseline_coarse": 0.0861842105263158,
+     "n_fire_coarse": 2358,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.247609791544859,
+    "recall_5000": 0.006216664479100791,
+    "lift_30km": {
+     "lift_coarse": 9.909453096704093,
+     "baseline_coarse": 0.08256578947368422,
+     "n_fire_coarse": 2259,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.476750127409019,
+    "recall_5000": 0.006444669849830533,
+    "lift_30km": {
+     "lift_coarse": 10.02483410006921,
+     "baseline_coarse": 0.08161549707602339,
+     "n_fire_coarse": 2233,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260423": {
+   "total": {
+    "lift_5000": 8.351444490250124,
+    "recall_5000": 0.008310078581089179,
+    "lift_30km": {
+     "lift_coarse": 8.30128569803163,
+     "baseline_coarse": 0.08760964912280701,
+     "n_fire_coarse": 2397,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 9.485062089761742,
+    "recall_5000": 0.00943808120911899,
+    "lift_30km": {
+     "lift_coarse": 8.7311021580438,
+     "baseline_coarse": 0.083296783625731,
+     "n_fire_coarse": 2279,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 9.748268644686188,
+    "recall_5000": 0.009699984064012346,
+    "lift_30km": {
+     "lift_coarse": 8.820116054158607,
+     "baseline_coarse": 0.0824561403508772,
+     "n_fire_coarse": 2256,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260427": {
+   "total": {
+    "lift_5000": 5.451030509914133,
+    "recall_5000": 0.005424030769549471,
+    "lift_30km": {
+     "lift_coarse": 4.606060606060606,
+     "baseline_coarse": 0.08881578947368421,
+     "n_fire_coarse": 2430,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.6732370434304995,
+    "recall_5000": 0.0056451366820545685,
+    "lift_30km": {
+     "lift_coarse": 4.978971206729214,
+     "baseline_coarse": 0.08216374269005848,
+     "n_fire_coarse": 2248,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.8469892310318805,
+    "recall_5000": 0.005818028250008985,
+    "lift_30km": {
+     "lift_coarse": 5.048591462664534,
+     "baseline_coarse": 0.08103070175438597,
+     "n_fire_coarse": 2217,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260430": {
+   "total": {
+    "lift_5000": 4.866048788982448,
+    "recall_5000": 0.004841946547458509,
+    "lift_30km": {
+     "lift_coarse": 5.71667363142499,
+     "baseline_coarse": 0.08746345029239766,
+     "n_fire_coarse": 2393,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.691003458165724,
+    "recall_5000": 0.005662815097175007,
+    "lift_30km": {
+     "lift_coarse": 6.275229357798165,
+     "baseline_coarse": 0.07967836257309942,
+     "n_fire_coarse": 2180,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.828391423161072,
+    "recall_5000": 0.005799522559763084,
+    "lift_30km": {
+     "lift_coarse": 6.38655462184874,
+     "baseline_coarse": 0.07828947368421052,
+     "n_fire_coarse": 2142,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260504": {
+   "total": {
+    "lift_5000": 3.978907248875187,
+    "recall_5000": 0.003959199147359461,
+    "lift_30km": {
+     "lift_coarse": 4.657814096016343,
+     "baseline_coarse": 0.08782894736842105,
+     "n_fire_coarse": 2403,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 3.8082131149899987,
+    "recall_5000": 0.0037893504861400908,
+    "lift_30km": {
+     "lift_coarse": 4.625332826169647,
+     "baseline_coarse": 0.07861842105263157,
+     "n_fire_coarse": 2151,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 3.8922110245532084,
+    "recall_5000": 0.003872932341941492,
+    "lift_30km": {
+     "lift_coarse": 4.701838803918199,
+     "baseline_coarse": 0.07733918128654971,
+     "n_fire_coarse": 2116,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260507": {
+   "total": {
+    "lift_5000": 2.4510616976583535,
+    "recall_5000": 0.0024389212355321217,
+    "lift_30km": {
+     "lift_coarse": 4.544347248366737,
+     "baseline_coarse": 0.0900219298245614,
+     "n_fire_coarse": 2463,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 1.5511516909117808,
+    "recall_5000": 0.0015434686128507323,
+    "lift_30km": {
+     "lift_coarse": 4.618890858445177,
+     "baseline_coarse": 0.07872807017543859,
+     "n_fire_coarse": 2154,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 1.586953819842091,
+    "recall_5000": 0.0015790934086724012,
+    "lift_30km": {
+     "lift_coarse": 4.679722911143419,
+     "baseline_coarse": 0.0777046783625731,
+     "n_fire_coarse": 2126,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260511": {
+   "total": {
+    "lift_5000": 4.222832021581437,
+    "recall_5000": 0.004201915725483127,
+    "lift_30km": {
+     "lift_coarse": 5.407114624505929,
+     "baseline_coarse": 0.10087719298245613,
+     "n_fire_coarse": 2760,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 3.6228981333708585,
+    "recall_5000": 0.003604953396354486,
+    "lift_30km": {
+     "lift_coarse": 5.098960080509896,
+     "baseline_coarse": 0.08914473684210526,
+     "n_fire_coarse": 2439,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 3.7104801588748204,
+    "recall_5000": 0.0036921016154534162,
+    "lift_30km": {
+     "lift_coarse": 5.183978172723483,
+     "baseline_coarse": 0.0876827485380117,
+     "n_fire_coarse": 2399,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260514": {
+   "total": {
+    "lift_5000": 0.04530697237388153,
+    "recall_5000": 4.5082560404699025e-05,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.12430555555555556,
+     "n_fire_coarse": 3401,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.04718745631102152,
+    "recall_5000": 4.695373003365996e-05,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.11217105263157895,
+     "n_fire_coarse": 3069,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.047974594384938986,
+    "recall_5000": 4.773696929916162e-05,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.11074561403508772,
+     "n_fire_coarse": 3030,
+     "k_coarse": 22
+    }
+   }
+  }
+ },
+ "flatten": {
+  "20260323": {
+   "total": {
+    "lift_5000": 2.708602985133639,
+    "recall_5000": 0.002695186883863145,
+    "lift_30km": {
+     "lift_coarse": 0.9885821650527533,
+     "baseline_coarse": 0.04597953216374269,
+     "n_fire_coarse": 1258,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 2.833085590890154,
+    "recall_5000": 0.00281905290931815,
+    "lift_30km": {
+     "lift_coarse": 1.002932551319648,
+     "baseline_coarse": 0.04532163742690058,
+     "n_fire_coarse": 1240,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 2.9172174209085306,
+    "recall_5000": 0.0029027680222473875,
+    "lift_30km": {
+     "lift_coarse": 1.0193740685543966,
+     "baseline_coarse": 0.0445906432748538,
+     "n_fire_coarse": 1220,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260326": {
+   "total": {
+    "lift_5000": 0.5851718543588623,
+    "recall_5000": 0.0005822734137598487,
+    "lift_30km": {
+     "lift_coarse": 1.8356256289835626,
+     "baseline_coarse": 0.04952485380116959,
+     "n_fire_coarse": 1355,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.6228678429625611,
+    "recall_5000": 0.0006197826886947764,
+    "lift_30km": {
+     "lift_coarse": 1.8617310832879694,
+     "baseline_coarse": 0.04883040935672515,
+     "n_fire_coarse": 1336,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.6420856851927031,
+    "recall_5000": 0.0006389053421803976,
+    "lift_30km": {
+     "lift_coarse": 1.8929016189290164,
+     "baseline_coarse": 0.04802631578947368,
+     "n_fire_coarse": 1314,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260330": {
+   "total": {
+    "lift_5000": 2.859285216940611,
+    "recall_5000": 0.0028451227648417813,
+    "lift_30km": {
+     "lift_coarse": 4.2214404739862985,
+     "baseline_coarse": 0.053837719298245615,
+     "n_fire_coarse": 1473,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 3.06620316927225,
+    "recall_5000": 0.003051015822709964,
+    "lift_30km": {
+     "lift_coarse": 4.291360813099944,
+     "baseline_coarse": 0.05296052631578947,
+     "n_fire_coarse": 1449,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 3.1580749847750362,
+    "recall_5000": 0.0031424325838591022,
+    "lift_30km": {
+     "lift_coarse": 4.360576310085427,
+     "baseline_coarse": 0.05211988304093567,
+     "n_fire_coarse": 1426,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260402": {
+   "total": {
+    "lift_5000": 3.808072837054025,
+    "recall_5000": 0.003789210903020967,
+    "lift_30km": {
+     "lift_coarse": 2.2846963202137727,
+     "baseline_coarse": 0.059685672514619884,
+     "n_fire_coarse": 1633,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.180781098585576,
+    "recall_5000": 0.00416007308677423,
+    "lift_30km": {
+     "lift_coarse": 2.334736602571396,
+     "baseline_coarse": 0.05840643274853801,
+     "n_fire_coarse": 1598,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.310670126156434,
+    "recall_5000": 0.004289318755256518,
+    "lift_30km": {
+     "lift_coarse": 2.3703361441607944,
+     "baseline_coarse": 0.057529239766081874,
+     "n_fire_coarse": 1574,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260406": {
+   "total": {
+    "lift_5000": 1.9913450711218588,
+    "recall_5000": 0.001981481651755749,
+    "lift_30km": {
+     "lift_coarse": 2.127086140769151,
+     "baseline_coarse": 0.06410818713450292,
+     "n_fire_coarse": 1754,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 2.1958431477716887,
+    "recall_5000": 0.0021849668199354143,
+    "lift_30km": {
+     "lift_coarse": 2.1805430104670314,
+     "baseline_coarse": 0.06253654970760233,
+     "n_fire_coarse": 1711,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 2.2790410815759565,
+    "recall_5000": 0.0022677526623731954,
+    "lift_30km": {
+     "lift_coarse": 2.215504210753617,
+     "baseline_coarse": 0.06154970760233918,
+     "n_fire_coarse": 1684,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260409": {
+   "total": {
+    "lift_5000": 4.231687113529342,
+    "recall_5000": 0.004210726956883369,
+    "lift_30km": {
+     "lift_coarse": 3.3593634890231323,
+     "baseline_coarse": 0.06765350877192983,
+     "n_fire_coarse": 1851,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.700383607046448,
+    "recall_5000": 0.004677101929063954,
+    "lift_30km": {
+     "lift_coarse": 3.458388107998786,
+     "baseline_coarse": 0.06571637426900585,
+     "n_fire_coarse": 1798,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.884485177110626,
+    "recall_5000": 0.00486029161749705,
+    "lift_30km": {
+     "lift_coarse": 3.49729011146334,
+     "baseline_coarse": 0.06498538011695906,
+     "n_fire_coarse": 1778,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260413": {
+   "total": {
+    "lift_5000": 6.192717193246269,
+    "recall_5000": 0.006162043771759206,
+    "lift_30km": {
+     "lift_coarse": 5.604770792552466,
+     "baseline_coarse": 0.07298976608187134,
+     "n_fire_coarse": 1997,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.0606900969064466,
+    "recall_5000": 0.007025717480432352,
+    "lift_30km": {
+     "lift_coarse": 5.793337097684924,
+     "baseline_coarse": 0.0706140350877193,
+     "n_fire_coarse": 1932,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.377599661181968,
+    "recall_5000": 0.007341057345925421,
+    "lift_30km": {
+     "lift_coarse": 5.8785332314744085,
+     "baseline_coarse": 0.0695906432748538,
+     "n_fire_coarse": 1904,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260416": {
+   "total": {
+    "lift_5000": 6.825952697659417,
+    "recall_5000": 0.006792142769381988,
+    "lift_30km": {
+     "lift_coarse": 5.304610081861267,
+     "baseline_coarse": 0.07711988304093567,
+     "n_fire_coarse": 2110,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.804479190317525,
+    "recall_5000": 0.00776582247918066,
+    "lift_30km": {
+     "lift_coarse": 5.497410251830685,
+     "baseline_coarse": 0.07441520467836257,
+     "n_fire_coarse": 2036,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 8.103957735384617,
+    "recall_5000": 0.008063817663817663,
+    "lift_30km": {
+     "lift_coarse": 5.55746140651801,
+     "baseline_coarse": 0.07361111111111111,
+     "n_fire_coarse": 2014,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260420": {
+   "total": {
+    "lift_5000": 6.464115483544234,
+    "recall_5000": 0.006432097787179214,
+    "lift_30km": {
+     "lift_coarse": 5.801526717557252,
+     "baseline_coarse": 0.0861842105263158,
+     "n_fire_coarse": 2358,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.462755905831255,
+    "recall_5000": 0.007425791799412142,
+    "lift_30km": {
+     "lift_coarse": 6.055776892430278,
+     "baseline_coarse": 0.08256578947368422,
+     "n_fire_coarse": 2259,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.736463523910838,
+    "recall_5000": 0.00769814370418017,
+    "lift_30km": {
+     "lift_coarse": 6.12628750559785,
+     "baseline_coarse": 0.08161549707602339,
+     "n_fire_coarse": 2233,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260423": {
+   "total": {
+    "lift_5000": 6.909641753779254,
+    "recall_5000": 0.00687541730153567,
+    "lift_30km": {
+     "lift_coarse": 6.7447946296507,
+     "baseline_coarse": 0.08760964912280701,
+     "n_fire_coarse": 2397,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 8.234329734648327,
+    "recall_5000": 0.008193543911764346,
+    "lift_30km": {
+     "lift_coarse": 7.094020503410587,
+     "baseline_coarse": 0.083296783625731,
+     "n_fire_coarse": 2279,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 8.462828983367862,
+    "recall_5000": 0.00842091137074656,
+    "lift_30km": {
+     "lift_coarse": 7.166344294003868,
+     "baseline_coarse": 0.0824561403508772,
+     "n_fire_coarse": 2256,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260427": {
+   "total": {
+    "lift_5000": 7.866000105649486,
+    "recall_5000": 0.00782703867254529,
+    "lift_30km": {
+     "lift_coarse": 8.7003367003367,
+     "baseline_coarse": 0.08881578947368421,
+     "n_fire_coarse": 2430,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 8.818707465965712,
+    "recall_5000": 0.008775027135888683,
+    "lift_30km": {
+     "lift_coarse": 8.851504367518602,
+     "baseline_coarse": 0.08216374269005848,
+     "n_fire_coarse": 2248,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 9.088794843295116,
+    "recall_5000": 0.009043776731481148,
+    "lift_30km": {
+     "lift_coarse": 8.975273711403617,
+     "baseline_coarse": 0.08103070175438597,
+     "n_fire_coarse": 2217,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260430": {
+   "total": {
+    "lift_5000": 8.213235858012041,
+    "recall_5000": 0.008172554516141592,
+    "lift_30km": {
+     "lift_coarse": 8.315161645709075,
+     "baseline_coarse": 0.08746345029239766,
+     "n_fire_coarse": 2393,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 10.631494324356519,
+    "recall_5000": 0.010578834999496028,
+    "lift_30km": {
+     "lift_coarse": 9.127606338615513,
+     "baseline_coarse": 0.07967836257309942,
+     "n_fire_coarse": 2180,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 11.012893450146413,
+    "recall_5000": 0.010958345000403404,
+    "lift_30km": {
+     "lift_coarse": 9.289533995416349,
+     "baseline_coarse": 0.07828947368421052,
+     "n_fire_coarse": 2142,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260504": {
+   "total": {
+    "lift_5000": 4.784033918927618,
+    "recall_5000": 0.004760337908884772,
+    "lift_30km": {
+     "lift_coarse": 6.210418794688457,
+     "baseline_coarse": 0.08782894736842105,
+     "n_fire_coarse": 2403,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.184213903558632,
+    "recall_5000": 0.004163488888569112,
+    "lift_30km": {
+     "lift_coarse": 6.359832635983264,
+     "baseline_coarse": 0.07861842105263157,
+     "n_fire_coarse": 2151,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.298268663247055,
+    "recall_5000": 0.004276978718581698,
+    "lift_30km": {
+     "lift_coarse": 6.465028355387524,
+     "baseline_coarse": 0.07733918128654971,
+     "n_fire_coarse": 2116,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260507": {
+   "total": {
+    "lift_5000": 6.899809518841724,
+    "recall_5000": 0.006865633767075973,
+    "lift_30km": {
+     "lift_coarse": 6.564057136529731,
+     "baseline_coarse": 0.0900219298245614,
+     "n_fire_coarse": 2463,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.585137238522609,
+    "recall_5000": 0.0055574732481877805,
+    "lift_30km": {
+     "lift_coarse": 6.350974930362117,
+     "baseline_coarse": 0.07872807017543859,
+     "n_fire_coarse": 2154,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.714047779431426,
+    "recall_5000": 0.005685745276593598,
+    "lift_30km": {
+     "lift_coarse": 6.434619002822202,
+     "baseline_coarse": 0.0777046783625731,
+     "n_fire_coarse": 2126,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260511": {
+   "total": {
+    "lift_5000": 6.10936348684415,
+    "recall_5000": 0.0060791029282877196,
+    "lift_30km": {
+     "lift_coarse": 7.209486166007906,
+     "baseline_coarse": 0.10087719298245613,
+     "n_fire_coarse": 2760,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.95047391603066,
+    "recall_5000": 0.006916047216197871,
+    "lift_30km": {
+     "lift_coarse": 7.138544112713855,
+     "baseline_coarse": 0.08914473684210526,
+     "n_fire_coarse": 2439,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.118498674488892,
+    "recall_5000": 0.007083239723791801,
+    "lift_30km": {
+     "lift_coarse": 7.257569441812876,
+     "baseline_coarse": 0.0876827485380117,
+     "n_fire_coarse": 2399,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260514": {
+   "total": {
+    "lift_5000": 3.925014554074158,
+    "recall_5000": 0.0039055733908491892,
+    "lift_30km": {
+     "lift_coarse": 3.291010665312341,
+     "baseline_coarse": 0.12430555555555556,
+     "n_fire_coarse": 3401,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.8544095679963375,
+    "recall_5000": 0.0048303649772127675,
+    "lift_30km": {
+     "lift_coarse": 3.647027459344175,
+     "baseline_coarse": 0.11217105263157895,
+     "n_fire_coarse": 3069,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.935386397350598,
+    "recall_5000": 0.004910940716651251,
+    "lift_30km": {
+     "lift_coarse": 3.6939693969396945,
+     "baseline_coarse": 0.11074561403508772,
+     "n_fire_coarse": 3030,
+     "k_coarse": 22
+    }
+   }
+  }
+ },
+ "convlstm": {
+  "20260323": {
+   "total": {
+    "lift_5000": 10.364214356318204,
+    "recall_5000": 0.010312878907691496,
+    "lift_30km": {
+     "lift_coarse": 7.9086573204220265,
+     "baseline_coarse": 0.04597953216374269,
+     "n_fire_coarse": 1258,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 9.462226751840022,
+    "recall_5000": 0.009415358977919733,
+    "lift_30km": {
+     "lift_coarse": 7.020527859237537,
+     "baseline_coarse": 0.04532163742690058,
+     "n_fire_coarse": 1240,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 9.385516788750161,
+    "recall_5000": 0.009339028970341594,
+    "lift_30km": {
+     "lift_coarse": 7.135618479880775,
+     "baseline_coarse": 0.0445906432748538,
+     "n_fire_coarse": 1220,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260326": {
+   "total": {
+    "lift_5000": 7.698667208908783,
+    "recall_5000": 0.007660534599778009,
+    "lift_30km": {
+     "lift_coarse": 4.589064072458906,
+     "baseline_coarse": 0.04952485380116959,
+     "n_fire_coarse": 1355,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.656083903081481,
+    "recall_5000": 0.007618162215206626,
+    "lift_30km": {
+     "lift_coarse": 4.654327708219924,
+     "baseline_coarse": 0.04883040935672515,
+     "n_fire_coarse": 1336,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.604702334001078,
+    "recall_5000": 0.0075670351464490835,
+    "lift_30km": {
+     "lift_coarse": 4.732254047322541,
+     "baseline_coarse": 0.04802631578947368,
+     "n_fire_coarse": 1314,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260330": {
+   "total": {
+    "lift_5000": 10.267937029052232,
+    "recall_5000": 0.010217078455914382,
+    "lift_30km": {
+     "lift_coarse": 5.9100166635808185,
+     "baseline_coarse": 0.053837719298245615,
+     "n_fire_coarse": 1473,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 9.25803204985691,
+    "recall_5000": 0.009212175681748303,
+    "lift_30km": {
+     "lift_coarse": 6.007905138339921,
+     "baseline_coarse": 0.05296052631578947,
+     "n_fire_coarse": 1449,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 9.455864053250835,
+    "recall_5000": 0.009409027794694404,
+    "lift_30km": {
+     "lift_coarse": 6.104806834119597,
+     "baseline_coarse": 0.05211988304093567,
+     "n_fire_coarse": 1426,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260402": {
+   "total": {
+    "lift_5000": 9.114485443981595,
+    "recall_5000": 0.00906934008291685,
+    "lift_30km": {
+     "lift_coarse": 7.615654400712575,
+     "baseline_coarse": 0.059685672514619884,
+     "n_fire_coarse": 1633,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 8.837023577010296,
+    "recall_5000": 0.008793252524593374,
+    "lift_30km": {
+     "lift_coarse": 7.782455341904654,
+     "baseline_coarse": 0.05840643274853801,
+     "n_fire_coarse": 1598,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 8.773481550883096,
+    "recall_5000": 0.008730025231286796,
+    "lift_30km": {
+     "lift_coarse": 7.111008432482384,
+     "baseline_coarse": 0.057529239766081874,
+     "n_fire_coarse": 1574,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260406": {
+   "total": {
+    "lift_5000": 8.797032518366635,
+    "recall_5000": 0.00875345954743143,
+    "lift_30km": {
+     "lift_coarse": 4.254172281538302,
+     "baseline_coarse": 0.06410818713450292,
+     "n_fire_coarse": 1754,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.397596869059146,
+    "recall_5000": 0.007360955504747613,
+    "lift_30km": {
+     "lift_coarse": 3.634238350778386,
+     "baseline_coarse": 0.06253654970760233,
+     "n_fire_coarse": 1711,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.065104688091931,
+    "recall_5000": 0.006035063349749547,
+    "lift_30km": {
+     "lift_coarse": 2.954005614338156,
+     "baseline_coarse": 0.06154970760233918,
+     "n_fire_coarse": 1684,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260409": {
+   "total": {
+    "lift_5000": 8.768125356633844,
+    "recall_5000": 0.008724695567040232,
+    "lift_30km": {
+     "lift_coarse": 6.0468542802416385,
+     "baseline_coarse": 0.06765350877192983,
+     "n_fire_coarse": 1851,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.655048611064329,
+    "recall_5000": 0.007617132051140164,
+    "lift_30km": {
+     "lift_coarse": 5.533420972798059,
+     "baseline_coarse": 0.06571637426900585,
+     "n_fire_coarse": 1798,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.351853718223094,
+    "recall_5000": 0.00731543892633558,
+    "lift_30km": {
+     "lift_coarse": 5.595664178341344,
+     "baseline_coarse": 0.06498538011695906,
+     "n_fire_coarse": 1778,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260413": {
+   "total": {
+    "lift_5000": 7.0920574222389305,
+    "recall_5000": 0.007056929438878083,
+    "lift_30km": {
+     "lift_coarse": 5.604770792552466,
+     "baseline_coarse": 0.07298976608187134,
+     "n_fire_coarse": 1997,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.789125093179276,
+    "recall_5000": 0.0067554975773388,
+    "lift_30km": {
+     "lift_coarse": 5.793337097684924,
+     "baseline_coarse": 0.0706140350877193,
+     "n_fire_coarse": 1932,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.044922753383312,
+    "recall_5000": 0.007010028234835946,
+    "lift_30km": {
+     "lift_coarse": 5.8785332314744085,
+     "baseline_coarse": 0.0695906432748538,
+     "n_fire_coarse": 1904,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260416": {
+   "total": {
+    "lift_5000": 5.942321737928492,
+    "recall_5000": 0.005912888561248311,
+    "lift_30km": {
+     "lift_coarse": 4.125807841447652,
+     "baseline_coarse": 0.07711988304093567,
+     "n_fire_coarse": 2110,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.977992822430892,
+    "recall_5000": 0.005948382961724021,
+    "lift_30km": {
+     "lift_coarse": 4.275763529201643,
+     "baseline_coarse": 0.07441520467836257,
+     "n_fire_coarse": 2036,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.189059864615385,
+    "recall_5000": 0.006158404558404558,
+    "lift_30km": {
+     "lift_coarse": 4.322469982847341,
+     "baseline_coarse": 0.07361111111111111,
+     "n_fire_coarse": 2014,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260420": {
+   "total": {
+    "lift_5000": 6.550673002070536,
+    "recall_5000": 0.006518226573831319,
+    "lift_30km": {
+     "lift_coarse": 5.274115197779319,
+     "baseline_coarse": 0.0861842105263158,
+     "n_fire_coarse": 2358,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.631340143424773,
+    "recall_5000": 0.006598494159199112,
+    "lift_30km": {
+     "lift_coarse": 5.505251720391162,
+     "baseline_coarse": 0.08256578947368422,
+     "n_fire_coarse": 2259,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.712946389253111,
+    "recall_5000": 0.00667969619752109,
+    "lift_30km": {
+     "lift_coarse": 5.569352277816227,
+     "baseline_coarse": 0.08161549707602339,
+     "n_fire_coarse": 2233,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260423": {
+   "total": {
+    "lift_5000": 5.247611391689921,
+    "recall_5000": 0.0052216192155587135,
+    "lift_30km": {
+     "lift_coarse": 3.6318124928888387,
+     "baseline_coarse": 0.08760964912280701,
+     "n_fire_coarse": 2397,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.4581139824785465,
+    "recall_5000": 0.005431079156652562,
+    "lift_30km": {
+     "lift_coarse": 3.819857194144162,
+     "baseline_coarse": 0.083296783625731,
+     "n_fire_coarse": 2279,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.462064921536229,
+    "recall_5000": 0.0054350105261392135,
+    "lift_30km": {
+     "lift_coarse": 3.8588007736943903,
+     "baseline_coarse": 0.0824561403508772,
+     "n_fire_coarse": 2256,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260427": {
+   "total": {
+    "lift_5000": 4.9375024924301805,
+    "recall_5000": 0.004913046330406681,
+    "lift_30km": {
+     "lift_coarse": 4.606060606060606,
+     "baseline_coarse": 0.08881578947368421,
+     "n_fire_coarse": 2430,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.691920365647927,
+    "recall_5000": 0.004668680607320805,
+    "lift_30km": {
+     "lift_coarse": 4.978971206729214,
+     "baseline_coarse": 0.08216374269005848,
+     "n_fire_coarse": 2248,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.668561285627,
+    "recall_5000": 0.004645437228192503,
+    "lift_30km": {
+     "lift_coarse": 5.048591462664534,
+     "baseline_coarse": 0.08103070175438597,
+     "n_fire_coarse": 2217,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260430": {
+   "total": {
+    "lift_5000": 3.076851025197235,
+    "recall_5000": 0.003061610938268721,
+    "lift_30km": {
+     "lift_coarse": 4.157580822854538,
+     "baseline_coarse": 0.08746345029239766,
+     "n_fire_coarse": 2393,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 3.5085312581895485,
+    "recall_5000": 0.003491152996802067,
+    "lift_30km": {
+     "lift_coarse": 4.563803169307756,
+     "baseline_coarse": 0.07967836257309942,
+     "n_fire_coarse": 2180,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 3.591471965335751,
+    "recall_5000": 0.003573682886662522,
+    "lift_30km": {
+     "lift_coarse": 4.6447669977081745,
+     "baseline_coarse": 0.07828947368421052,
+     "n_fire_coarse": 2142,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260504": {
+   "total": {
+    "lift_5000": 3.8315403137316615,
+    "recall_5000": 0.0038125621419017033,
+    "lift_30km": {
+     "lift_coarse": 4.657814096016343,
+     "baseline_coarse": 0.08782894736842105,
+     "n_fire_coarse": 2403,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.391496389564416,
+    "recall_5000": 0.004369744674523573,
+    "lift_30km": {
+     "lift_coarse": 5.2034994294408525,
+     "baseline_coarse": 0.07861842105263157,
+     "n_fire_coarse": 2151,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.501297482593977,
+    "recall_5000": 0.004479001906901802,
+    "lift_30km": {
+     "lift_coarse": 5.289568654407974,
+     "baseline_coarse": 0.07733918128654971,
+     "n_fire_coarse": 2116,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260507": {
+   "total": {
+    "lift_5000": 4.512503761295871,
+    "recall_5000": 0.004490152679288906,
+    "lift_30km": {
+     "lift_coarse": 5.554202192448233,
+     "baseline_coarse": 0.0900219298245614,
+     "n_fire_coarse": 2463,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.570269969919622,
+    "recall_5000": 0.005542679619310617,
+    "lift_30km": {
+     "lift_coarse": 6.350974930362117,
+     "baseline_coarse": 0.07872807017543859,
+     "n_fire_coarse": 2154,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.69883735943294,
+    "recall_5000": 0.005670610195999294,
+    "lift_30km": {
+     "lift_coarse": 6.434619002822202,
+     "baseline_coarse": 0.0777046783625731,
+     "n_fire_coarse": 2126,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260511": {
+   "total": {
+    "lift_5000": 5.15985096128146,
+    "recall_5000": 0.005134293475220508,
+    "lift_30km": {
+     "lift_coarse": 6.308300395256917,
+     "baseline_coarse": 0.10087719298245613,
+     "n_fire_coarse": 2760,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.775071248116815,
+    "recall_5000": 0.004751419631475258,
+    "lift_30km": {
+     "lift_coarse": 7.138544112713855,
+     "baseline_coarse": 0.08914473684210526,
+     "n_fire_coarse": 2439,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.881986523617157,
+    "recall_5000": 0.004857805340194736,
+    "lift_30km": {
+     "lift_coarse": 7.257569441812876,
+     "baseline_coarse": 0.0876827485380117,
+     "n_fire_coarse": 2399,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260514": {
+   "total": {
+    "lift_5000": 4.063320048689165,
+    "recall_5000": 0.004043193838400376,
+    "lift_30km": {
+     "lift_coarse": 6.582021330624682,
+     "baseline_coarse": 0.12430555555555556,
+     "n_fire_coarse": 3401,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.335347548575101,
+    "recall_5000": 0.004313873946842508,
+    "lift_30km": {
+     "lift_coarse": 7.29405491868835,
+     "baseline_coarse": 0.11217105263157895,
+     "n_fire_coarse": 3069,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.407665859116269,
+    "recall_5000": 0.0043858340543604735,
+    "lift_30km": {
+     "lift_coarse": 7.387938793879389,
+     "baseline_coarse": 0.11074561403508772,
+     "n_fire_coarse": 3030,
+     "k_coarse": 22
+    }
+   }
+  }
+ },
+ "mlp": {
+  "20260323": {
+   "total": {
+    "lift_5000": 0.05298000948916654,
+    "recall_5000": 5.271759186040382e-05,
+    "lift_30km": {
+     "lift_coarse": 1.9771643301055066,
+     "baseline_coarse": 0.04597953216374269,
+     "n_fire_coarse": 1258,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.05582434661852521,
+    "recall_5000": 5.5547840577697544e-05,
+    "lift_30km": {
+     "lift_coarse": 2.005865102639296,
+     "baseline_coarse": 0.04532163742690058,
+     "n_fire_coarse": 1240,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.05762404782041542,
+    "recall_5000": 5.7338627599948396e-05,
+    "lift_30km": {
+     "lift_coarse": 2.038748137108793,
+     "baseline_coarse": 0.0445906432748538,
+     "n_fire_coarse": 1220,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260326": {
+   "total": {
+    "lift_5000": 0.47545213166657563,
+    "recall_5000": 0.000473097148679877,
+    "lift_30km": {
+     "lift_coarse": 2.7534384434753436,
+     "baseline_coarse": 0.04952485380116959,
+     "n_fire_coarse": 1355,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.506080122407081,
+    "recall_5000": 0.0005035734345645058,
+    "lift_30km": {
+     "lift_coarse": 2.792596624931954,
+     "baseline_coarse": 0.04883040935672515,
+     "n_fire_coarse": 1336,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.5216946192190713,
+    "recall_5000": 0.0005191105905215731,
+    "lift_30km": {
+     "lift_coarse": 2.839352428393524,
+     "baseline_coarse": 0.04802631578947368,
+     "n_fire_coarse": 1314,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260330": {
+   "total": {
+    "lift_5000": 0.29368627228265964,
+    "recall_5000": 0.0002922316018151442,
+    "lift_30km": {
+     "lift_coarse": 0.8442880947972597,
+     "baseline_coarse": 0.053837719298245615,
+     "n_fire_coarse": 1473,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.31493947281284734,
+    "recall_5000": 0.00031337953217757384,
+    "lift_30km": {
+     "lift_coarse": 0.8582721626199887,
+     "baseline_coarse": 0.05296052631578947,
+     "n_fire_coarse": 1449,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.3243759189788312,
+    "recall_5000": 0.0003227692382645977,
+    "lift_30km": {
+     "lift_coarse": 0.8721152620170853,
+     "baseline_coarse": 0.05211988304093567,
+     "n_fire_coarse": 1426,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260402": {
+   "total": {
+    "lift_5000": 0.33849536329369107,
+    "recall_5000": 0.0003368187469351971,
+    "lift_30km": {
+     "lift_coarse": 0.7615654400712576,
+     "baseline_coarse": 0.059685672514619884,
+     "n_fire_coarse": 1633,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.37162498654094,
+    "recall_5000": 0.0003697842743799316,
+    "lift_30km": {
+     "lift_coarse": 0.7782455341904654,
+     "baseline_coarse": 0.05840643274853801,
+     "n_fire_coarse": 1598,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.3831706778805719,
+    "recall_5000": 0.0003812727782450238,
+    "lift_30km": {
+     "lift_coarse": 0.7901120480535982,
+     "baseline_coarse": 0.057529239766081874,
+     "n_fire_coarse": 1574,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260406": {
+   "total": {
+    "lift_5000": 0.8917160063260295,
+    "recall_5000": 0.0008872992083268203,
+    "lift_30km": {
+     "lift_coarse": 1.4180574271794342,
+     "baseline_coarse": 0.06410818713450292,
+     "n_fire_coarse": 1754,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.9832893909975311,
+    "recall_5000": 0.0009784190168156263,
+    "lift_30km": {
+     "lift_coarse": 1.4536953403113544,
+     "baseline_coarse": 0.06253654970760233,
+     "n_fire_coarse": 1711,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 1.0205450782927137,
+    "recall_5000": 0.0010154901713179273,
+    "lift_30km": {
+     "lift_coarse": 1.477002807169078,
+     "baseline_coarse": 0.06154970760233918,
+     "n_fire_coarse": 1684,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260409": {
+   "total": {
+    "lift_5000": 0.9360213265522722,
+    "recall_5000": 0.0009313850779114447,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.06765350877192983,
+     "n_fire_coarse": 1851,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 1.039693904850809,
+    "recall_5000": 0.0010345441509760805,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.06571637426900585,
+     "n_fire_coarse": 1798,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 1.0804159599575973,
+    "recall_5000": 0.0010750645038702321,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.06498538011695906,
+     "n_fire_coarse": 1778,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260413": {
+   "total": {
+    "lift_5000": 0.9239796873212271,
+    "recall_5000": 0.0009194030826563803,
+    "lift_30km": {
+     "lift_coarse": 0.6227523102836073,
+     "baseline_coarse": 0.07298976608187134,
+     "n_fire_coarse": 1997,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 1.0394384625419306,
+    "recall_5000": 0.0010342899739098025,
+    "lift_30km": {
+     "lift_coarse": 0.6437041219649916,
+     "baseline_coarse": 0.0706140350877193,
+     "n_fire_coarse": 1932,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 1.0860922578132608,
+    "recall_5000": 0.001080712686203875,
+    "lift_30km": {
+     "lift_coarse": 0.653170359052712,
+     "baseline_coarse": 0.0695906432748538,
+     "n_fire_coarse": 1904,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260416": {
+   "total": {
+    "lift_5000": 0.5054832127718393,
+    "recall_5000": 0.0005029794815087849,
+    "lift_30km": {
+     "lift_coarse": 0.5894011202068075,
+     "baseline_coarse": 0.07711988304093567,
+     "n_fire_coarse": 2110,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.5779461695486692,
+    "recall_5000": 0.000575083518808743,
+    "lift_30km": {
+     "lift_coarse": 0.6108233613145204,
+     "baseline_coarse": 0.07441520467836257,
+     "n_fire_coarse": 2036,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.6001234953846154,
+    "recall_5000": 0.0005971509971509971,
+    "lift_30km": {
+     "lift_coarse": 0.6174957118353345,
+     "baseline_coarse": 0.07361111111111111,
+     "n_fire_coarse": 2014,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260420": {
+   "total": {
+    "lift_5000": 2.3889875113259356,
+    "recall_5000": 0.0023771545115981022,
+    "lift_30km": {
+     "lift_coarse": 3.691880638445524,
+     "baseline_coarse": 0.0861842105263158,
+     "n_fire_coarse": 2358,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 2.7460703306406384,
+    "recall_5000": 0.0027324686482036106,
+    "lift_30km": {
+     "lift_coarse": 3.8536762042738135,
+     "baseline_coarse": 0.08256578947368422,
+     "n_fire_coarse": 2259,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 2.8467865243314114,
+    "recall_5000": 0.0028326859800598698,
+    "lift_30km": {
+     "lift_coarse": 3.8985465944713593,
+     "baseline_coarse": 0.08161549707602339,
+     "n_fire_coarse": 2233,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260423": {
+   "total": {
+    "lift_5000": 1.854729534505487,
+    "recall_5000": 0.001845542791597473,
+    "lift_30km": {
+     "lift_coarse": 6.225964273523723,
+     "baseline_coarse": 0.08760964912280701,
+     "n_fire_coarse": 2397,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 2.210310621003709,
+    "recall_5000": 0.0021993626336857483,
+    "lift_30km": {
+     "lift_coarse": 6.002632733655112,
+     "baseline_coarse": 0.083296783625731,
+     "n_fire_coarse": 2279,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 2.2716458277068114,
+    "recall_5000": 0.002260394038263145,
+    "lift_30km": {
+     "lift_coarse": 6.063829787234042,
+     "baseline_coarse": 0.0824561403508772,
+     "n_fire_coarse": 2256,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260427": {
+   "total": {
+    "lift_5000": 5.169978013858727,
+    "recall_5000": 0.005144370367045647,
+    "lift_30km": {
+     "lift_coarse": 6.653198653198654,
+     "baseline_coarse": 0.08881578947368421,
+     "n_fire_coarse": 2430,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.527508258464436,
+    "recall_5000": 0.00649517656854155,
+    "lift_30km": {
+     "lift_coarse": 7.191847298608865,
+     "baseline_coarse": 0.08216374269005848,
+     "n_fire_coarse": 2248,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.727423902886102,
+    "recall_5000": 0.00669410200194084,
+    "lift_30km": {
+     "lift_coarse": 7.292409890515438,
+     "baseline_coarse": 0.08103070175438597,
+     "n_fire_coarse": 2217,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260430": {
+   "total": {
+    "lift_5000": 4.691753181774743,
+    "recall_5000": 0.00466851425153346,
+    "lift_30km": {
+     "lift_coarse": 6.756068837138624,
+     "baseline_coarse": 0.08746345029239766,
+     "n_fire_coarse": 2393,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.07316631174805,
+    "recall_5000": 0.006043085043020901,
+    "lift_30km": {
+     "lift_coarse": 7.416180150125104,
+     "baseline_coarse": 0.07967836257309942,
+     "n_fire_coarse": 2180,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.291037878191043,
+    "recall_5000": 0.006259877460169809,
+    "lift_30km": {
+     "lift_coarse": 7.547746371275784,
+     "baseline_coarse": 0.07828947368421052,
+     "n_fire_coarse": 2142,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260504": {
+   "total": {
+    "lift_5000": 3.411005401248918,
+    "recall_5000": 0.0033941101994978576,
+    "lift_30km": {
+     "lift_coarse": 5.175348995573715,
+     "baseline_coarse": 0.08782894736842105,
+     "n_fire_coarse": 2403,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 4.574676260918365,
+    "recall_5000": 0.004552017229553096,
+    "lift_30km": {
+     "lift_coarse": 5.781666032712058,
+     "baseline_coarse": 0.07861842105263157,
+     "n_fire_coarse": 2151,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 4.6993743795178045,
+    "recall_5000": 0.00467609770038483,
+    "lift_30km": {
+     "lift_coarse": 5.877298504897748,
+     "baseline_coarse": 0.07733918128654971,
+     "n_fire_coarse": 2116,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260507": {
+   "total": {
+    "lift_5000": 4.1476781039854504,
+    "recall_5000": 0.0041271340560810905,
+    "lift_30km": {
+     "lift_coarse": 5.049274720407485,
+     "baseline_coarse": 0.0900219298245614,
+     "n_fire_coarse": 2463,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 5.386906990482766,
+    "recall_5000": 0.005360224863158933,
+    "lift_30km": {
+     "lift_coarse": 5.196252215750824,
+     "baseline_coarse": 0.07872807017543859,
+     "n_fire_coarse": 2154,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 5.511242179451607,
+    "recall_5000": 0.0054839442020028755,
+    "lift_30km": {
+     "lift_coarse": 5.264688275036347,
+     "baseline_coarse": 0.0777046783625731,
+     "n_fire_coarse": 2126,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260511": {
+   "total": {
+    "lift_5000": 5.606496655871804,
+    "recall_5000": 0.005578726869261992,
+    "lift_30km": {
+     "lift_coarse": 6.308300395256917,
+     "baseline_coarse": 0.10087719298245613,
+     "n_fire_coarse": 2760,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 7.4662481623429295,
+    "recall_5000": 0.007429266758273595,
+    "lift_30km": {
+     "lift_coarse": 7.138544112713855,
+     "baseline_coarse": 0.08914473684210526,
+     "n_fire_coarse": 2439,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 7.646741544409073,
+    "recall_5000": 0.007608866130584251,
+    "lift_30km": {
+     "lift_coarse": 7.257569441812876,
+     "baseline_coarse": 0.0876827485380117,
+     "n_fire_coarse": 2399,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260514": {
+   "total": {
+    "lift_5000": 5.474989924759579,
+    "recall_5000": 0.005447871509957314,
+    "lift_30km": {
+     "lift_coarse": 6.582021330624682,
+     "baseline_coarse": 0.12430555555555556,
+     "n_fire_coarse": 3401,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 6.771399980631587,
+    "recall_5000": 0.006737860259830203,
+    "lift_30km": {
+     "lift_coarse": 7.29405491868835,
+     "baseline_coarse": 0.11217105263157895,
+     "n_fire_coarse": 3069,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 6.884354294238745,
+    "recall_5000": 0.006850255094429693,
+    "lift_30km": {
+     "lift_coarse": 7.387938793879389,
+     "baseline_coarse": 0.11074561403508772,
+     "n_fire_coarse": 3030,
+     "k_coarse": 22
+    }
+   }
+  }
+ }
+}

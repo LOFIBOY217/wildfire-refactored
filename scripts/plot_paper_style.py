@@ -9,12 +9,22 @@ from __future__ import annotations
 import matplotlib as mpl
 
 
-# Canonical color palette (used consistently across Fig 1, Fig 2, Fig 3).
+# ============================================================================
+# CANONICAL model -> color mapping. Keep IDENTICAL across every figure in the
+# paper (Fig 1/2/3/4, novel bars, scaling, etc.). Never recolor a model in one
+# figure only. New models: add a key here, do not hardcode a color in a script.
+# Recorded also in memory: model_color_mapping.md
+# ============================================================================
 COLORS: dict[str, str] = {
-    # Ours
+    # Ours — single models (each a distinct fixed hue)
+    "convstem":       "#C0392B",   # deep red   — conv-stem (single-model SOTA)
+    "convstem_novel": "#E74C3C",   # bright red — conv-stem + per-pixel novel loss
+    "fcnhead":        "#16A085",   # teal       — conv-stem + FCN output head
+    "flatten":        "#F1C40F",   # yellow     — flatten patch-embed Transformer
+    "sota_single":    "#C0392B",   # alias of conv-stem red (generic single ckpt)
+    # Ours — ensembles (NOT drawn in single-model figures)
     "ensemble_prob":  "#6A1B9A",   # deep purple, prob-mean
     "ensemble_logit": "#9C27B0",   # lighter purple, logit-mean
-    "sota_single":    "#C0392B",   # deep red, single best ckpt
     # Deep learning baselines
     "convlstm":       "#8B5A2B",   # brown
     "mlp":            "#7B6F9E",   # muted indigo
@@ -32,6 +42,10 @@ COLORS: dict[str, str] = {
 
 # Human-readable display labels.
 LABELS: dict[str, str] = {
+    "convstem":       "Patch Transformer (conv-stem)",
+    "convstem_novel": "Patch Transformer (conv-stem + novel loss)",
+    "fcnhead":        "Patch Transformer (conv-stem + FCN head)",
+    "flatten":        "Patch Transformer (flatten)",
     "ensemble_prob":  "Ensemble (prob-mean, 10 ckpts)",
     "ensemble_logit": "Ensemble (logit-mean, 10 ckpts)",
     "sota_single":    "Patch Transformer (single ckpt)",

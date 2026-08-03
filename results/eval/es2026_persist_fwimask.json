@@ -1,0 +1,326 @@
+{
+ "persistence": {
+  "20260323": {
+   "total": {
+    "lift_5000": 23.735044251146608,
+    "recall_5000": 0.02361748115346091,
+    "lift_30km": {
+     "lift_coarse": 19.771643301055065,
+     "baseline_coarse": 0.04597953216374269,
+     "n_fire_coarse": 1258,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 8.023460410557185,
+     "baseline_coarse": 0.04532163742690058,
+     "n_fire_coarse": 1240,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 8.154992548435173,
+     "baseline_coarse": 0.0445906432748538,
+     "n_fire_coarse": 1220,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260326": {
+   "total": {
+    "lift_5000": 22.254817086085485,
+    "recall_5000": 0.02214458576705424,
+    "lift_30km": {
+     "lift_coarse": 18.356256289835624,
+     "baseline_coarse": 0.04952485380116959,
+     "n_fire_coarse": 1355,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 6.516058791507893,
+     "baseline_coarse": 0.04883040935672515,
+     "n_fire_coarse": 1336,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 6.625155666251557,
+     "baseline_coarse": 0.04802631578947368,
+     "n_fire_coarse": 1314,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260330": {
+   "total": {
+    "lift_5000": 21.234071611078335,
+    "recall_5000": 0.02112889619161571,
+    "lift_30km": {
+     "lift_coarse": 17.730049990742454,
+     "baseline_coarse": 0.053837719298245615,
+     "n_fire_coarse": 1473,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 3.433088650479955,
+     "baseline_coarse": 0.05296052631578947,
+     "n_fire_coarse": 1449,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 3.4884610480683413,
+     "baseline_coarse": 0.05211988304093567,
+     "n_fire_coarse": 1426,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260402": {
+   "total": {
+    "lift_5000": 19.095120788155867,
+    "recall_5000": 0.01900053990063847,
+    "lift_30km": {
+     "lift_coarse": 16.754439681567668,
+     "baseline_coarse": 0.059685672514619884,
+     "n_fire_coarse": 1633,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.05840643274853801,
+     "n_fire_coarse": 1598,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.057529239766081874,
+     "n_fire_coarse": 1574,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260406": {
+   "total": {
+    "lift_5000": 18.41647669023603,
+    "recall_5000": 0.01832525722482231,
+    "lift_30km": {
+     "lift_coarse": 15.598631698973776,
+     "baseline_coarse": 0.06410818713450292,
+     "n_fire_coarse": 1754,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.06253654970760233,
+     "n_fire_coarse": 1711,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.06154970760233918,
+     "n_fire_coarse": 1684,
+     "k_coarse": 22
+    }
+   }
+  }
+ },
+ "fwi_oracle_masked": {
+  "20260323": {
+   "total": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 2.9657464951582595,
+     "baseline_coarse": 0.04597953216374269,
+     "n_fire_coarse": 1258,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 3.0087976539589443,
+     "baseline_coarse": 0.04532163742690058,
+     "n_fire_coarse": 1240,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 3.058122205663189,
+     "baseline_coarse": 0.0445906432748538,
+     "n_fire_coarse": 1220,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260326": {
+   "total": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 1.8356256289835626,
+     "baseline_coarse": 0.04952485380116959,
+     "n_fire_coarse": 1355,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 1.8617310832879694,
+     "baseline_coarse": 0.04883040935672515,
+     "n_fire_coarse": 1336,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 1.8929016189290164,
+     "baseline_coarse": 0.04802631578947368,
+     "n_fire_coarse": 1314,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260330": {
+   "total": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.8442880947972597,
+     "baseline_coarse": 0.053837719298245615,
+     "n_fire_coarse": 1473,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.8582721626199887,
+     "baseline_coarse": 0.05296052631578947,
+     "n_fire_coarse": 1449,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.8721152620170853,
+     "baseline_coarse": 0.05211988304093567,
+     "n_fire_coarse": 1426,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260402": {
+   "total": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.059685672514619884,
+     "n_fire_coarse": 1633,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.05840643274853801,
+     "n_fire_coarse": 1598,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.0,
+    "recall_5000": 0.0,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.057529239766081874,
+     "n_fire_coarse": 1574,
+     "k_coarse": 22
+    }
+   }
+  },
+  "20260406": {
+   "total": {
+    "lift_5000": 0.04151312435411643,
+    "recall_5000": 0.0022390630382363073,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.06410818713450292,
+     "n_fire_coarse": 1754,
+     "k_coarse": 22
+    }
+   },
+   "novel30": {
+    "lift_5000": 0.04721818003722206,
+    "recall_5000": 0.002546772455676364,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.06253654970760233,
+     "n_fire_coarse": 1711,
+     "k_coarse": 22
+    }
+   },
+   "novel90": {
+    "lift_5000": 0.04849113771250377,
+    "recall_5000": 0.0026154310431546124,
+    "lift_30km": {
+     "lift_coarse": 0.0,
+     "baseline_coarse": 0.06154970760233918,
+     "n_fire_coarse": 1684,
+     "k_coarse": 22
+    }
+   }
+  }
+ }
+}

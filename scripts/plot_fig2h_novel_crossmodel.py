@@ -105,8 +105,8 @@ def main():
                              gridspec_kw={"wspace": 0.06})
     for ax, mode, ttl in zip(
         axes, ["total", "novel_30d"],
-        ["Standard Lift@5000\n(any fire — rewards persistence)",
-         "Novel-30d Lift@5000\n(NEW fires only — the operational task)"],
+        ["Standard Lift@5000\n(any fire, rewards persistence)",
+         "Novel-30d Lift@5000\n(NEW fires only, the operational task)"],
     ):
         xs = np.arange(len(order))
         vals = [rows[m][mode] for m in order]

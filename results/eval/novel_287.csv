@@ -1,0 +1,9 @@
+key,lift_5000,degenerate,src
+climatology,6.34,0,benchmark_novel(477w)
+fcnhead,5.94,0,287w
+mlp,5.91,0,model_novel_mlp(583w)
+convstem,5.11,0,287w
+flatten,4.42,0,287w
+convlstm,4.30,0,287w
+fwi_oracle,0.001,0,benchmark_novel(477w)
+persistence,0.00,1,benchmark_novel(477w)

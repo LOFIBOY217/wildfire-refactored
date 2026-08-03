@@ -1,0 +1,33 @@
+{
+  "n_windows": 612,
+  "lift_5000": {
+    "mean": 0.0,
+    "ci_lo": 0.0,
+    "ci_hi": 0.0
+  },
+  "lift_30km": {
+    "mean": 0.9420771548621344,
+    "ci_lo": 0.9154278734882128,
+    "ci_hi": 0.966599563749001
+  },
+  "skip_counts": {
+    "no_issue": 0,
+    "no_leads": 0,
+    "no_label": 0,
+    "no_fire": 214
+  },
+  "args": {
+    "s2s_dir": "/scratch/jiaqi217/wildfire-refactored/data/ecmwf_s2s_fire_epsg3978/fwinx",
+    "label_npy": "/scratch/jiaqi217/wildfire-refactored/data/fire_labels/fire_labels_nbac_nfdb_2000-05-01_2025-12-21_2281x2709_r14.npy",
+    "label_data_start": "2000-05-01",
+    "pred_start": "2022-05-01",
+    "pred_end": "2025-10-31",
+    "lead_start": 14,
+    "lead_end": 46,
+    "val_lift_k": 5000,
+    "max_lag_days": 35,
+    "fire_season_only": true,
+    "output_prefix": "/scratch/jiaqi217/wildfire-refactored/outputs/baseline_ecmwf_s2s",
+    "limit_windows": 0
+  }
+}

@@ -826,9 +826,15 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                     xb_dec = torch.from_numpy(
                         np.stack(dec_list, axis=0)   # (chunk, dec_days, dec_dim)
                     ).to(device)
-                # V3 decoder_ctx augmentation (adds static context + lead time encoding)
+                # V3 decoder_ctx augmentation (adds static context + lead time
+                # encoding). win_date passed so V3's teleconnection ctx can look
+                # up the per-issue-date vector; callbacks without the kwarg fall
+                # back to the no-win_date signature.
                 if decoder_ctx_fn is not None:
-                    xb_dec = decoder_ctx_fn(xb_dec, cs, ce)
+                    try:
+                        xb_dec = decoder_ctx_fn(xb_dec, cs, ce, win_date=win_date)
+                    except TypeError:
+                        xb_dec = decoder_ctx_fn(xb_dec, cs, ce)
                 _chunk_patch_ids = (torch.arange(cs, ce, device=device)
                                     if use_patch_embed else None)
                 with torch.autocast(device_type=device.type, dtype=torch.float16,

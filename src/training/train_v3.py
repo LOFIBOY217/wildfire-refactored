@@ -291,17 +291,24 @@ def _build_lead_time_encoding(dec_days, lead_start, base_doy=None, device=None):
     return enc
 
 
-def _augment_decoder(xb_dec, static_ctx_tensor, lead_time_enc):
+def _augment_decoder(xb_dec, static_ctx_tensor, lead_time_enc, tele_vec=None):
     """
-    Concatenate static spatial context + lead time encoding to decoder input.
+    Concatenate static spatial context + lead time encoding (+ optional
+    per-issue-date teleconnection vector) to decoder input.
 
     Args:
         xb_dec: (B, dec_days, dec_dim_base)
         static_ctx_tensor: (B, ctx_dim) — static features per patch
         lead_time_enc: (dec_days, 4) — lead time + season encoding
+        tele_vec: optional teleconnection features. Either (K,) — one constant
+            vector broadcast to every sample (val/eval, where a whole window
+            shares an issue date) — or (B, K) — one vector per sample
+            (training, where a batch mixes issue dates). Appended AFTER the
+            lead-time encoding, so when tele_vec is None the output is
+            byte-identical to the previous behavior.
 
     Returns:
-        (B, dec_days, dec_dim_base + ctx_dim + 4)
+        (B, dec_days, dec_dim_base + ctx_dim + 4 [+ K])
     """
     B, D, _ = xb_dec.shape
 
@@ -311,7 +318,56 @@ def _augment_decoder(xb_dec, static_ctx_tensor, lead_time_enc):
     # Expand lead time: (dec_days, 4) → (B, dec_days, 4)
     lt_expanded = lead_time_enc.unsqueeze(0).expand(B, -1, -1)
 
-    return torch.cat([xb_dec, ctx_expanded, lt_expanded], dim=-1)
+    parts = [xb_dec, ctx_expanded, lt_expanded]
+
+    if tele_vec is not None:
+        if tele_vec.dim() == 1:
+            tele_expanded = tele_vec.view(1, 1, -1).expand(B, D, -1)   # (K,)→(B,D,K)
+        else:
+            tele_expanded = tele_vec.unsqueeze(1).expand(B, D, -1)     # (B,K)→(B,D,K)
+        parts.append(tele_expanded)
+
+    return torch.cat(parts, dim=-1)
+
+
+def _load_teleconnections(csv_path, cols):
+    """Load daily teleconnection indices into {date_iso: float32 array}.
+
+    Returns (table, K) where table maps 'YYYY-MM-DD' → array of length K.
+    """
+    import csv as _csv
+    table = {}
+    with open(csv_path, newline="") as _f:
+        reader = _csv.DictReader(_f)
+        missing = [c for c in (["date"] + cols) if c not in reader.fieldnames]
+        if missing:
+            raise SystemExit(
+                f"[teleconnection] CSV {csv_path} missing columns: {missing} "
+                f"(has: {reader.fieldnames})")
+        for row in reader:
+            d = str(row["date"])[:10]
+            try:
+                vec = np.array([float(row[c]) for c in cols], dtype=np.float32)
+            except (ValueError, TypeError):
+                continue   # skip rows with empty / non-numeric values
+            table[d] = vec
+    return table, len(cols)
+
+
+def _tele_lookup(table, K, date_obj, miss_counter=None):
+    """Look up a date's raw teleconnection vector; zeros (+count) if missing."""
+    if date_obj is None:
+        if miss_counter is not None:
+            miss_counter[0] += 1
+        return np.zeros(K, dtype=np.float32)
+    key = (date_obj.isoformat() if hasattr(date_obj, "isoformat")
+           else str(date_obj)[:10])
+    vec = table.get(key)
+    if vec is None:
+        if miss_counter is not None:
+            miss_counter[0] += 1
+        return np.zeros(K, dtype=np.float32)
+    return vec
 
 
 # ------------------------------------------------------------------ #
@@ -740,7 +796,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                         ).to(device)
                     # V3 decoder_ctx augmentation (must match training-time augment)
                     if decoder_ctx_fn is not None:
-                        xb_dec = decoder_ctx_fn(xb_dec, cs, ce)
+                        xb_dec = decoder_ctx_fn(xb_dec, cs, ce,
+                                                win_date=win_date_cl)
                     # 2026-04-26 audit fix: previously called model(xb_enc, xb_dec)
                     # without patch_ids. Safe when use_patch_embed=False (default,
                     # patch_ids defaults to None inside the model), but a latent bug
@@ -1024,6 +1081,16 @@ def main():
                          "  - Lead time sin/cos encoding — tells decoder WHEN (day 14 vs 46)\n"
                          "  - Day-of-year sin/cos — tells decoder WHAT SEASON\n"
                          "Increases dec_dim by n_static*P² + 4.")
+    ap.add_argument("--teleconnection_csv", type=str, default=None,
+                    help="Optional CSV of daily teleconnection climate indices "
+                         "(columns: date,<cols>). When set, these per-issue-date "
+                         "scalars are appended to the decoder context (after the "
+                         "lead-time encoding), broadcast across decoder days and "
+                         "patches. Requires --decoder_ctx. When absent, behavior "
+                         "is byte-identical to before (K=0, no-op).")
+    ap.add_argument("--teleconnection_cols", type=str, default="oni,ao,nao,pdo",
+                    help="Comma-separated column names to read from "
+                         "--teleconnection_csv (order defines feature order).")
 
     # V3: evaluation
     ap.add_argument("--cluster_eval", action="store_true",
@@ -1254,6 +1321,43 @@ def main():
     data_start_date = _date(args.data_start)
     pred_start_date = _date(args.pred_start)
     pred_end_date = _date(args.pred_end)
+
+    # ----------------------------------------------------------------
+    # Teleconnection climate indices (optional decoder context) — LOAD
+    # ----------------------------------------------------------------
+    # Loaded here so tele_K is known before dec_dim is computed (the model's
+    # decoder projection width depends on it). Train-period normalization
+    # stats are computed later, once train_window_dates exists. When the flag
+    # is absent, tele_K = 0 and every downstream shape is unchanged (no-op).
+    tele_table = None       # {date_iso: raw np.array([...], f32)} or None
+    tele_K = 0
+    tele_cols = []
+    tele_norm = None        # {"mean","std","cols"} (train-period); assigned later
+    tele_per_sample = None  # (n_samples, K) float32 (training only) or None
+    _tele_ckpt_meta = {}    # merged into every checkpoint payload (empty = off)
+    if args.teleconnection_csv:
+        if not args.decoder_ctx:
+            raise SystemExit("[teleconnection] --teleconnection_csv requires "
+                             "--decoder_ctx (it extends the decoder context).")
+        tele_cols = [c.strip() for c in args.teleconnection_cols.split(",")
+                     if c.strip()]
+        tele_table, tele_K = _load_teleconnections(
+            args.teleconnection_csv, tele_cols)
+        print(f"  [teleconnection] loaded {len(tele_table)} dates, "
+              f"cols={tele_cols} K={tele_K}")
+
+    def _tele_norm_vec(date_obj, miss_counter=None):
+        """Normalized teleconnection vector for an issue date, or None if off.
+
+        Reads the enclosing `tele_norm` by reference, so it must only be
+        CALLED after tele_norm has been assigned (post train_window_dates).
+        Missing/None dates → normalized zeros, keeping the +K width consistent.
+        """
+        if tele_table is None:
+            return None
+        raw = _tele_lookup(tele_table, tele_K, date_obj, miss_counter)
+        return ((raw - tele_norm["mean"]) / tele_norm["std"]).astype(np.float32)
+
     in_days = args.in_days
     lead_start = args.lead_start
     lead_end = args.lead_end
@@ -1874,9 +1978,12 @@ def main():
     ctx_extra_dim = 0
     if args.decoder_ctx:
         n_ctx_channels = sum(1 for name in CHANNEL_NAMES if name in DECODER_CTX_CHANNELS)
-        ctx_extra_dim = n_ctx_channels + 4  # patch-mean scalars + lead/season sin/cos
-        print(f"  [decoder_ctx] {n_ctx_channels} spatial means + 4 lead/season dims "
-              f"= +{ctx_extra_dim} to dec_dim")
+        # +4 lead/season sin/cos, + tele_K teleconnection scalars (0 when off).
+        # Teleconnection dims are appended AFTER the lead-time encoding inside
+        # _augment_decoder, so the static layout is unchanged when tele_K == 0.
+        ctx_extra_dim = n_ctx_channels + 4 + tele_K
+        print(f"  [decoder_ctx] {n_ctx_channels} spatial means + 4 lead/season "
+              f"+ {tele_K} teleconnection dims = +{ctx_extra_dim} to dec_dim")
     dec_dim = dec_dim_base + ctx_extra_dim
 
     meteo_mmap_gb = T * n_patches * enc_dim * 2 / 1e9
@@ -2568,6 +2675,51 @@ def main():
                 print(f"    chunk {c0:>6}-{c1:>6} / {n_p}")
         print(f"  [OK] {meteo_train.nbytes/1e9:.1f} GB in RAM")
 
+    # ----------------------------------------------------------------
+    # Teleconnection — NORMALIZATION + per-sample vectors
+    # ----------------------------------------------------------------
+    # Built AFTER any fire_season_only resampling so train_window_dates_eff /
+    # all_pairs_eff are final. Z-score over TRAIN-period issue dates only
+    # (train windows all have issue date < pred_start by construction at the
+    # train/val split), so no val/eval info leaks. Stats are stored for
+    # val/eval reuse + saved in the checkpoint. No-op when the flag is off.
+    if tele_table is not None:
+        _train_dates = train_window_dates_eff
+        _train_mat = (np.stack([_tele_lookup(tele_table, tele_K, d)
+                                for d in _train_dates], axis=0)
+                      if _train_dates else np.zeros((0, tele_K), dtype=np.float32))
+        _tmean = (_train_mat.mean(axis=0) if _train_mat.shape[0] > 0
+                  else np.zeros(tele_K, dtype=np.float32)).astype(np.float32)
+        _tstd = (_train_mat.std(axis=0) if _train_mat.shape[0] > 0
+                 else np.ones(tele_K, dtype=np.float32)).astype(np.float32)
+        _tstd = np.where(_tstd < 1e-6, 1.0, _tstd).astype(np.float32)
+        tele_norm = {"mean": _tmean, "std": _tstd, "cols": tele_cols}
+        print(f"  [teleconnection] train-period z-score "
+              f"mean={_tmean.tolist()} std={_tstd.tolist()}")
+
+        # Per-sample normalized vectors: window idx → issue date → vector.
+        _tele_miss = [0]
+        _per_win = (np.stack(
+            [_tele_norm_vec(train_window_dates_eff[wi], _tele_miss)
+             for wi in range(len(train_window_dates_eff))], axis=0)
+            .astype(np.float32) if train_window_dates_eff
+            else np.zeros((0, tele_K), dtype=np.float32))
+        tele_per_sample = _per_win[all_pairs_eff[:, 0].astype(np.int64)]
+        if _tele_miss[0]:
+            print(f"  [teleconnection] WARNING: {_tele_miss[0]}/"
+                  f"{len(train_window_dates_eff)} train windows had a missing "
+                  f"issue date → zero-filled.")
+        print(f"  [teleconnection] per-sample tele tensor: "
+              f"{tuple(tele_per_sample.shape)}")
+
+        _tele_ckpt_meta = {
+            "teleconnection_cols": tele_cols,
+            "teleconnection_K": tele_K,
+            "teleconnection_mean": _tmean.tolist(),
+            "teleconnection_std": _tstd.tolist(),
+            "teleconnection_csv": args.teleconnection_csv,
+        }
+
     train_ds = S2SHotspotDatasetMixed(
         meteo_train, fire_patched, train_wins_eff, hw, grid, all_pairs_eff,
         decoder_mode=args.decoder, dec_dim=dec_dim,
@@ -2656,6 +2808,24 @@ def main():
               f"{sample_weights_arr.mean():.3f}  range="
               f"{sample_weights_arr.min():.3f}–{sample_weights_arr.max():.3f}")
 
+    # Apply teleconnection wrapper FIRST (appends tele vector at index 4).
+    # The sample-weight wrapper below appends its weight LAST, so the final
+    # element order is (enc, dec, y, pid, [tele], [sw]) — matched in the
+    # training-loop unpack. Skipped (no-op) when the flag is off.
+    if tele_per_sample is not None:
+        from torch.utils.data import Dataset as _TorchDatasetTele
+        _base_tele_ds = train_ds
+        _tele_tensor = torch.from_numpy(tele_per_sample).float()
+
+        class _TeleconnectionDS(_TorchDatasetTele):
+            def __len__(self):
+                return len(_base_tele_ds)
+            def __getitem__(self, idx):
+                out = _base_tele_ds[idx]   # 4-tuple
+                return out + (_tele_tensor[idx],)
+
+        train_ds = _TeleconnectionDS()
+
     # Apply weighted-sample wrapper if any per-year weights are active
     # (climate-similarity OR recency OR anomaly-aware).
     if sample_weights_arr is not None:
@@ -2667,7 +2837,7 @@ def main():
             def __len__(self):
                 return len(_base_train_ds)
             def __getitem__(self, idx):
-                out = _base_train_ds[idx]   # 4-tuple
+                out = _base_train_ds[idx]   # 4- or 5-tuple (+tele)
                 return out + (_sw_tensor[idx],)
 
         train_ds = _PerYearWeightedDS()
@@ -2898,6 +3068,19 @@ def main():
             print(f"  ERROR: checkpoint not found")
             return
         ckpt = torch.load(args.eval_checkpoint, map_location=device, weights_only=False)
+        # Reproduce training-time teleconnection z-scoring from the checkpoint
+        # so eval matches training exactly, independent of --pred_start. Only
+        # applies when --teleconnection_csv is also passed at eval time.
+        if (tele_table is not None and isinstance(ckpt, dict)
+                and "teleconnection_mean" in ckpt):
+            tele_norm = {
+                "mean": np.asarray(ckpt["teleconnection_mean"], dtype=np.float32),
+                "std": np.asarray(ckpt["teleconnection_std"], dtype=np.float32),
+                "cols": ckpt.get("teleconnection_cols", tele_cols),
+            }
+            print(f"  [teleconnection] loaded norm stats from checkpoint "
+                  f"(mean={tele_norm['mean'].tolist()} "
+                  f"std={tele_norm['std'].tolist()})")
         # Support both naming conventions: train_v3 saves "model_state", V2 saves "model_state_dict"
         if isinstance(ckpt, dict):
             if "model_state_dict" in ckpt:
@@ -3042,15 +3225,24 @@ def main():
             or bool(args.climate_similarity_csv)
             or args.anomaly_weight_pow > 0
         )
+        _has_tele = tele_per_sample is not None
         for batch_idx, batch in enumerate(train_dl):
-            # Backward-compatible: 4-tuple (uniform weights) or 5-tuple
-            # (per-year sample weight as 5th element)
+            # Element layout (tele appended at index 4 by _TeleconnectionDS,
+            # sample weight always LAST by _PerYearWeightedDS):
+            #   base       : (enc, dec, y, pid)
+            #   +tele      : (enc, dec, y, pid, tele)
+            #   +sw        : (enc, dec, y, pid, sw)
+            #   +tele +sw  : (enc, dec, y, pid, tele, sw)
+            xb_enc, xb_dec, yb, patch_ids = batch[0], batch[1], batch[2], batch[3]
+            _extra = list(batch[4:])
+            sw = None
             if _has_sample_weight:
-                xb_enc, xb_dec, yb, patch_ids, sw = batch
+                sw = _extra.pop()   # sample weight is the last element
                 sw = sw.to(device, dtype=torch.float32, non_blocking=True)
-            else:
-                xb_enc, xb_dec, yb, patch_ids = batch
-                sw = None
+            tele_b = None
+            if _has_tele:
+                tele_b = _extra.pop(0).to(device, dtype=torch.float32,
+                                          non_blocking=True)
 
             xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
             xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
@@ -3060,13 +3252,14 @@ def main():
             if args.label_smoothing > 0:
                 yb = yb * (1 - args.label_smoothing) + 0.5 * args.label_smoothing
 
-            # Augment decoder with static context + lead time
+            # Augment decoder with static context + lead time (+ teleconnection)
             if args.decoder_ctx and _dec_ctx_np is not None:
                 _batch_pids = patch_ids.numpy()
                 _ctx_batch = torch.from_numpy(
                     _dec_ctx_np[_batch_pids].astype(np.float32)
                 ).to(device)
-                xb_dec = _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
+                xb_dec = _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc,
+                                          tele_vec=tele_b)
 
             _pids = patch_ids.to(device) if args.use_patch_embed else None
             with torch.autocast(device_type=device.type, dtype=torch.float16,
@@ -3118,11 +3311,16 @@ def main():
                 _t_meval = time.time()
                 _mid_ctx_fn = None
                 if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
-                    def _mid_ctx_fn(xb_dec, cs, ce):
+                    def _mid_ctx_fn(xb_dec, cs, ce, win_date=None):
                         _ctx_batch = torch.from_numpy(
                             _dec_ctx_np[cs:ce].astype(np.float32)
                         ).to(xb_dec.device)
-                        return _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
+                        _tv = None
+                        if tele_table is not None:
+                            _tv = torch.from_numpy(
+                                _tele_norm_vec(win_date)).to(xb_dec.device)
+                        return _augment_decoder(xb_dec, _ctx_batch,
+                                                _lead_time_enc, tele_vec=_tv)
                 model.eval()
                 with torch.no_grad():
                     _m_mid = _compute_val_lift_k_v3(
@@ -3162,6 +3360,7 @@ def main():
                     best_val_lift_k = _vlift
                     _mid_best_path = os.path.join(ckpt_dir, "best_model.pt")
                     _payload = {
+                        **_tele_ckpt_meta,
                         "epoch": epoch, "batch_idx": batch_idx + 1,
                         "global_step": global_step,
                         "model_state": model.state_dict(),
@@ -3184,6 +3383,7 @@ def main():
                 _mid_path = os.path.join(ckpt_dir, f"epoch_{epoch:02d}_mid.pt")
                 _mid_tmp = _mid_path + ".tmp"
                 _mid_payload = {
+                    **_tele_ckpt_meta,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "scheduler_state_dict": (scheduler.state_dict()
@@ -3216,12 +3416,18 @@ def main():
             # Build decoder_ctx callback if decoder_ctx is enabled
             _val_ctx_fn = None
             if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
-                def _val_ctx_fn(xb_dec, cs, ce):
-                    """Augment decoder input with static context + lead time encoding."""
+                def _val_ctx_fn(xb_dec, cs, ce, win_date=None):
+                    """Augment decoder input with static context + lead time
+                    encoding (+ optional per-issue-date teleconnection)."""
                     _ctx_batch = torch.from_numpy(
                         _dec_ctx_np[cs:ce].astype(np.float32)
                     ).to(xb_dec.device)
-                    return _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
+                    _tv = None
+                    if tele_table is not None:
+                        _tv = torch.from_numpy(
+                            _tele_norm_vec(win_date)).to(xb_dec.device)
+                    return _augment_decoder(xb_dec, _ctx_batch,
+                                            _lead_time_enc, tele_vec=_tv)
 
             _m = _compute_val_lift_k_v3(
                 model, meteo_patched, fire_patched, val_wins_lift,
@@ -3315,6 +3521,7 @@ def main():
             best_val_lift_k = val_lift_k
 
         ckpt_payload = {
+            **_tele_ckpt_meta,
             "epoch": epoch,
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
