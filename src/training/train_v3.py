@@ -1168,13 +1168,15 @@ def main():
     ap.add_argument("--pos_weight_cap", type=float, default=10.0)
     ap.add_argument("--max_pos_pairs", type=int, default=0)
     ap.add_argument("--model_type", type=str, default="transformer",
-                    choices=["transformer", "mlp", "convlstm"],
+                    choices=["transformer", "mlp", "convlstm", "unet"],
                     help="Model architecture. 'transformer' (default) is the "
                          "S2SHotspotTransformer. 'mlp' is a 2-layer flatten-MLP "
                          "baseline (answers: is the transformer overkill?). "
                          "'convlstm' is a 2-layer ConvLSTM2D baseline (answers: "
                          "is attention better than recurrent? — sacred geo-DL "
-                         "baseline).")
+                         "baseline). 'unet' is a fully-convolutional U-Net "
+                         "baseline (the CNN/segmentation family — answers: does "
+                         "multi-scale spatial modeling beat recurrence/attention?).")
     ap.add_argument("--cache_dir", type=str, default="outputs/cache_v3")
     ap.add_argument("--master_cache_dir", type=str, default=None,
                     help="Optional master cache (e.g. v3_9ch_2000) covering a "

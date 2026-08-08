@@ -174,6 +174,113 @@ class ConvLSTMBaseline(nn.Module):
 
 
 # ----------------------------------------------------------------
+#  U-Net
+# ----------------------------------------------------------------
+class _DoubleConv(nn.Module):
+    """(Conv3x3 → BN → ReLU) × 2 — the canonical U-Net block."""
+
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class UNetBaseline(nn.Module):
+    """
+    Fully-convolutional U-Net over one 16×16 patch. The 21-day encoder history
+    is folded into the channel axis (T×C input channels), so the model is the
+    canonical CNN / segmentation family (the burned-area architecture reviewers
+    expect), complementing the recurrent ConvLSTM and the attention Transformer.
+
+    Two downsampling stages (16→8→4) with skip connections, then symmetric
+    upsampling back to 16×16. Decoder-side input is reduced to a per-patch mean,
+    projected, and broadcast-added to the final feature map (same conditioning
+    scheme as ConvLSTMBaseline) so the model consumes identical inputs.
+
+    Output: 1 logit per sub-pixel per lead day → (B, decoder_days, P*P).
+    Same forward signature as the transformer / ConvLSTM → drop-in.
+    """
+
+    def __init__(
+        self,
+        patch_dim_enc: int,
+        patch_dim_dec: int,
+        patch_dim_out: int,
+        encoder_days: int,
+        decoder_days: int,
+        n_channels: int,
+        patch_size: int = 16,
+        base_ch: int = 64,
+        dropout: float = 0.2,
+        **_unused,
+    ):
+        super().__init__()
+        assert patch_dim_enc == n_channels * patch_size * patch_size, (
+            f"patch_dim_enc={patch_dim_enc} != n_channels*P*P="
+            f"{n_channels * patch_size * patch_size}; check --channels and "
+            f"--patch_size."
+        )
+        assert patch_dim_out == patch_size * patch_size, (
+            f"patch_dim_out={patch_dim_out} != P*P={patch_size * patch_size}"
+        )
+        self.n_channels = n_channels
+        self.patch_size = patch_size
+        self.encoder_days = encoder_days
+        self.decoder_days = decoder_days
+        self.patch_dim_dec = patch_dim_dec
+
+        in_ch = encoder_days * n_channels           # time folded into channels
+        c1, c2, c3 = base_ch, base_ch * 2, base_ch * 4
+
+        # Encoder (contracting) path
+        self.enc1 = _DoubleConv(in_ch, c1)          # 16×16
+        self.enc2 = _DoubleConv(c1, c2)             # 8×8
+        self.pool = nn.MaxPool2d(2)
+        self.bottleneck = _DoubleConv(c2, c3)       # 4×4
+
+        # Decoder (expanding) path with skip connections
+        self.up2 = nn.ConvTranspose2d(c3, c2, 2, stride=2)   # 4→8
+        self.dec2 = _DoubleConv(c2 + c2, c2)
+        self.up1 = nn.ConvTranspose2d(c2, c1, 2, stride=2)   # 8→16
+        self.dec1 = _DoubleConv(c1 + c1, c1)
+
+        # Decoder-context conditioning (per-patch mean → broadcast add)
+        self.dec_proj = nn.Linear(patch_dim_dec, c1)
+        self.drop = nn.Dropout2d(dropout)
+        self.head = nn.Conv2d(c1, decoder_days, kernel_size=1)
+
+    def forward(self, encoder_input, decoder_input, patch_ids=None):
+        B = encoder_input.shape[0]
+        C, P = self.n_channels, self.patch_size
+        # (B, T, C*P*P) → (B, T*C, P, P): fold the 21-day history into channels
+        x = encoder_input.reshape(B, self.encoder_days * C, P, P).float()
+
+        e1 = self.enc1(x)                    # (B, c1, 16, 16)
+        e2 = self.enc2(self.pool(e1))        # (B, c2, 8, 8)
+        b = self.bottleneck(self.pool(e2))   # (B, c3, 4, 4)
+
+        d2 = self.dec2(torch.cat([self.up2(b), e2], dim=1))   # (B, c2, 8, 8)
+        d1 = self.dec1(torch.cat([self.up1(d2), e1], dim=1))  # (B, c1, 16, 16)
+
+        # Broadcast-add decoder context (per-patch mean over lead days)
+        dec_mean = decoder_input.mean(dim=1).float()          # (B, dec_dim)
+        dec_feat = self.dec_proj(dec_mean).view(B, -1, 1, 1)  # (B, c1, 1, 1)
+        d1 = self.drop(d1 + dec_feat)
+
+        out = self.head(d1)                                   # (B, T_dec, P, P)
+        return out.reshape(B, self.decoder_days, P * P)
+
+
+# ----------------------------------------------------------------
 #  Factory
 # ----------------------------------------------------------------
 def build_baseline(
@@ -210,6 +317,18 @@ def build_baseline(
             n_channels=n_channels,
             patch_size=patch_size,
             hidden_dim=64,
+            dropout=dropout,
+        )
+    if model_type == "unet":
+        return UNetBaseline(
+            patch_dim_enc=patch_dim_enc,
+            patch_dim_dec=patch_dim_dec,
+            patch_dim_out=patch_dim_out,
+            encoder_days=encoder_days,
+            decoder_days=decoder_days,
+            n_channels=n_channels,
+            patch_size=patch_size,
+            base_ch=64,
             dropout=dropout,
         )
     raise ValueError(f"Unknown model_type={model_type!r}")
