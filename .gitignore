@@ -10,10 +10,12 @@ __pycache__/
 .mypy_cache/
 .ipynb_checkpoints/
 
-# Local data and artifacts
-data/raw/
-data/interim/
-data/processed/
+# Large data, model, and output artifacts — never commit these.
+# Prevents accidental `git add`/`git stash -u` of multi-GB data and checkpoints.
+data/
+outputs/
+checkpoints/
+*.dat
 artifacts/
 
 # Virtual envs
@@ -22,22 +24,3 @@ venv/
 
 # Personal notes (not for repo)
 notes/
-
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.pytest_cache/
-.mypy_cache/
-.ipynb_checkpoints/
-
-# Local data and artifacts
-data/raw/
-data/interim/
-data/processed/
-artifacts/
-
-# Virtual envs
-.venv/
-venv/
