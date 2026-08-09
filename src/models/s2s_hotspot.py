@@ -43,6 +43,60 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, : x.size(1), :]
 
 
+class _ConvPatchEmbed(nn.Module):
+    """Translation-equivariant encoder patch embedding. Reshapes the flattened
+    (P,P,C) patch to (C,P,P), runs a small CNN (shared filters = translation
+    equivariance), then flatten -> Linear -> d_model. Drop-in for
+    nn.Linear(patch_dim_enc, d_model): (B,T,patch_dim_enc) -> (B,T,d_model).
+    Exposes .in_features for the forward-pass shape assertion."""
+    def __init__(self, patch_dim_enc, d_model, patch_size, dropout=0.1, hidden=64):
+        super().__init__()
+        self.in_features = patch_dim_enc
+        self.P = patch_size
+        self.C = patch_dim_enc // (patch_size * patch_size)
+        assert self.C * self.P * self.P == patch_dim_enc, (
+            f'patch_dim_enc {patch_dim_enc} != C*P*P')
+        self.conv = nn.Sequential(
+            nn.Conv2d(self.C, hidden, 3, padding=1), nn.GELU(),
+            nn.Conv2d(hidden, hidden, 3, stride=2, padding=1), nn.GELU(),
+            nn.Conv2d(hidden, hidden, 3, stride=2, padding=1), nn.GELU(),
+        )
+        r = patch_size // 4
+        self.head = nn.Sequential(nn.Flatten(1), nn.Dropout(dropout),
+                                  nn.Linear(hidden * r * r, d_model))
+    def forward(self, x):
+        B, T, D = x.shape
+        z = x.reshape(B * T, self.P, self.P, self.C).permute(0, 3, 1, 2).contiguous()
+        z = self.conv(z)
+        z = self.head(z)
+        return z.reshape(B, T, -1)
+
+
+class _ConvOutputHead(nn.Module):
+    """Fully-convolutional (translation-equivariant) output head. Fuses the
+    decoder per-(patch,day) content vector with a per-pixel spatial feature map
+    from the encoder's last day, via SHARED convs -> P^2 logits. No position-
+    specific Linear at the output => zero position memorization there."""
+    def __init__(self, d_model, patch_size, n_channels, ch=32):
+        super().__init__()
+        self.P = patch_size
+        self.C = n_channels
+        self.enc_spatial = nn.Sequential(
+            nn.Conv2d(n_channels, ch, 3, padding=1), nn.GELU(),
+            nn.Conv2d(ch, ch, 3, padding=1), nn.GELU())
+        self.day_proj = nn.Linear(d_model, ch)
+        self.head = nn.Sequential(
+            nn.Conv2d(ch, ch, 3, padding=1), nn.GELU(),
+            nn.Conv2d(ch, 1, 1))
+    def forward(self, dec_out, enc_last):
+        B, D, _ = dec_out.shape
+        sp = self.enc_spatial(enc_last).unsqueeze(1)          # (B,1,ch,P,P)
+        dv = self.day_proj(dec_out).view(B, D, -1, 1, 1)      # (B,D,ch,1,1)
+        fused = (sp + dv).reshape(B * D, -1, self.P, self.P)  # (B*D,ch,P,P)
+        out = self.head(fused)                                # (B*D,1,P,P)
+        return out.reshape(B, D, self.P * self.P)
+
+
 class S2SHotspotTransformer(nn.Module):
     """
     S2S Fire Probability Prediction Transformer.
@@ -89,6 +143,10 @@ class S2SHotspotTransformer(nn.Module):
         n_patches: int = 0,
         mlp_dec_embed: bool = False,
         dec_ctx_dim: int = 0,
+        enc_conv_stem: bool = False,
+        patch_size: int = 16,
+        conv_output_head: bool = False,
+        conv_head_encmean: bool = False,
     ):
         super().__init__()
 
@@ -98,7 +156,10 @@ class S2SHotspotTransformer(nn.Module):
         self.dec_ctx_dim   = dec_ctx_dim
 
         # Separate linear projections for encoder (history) and decoder (forecast)
-        self.enc_embed = nn.Linear(patch_dim_enc, d_model)
+        if enc_conv_stem:
+            self.enc_embed = _ConvPatchEmbed(patch_dim_enc, d_model, patch_size, dropout)
+        else:
+            self.enc_embed = nn.Linear(patch_dim_enc, d_model)
 
         if dec_ctx_dim > 0 and dec_ctx_dim < patch_dim_dec:
             # Dual-path decoder embedding: separate projections for forecast signal
@@ -160,6 +221,12 @@ class S2SHotspotTransformer(nn.Module):
 
         # Output head: project d_model → P² binary logits (no sigmoid here)
         self.proj = nn.Linear(d_model, patch_dim_out)
+        self.conv_output_head = conv_output_head
+        self.conv_head_encmean = conv_head_encmean
+        self._P = patch_size
+        self._C = patch_dim_enc // (patch_size * patch_size)
+        if conv_output_head:
+            self.out_head = _ConvOutputHead(d_model, patch_size, self._C)
 
     def forward(
         self,
@@ -219,4 +286,12 @@ class S2SHotspotTransformer(nn.Module):
         memory = self.transformer.encoder(enc)              # (B, enc_days, d_model)
         output = self.transformer.decoder(dec, memory)      # (B, dec_days, d_model)
 
+        if self.conv_output_head:
+            Bx = encoder_input.shape[0]
+            enc_field = (encoder_input.mean(dim=1) if self.conv_head_encmean
+                         else encoder_input[:, -1, :])
+            enc_last = (enc_field
+                        .reshape(Bx, self._P, self._P, self._C)
+                        .permute(0, 3, 1, 2).contiguous())   # (B, C, P, P)
+            return self.out_head(output, enc_last)            # (B, dec_days, P^2)
         return self.proj(output)                            # (B, dec_days, patch_dim_out)

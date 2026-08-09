@@ -904,6 +904,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
             # running expensive model inference.
             if save_window_scores_dir is not None:
                 os.makedirs(save_window_scores_dir, exist_ok=True)
+                _recent30 = fire_patched[max(0, hs - 30):he, :, :].max(axis=0).astype(np.uint8)
+                _recent90 = fire_patched[max(0, hs - 90):he, :, :].max(axis=0).astype(np.uint8)
                 _date_str = (str(win_date) if win_date is not None
                              else f"win{win_idx:04d}")
                 _out = os.path.join(save_window_scores_dir,
@@ -915,6 +917,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                     hs=hs, he=he, ts=ts, te=te,
                     win_date=str(win_date) if win_date is not None else "",
                     win_idx=win_idx,
+                    recent30=_recent30,   # patches burning in [hs-30, he]
+                    recent90=_recent90,   # patches burning in [hs-90, he]
                 )
 
             p = prob_agg.reshape(-1)

@@ -64,6 +64,11 @@ CANADA_AREA = [84, -142, 41, -52]
 ALL_DAYS = [f"{d:02d}" for d in range(1, 32)]
 DEFAULT_CDS_API_KEY = "d952a10c-f9c0-4ff3-92e1-aac8756dd123"
 
+# 2026: intermediate_dataset (recent months) uses netcdf/netcdf4 engine,
+# not consolidated/netcdf_legacy. Overridable via CLI; read by request+reader.
+_FWI_DATASET_TYPE = "consolidated_dataset"
+_FWI_DATA_FORMAT = "netcdf_legacy"
+
 # CDS request variable name → (candidate NetCDF variable names, short output prefix)
 # The NetCDF internal name sometimes differs from the CDS request name, so we try
 # a list of candidates in order.
@@ -108,13 +113,13 @@ def download_fwi_year_month(client, year, month, output_dir, area=None):
         'product_type': 'reanalysis',
         'variable': list(FWI_VARIABLES.keys()),   # all 6 components in one request
         'system_version': '4_1',
-        'dataset_type': 'consolidated_dataset',
+        'dataset_type': _FWI_DATASET_TYPE,
         'year': year_str,
         'month': month_str,
         'day': ALL_DAYS,
         'grid': '0.25/0.25',
         'area': area,
-        'data_format': 'netcdf_legacy',
+        'data_format': _FWI_DATA_FORMAT,
     }
 
     print(f"  [DOWNLOAD] {year_str}-{month_str} ...", end=" ", flush=True)
@@ -241,10 +246,12 @@ def nc_to_daily_tifs(nc_path, var_dirs, reproject_to_fwi=True, fwi_reference=Non
     from rasterio.transform import from_bounds
     from rasterio.warp import reproject, Resampling
 
-    ds = xr.open_dataset(str(nc_path), engine='scipy')
+    _engine = "netcdf4" if _FWI_DATA_FORMAT == "netcdf" else "scipy"
+    ds = xr.open_dataset(str(nc_path), engine=_engine)
 
     # Get time, lat, lon
-    times = ds['time'].values  # numpy datetime64 array
+    _tname = 'time' if 'time' in ds else 'valid_time'
+    times = ds[_tname].values  # numpy datetime64 array
 
     lat_name = 'latitude' if 'latitude' in ds else 'lat'
     lon_name = 'longitude' if 'longitude' in ds else 'lon'
@@ -304,7 +311,7 @@ def nc_to_daily_tifs(nc_path, var_dirs, reproject_to_fwi=True, fwi_reference=Non
                 count += 1
                 continue
 
-            arr = var_data.isel(time=t_idx).values.astype(np.float32)
+            arr = var_data.isel({_tname: t_idx}).values.astype(np.float32)
             if not lat_descending:
                 arr = np.flipud(arr)
             arr[~np.isfinite(arr)] = np.nan
@@ -380,6 +387,10 @@ Examples:
                         help='Directory to store raw NetCDF files (default: data/fwi_historical_nc)')
     parser.add_argument('--cds-url', type=str, default=None,
                         help='CDS API URL (if different from default)')
+    parser.add_argument('--dataset-type', type=str, default='consolidated_dataset',
+                        help='consolidated_dataset or intermediate_dataset (recent months).')
+    parser.add_argument('--data-format', type=str, default='netcdf_legacy',
+                        help='netcdf_legacy or netcdf (required for intermediate_dataset).')
     parser.add_argument('--cds-key', type=str, default=None,
                         help='CDS API key (overrides env var / .cdsapirc)')
     parser.add_argument('--workers', type=int, default=1,
@@ -391,6 +402,9 @@ Examples:
                              'when NC files are already downloaded on a login node.')
 
     args = parser.parse_args()
+    global _FWI_DATASET_TYPE, _FWI_DATA_FORMAT
+    _FWI_DATASET_TYPE = args.dataset_type
+    _FWI_DATA_FORMAT = args.data_format
 
     # Load config
     cfg = load_config(args.config)

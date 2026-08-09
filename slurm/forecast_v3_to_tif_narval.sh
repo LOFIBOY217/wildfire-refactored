@@ -49,7 +49,7 @@ mkdir -p "$LOCAL_CACHE"
 # Only the S2S decoder cache is needed locally — forecast_v3_to_tif.py
 # reads raw FWI/ERA5 tifs straight from config paths (just ~21 days per
 # issue date), so the pre-patched 12y meteo memmap is NOT required.
-copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
+[ -z "${S2S_CACHE:-}" ] && copy_s2s_cache "$SCRATCH/meteo_cache" "$LOCAL_CACHE"
 
 [ -f "$CKPT" ] || { echo "ERROR: checkpoint missing: $CKPT"; exit 1; }
 
@@ -65,7 +65,7 @@ $PYTHON -u -m src.forecasting.forecast_v3_to_tif \
     --ckpt "$CKPT" \
     --issue_dates $ISSUE_DATES \
     --out_dir "$OUT_DIR" \
-    --s2s_cache "$LOCAL_CACHE/s2s_decoder_cache.dat"
+    --s2s_cache "${S2S_CACHE:-$LOCAL_CACHE/s2s_decoder_cache.dat}"
 
 PY_EXIT=$?
 echo "=== Done $(date) exit=$PY_EXIT ==="
