@@ -24,3 +24,8 @@ venv/
 
 # Personal notes (not for repo)
 notes/
+
+# Internal running-state handoff notes (kept local, not for public repo)
+HANDOFF.md
+HANDOFF_*.md
+docs/HANDOFF_*.md
