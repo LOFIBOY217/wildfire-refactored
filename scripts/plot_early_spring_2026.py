@@ -20,14 +20,13 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from plot_paper_style import COLORS, LABELS, apply_style  # noqa: E402
+from plot_paper_style import COLORS, SHORT, BAR_ORDER, apply_style  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSV = os.path.join(ROOT, "results", "eval", "early_spring_2026.csv")
 OUT = os.path.join(ROOT, "figures")
 os.makedirs(OUT, exist_ok=True)
-ORDER = ["convstem_novel", "convstem", "convlstm", "fcnhead", "flatten",
-         "mlp", "climatology", "persistence", "fwi_oracle"]
+ORDER = BAR_ORDER   # canonical 9-model order, identical across Fig 4/5/6/8
 DEGENERATE = {"persistence"}   # copies already-burning fire
 YCAP = 14.0                    # clip the degenerate persistence bar
 
@@ -49,9 +48,6 @@ def main():
                    linewidth=0.5, alpha=0.55 if degen else 0.92,
                    hatch="//" if degen else None)
             clipped = v > YCAP
-            if not clipped and lo in df.columns and np.isfinite(r.get(lo, np.nan)):
-                ax.errorbar(i, v, yerr=[[max(v - r[lo], 0)], [max(r[hi] - v, 0)]], fmt="none",
-                            ecolor="black", elinewidth=0.8, capsize=3)
             if clipped:
                 ax.text(i, YCAP - 0.4, f"↑{v:.1f}\n(degen.)", ha="center", va="top",
                         fontsize=8, color="#333")
@@ -62,7 +58,7 @@ def main():
                 ax.text(i, v + YCAP * 0.015, f"{v:.1f}", ha="center", va="bottom", fontsize=8.5)
         ax.axhline(1.0, ls=":", color="grey", lw=0.8)
         ax.set_xticks(np.arange(len(df)))
-        ax.set_xticklabels([LABELS.get(k, k) for k in df["key"]], rotation=32, ha="right", fontsize=8)
+        ax.set_xticklabels([SHORT.get(k, k) for k in df["key"]], rotation=35, ha="right", fontsize=8)
         ax.set_ylabel("Lift@5000")
         ax.set_title(title, fontsize=11)
         ax.set_ylim(0, YCAP)

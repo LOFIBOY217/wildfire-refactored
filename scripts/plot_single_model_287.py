@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from plot_paper_style import COLORS, LABELS, apply_style  # noqa: E402
+from plot_paper_style import COLORS, SHORT, BAR_ORDER, apply_style  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSV = os.path.join(ROOT, "results", "eval", "single_model_287.csv")
@@ -47,47 +47,21 @@ def _baseline_rows():
             rows.append(from_csv(name, key))
         except Exception as e:
             print(f"  [skip {key}] {e}")
-    # logreg (no 30km)
-    try:
-        lr = pd.read_csv(os.path.join(EVAL, "benchmark_logreg.csv"))
-        lrr = lr[(lr.k == 5000) & (lr.lift_k.notna())].iloc[-1]
-        rows.append(dict(key="logreg", lift_5000=float(lrr.lift_k), l5_lo=float(lrr.lift_k),
-                         l5_hi=float(lrr.lift_k), lift_30km=np.nan, l30_lo=np.nan, l30_hi=np.nan))
-    except Exception as e:
-        print(f"  [skip logreg] {e}")
-    # MLP — no 287-win dump exists; reuse leak-free 435-win per-window (same
-    # source as fig2). Learned model but treated like the other reused numbers.
-    try:
-        pw = json.load(open(os.path.join(EVAL, "mlp_FULL.json")))["per_window"]
-        def bc(a):
-            a = np.asarray([x for x in a if x is not None], float)
-            r = np.random.default_rng(0); m = a[r.integers(0, len(a), size=(2000, len(a)))].mean(1)
-            return a.mean(), np.percentile(m, 2.5), np.percentile(m, 97.5)
-        l5 = bc([w.get("lift_k") for w in pw]); l3 = bc([w.get("lift_coarse") for w in pw])
-        rows.append(dict(key="mlp", lift_5000=l5[0], l5_lo=l5[1], l5_hi=l5[2],
-                         lift_30km=l3[0], l30_lo=l3[1], l30_hi=l3[2]))
-    except Exception as e:
-        print(f"  [skip mlp] {e}")
-    # ECMWF S2S
-    try:
-        e = json.load(open(os.path.join(EVAL, "baseline_ecmwf_s2s.json")))
-        rows.append(dict(key="ecmwf_s2s",
-                         lift_5000=e["lift_5000"]["mean"], l5_lo=e["lift_5000"]["ci_lo"], l5_hi=e["lift_5000"]["ci_hi"],
-                         lift_30km=e["lift_30km"]["mean"], l30_lo=e["lift_30km"]["ci_lo"], l30_hi=e["lift_30km"]["ci_hi"]))
-    except Exception as e:
-        print(f"  [skip ecmwf] {e}")
+    # MLP is now in single_model_287.csv on the correct 287-window dump basis
+    # (5.87/5.74), NOT the old 435-win mlp_FULL reuse — so it is not added here.
     return pd.DataFrame(rows)
 
 
 def main():
     apply_style()
+    # Fixed canonical 9-model order (no sort) — identical across Fig 4/5/6/8.
     df = pd.concat([pd.read_csv(CSV), _baseline_rows()], ignore_index=True)
-    df = df.sort_values("lift_5000").reset_index(drop=True)
-    fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.6))
+    df = df.set_index("key").reindex(BAR_ORDER).reset_index()
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 5.4))
     YMAX = {"lift_5000": 11.0, "lift_30km": 9.5}  # cap; persistence clipped
-    panels = [("lift_5000", "l5_lo", "l5_hi", "Lift@5000  (pixel-scale)", "Lift@5000"),
-              ("lift_30km", "l30_lo", "l30_hi", "Lift@30 km  (cluster-scale)", "Lift@30 km")]
-    for ax, (col, lo, hi, title, ylab) in zip(axes, panels):
+    panels = [("lift_5000", "Lift@5000  (pixel-scale)", "Lift@5000"),
+              ("lift_30km", "Lift@30 km  (cluster-scale)", "Lift@30 km")]
+    for ax, (col, title, ylab) in zip(axes, panels):
         ym = YMAX[col]
         for i, r in df.iterrows():
             k = r["key"]
@@ -96,27 +70,21 @@ def main():
                 ax.text(i, 0.1, "n/a", ha="center", va="bottom", fontsize=7.5, color="#999")
                 continue
             degen = (k == "persistence")
-            ax.bar(i, m, color=COLORS.get(k, "#888"), edgecolor="black", linewidth=0.4,
+            ax.bar(i, min(m, ym), color=COLORS.get(k, "#888"), edgecolor="black", linewidth=0.4,
                    alpha=0.5 if degen else 0.92, hatch="//" if degen else None)
-            clipped = m > ym
-            if (not pd.isna(r[lo])) and (not clipped):
-                ax.errorbar(i, m, yerr=[[m - r[lo]], [r[hi] - m]], fmt="none", ecolor="black",
-                            elinewidth=0.9, capsize=3, capthick=0.9)
-            if clipped:
-                ax.annotate(f"{m:.1f}  ↑\n(degenerate,\nnovel = 0)", xy=(i, ym * 0.93),
+            if m > ym:
+                ax.annotate(f"{m:.1f} ↑\n(degenerate)", xy=(i, ym * 0.93),
                             ha="center", va="top", fontsize=6.8, color="#333")
             else:
                 ax.text(i, m + 0.12, f"{m:.2f}", ha="center", va="bottom", fontsize=7.5)
         ax.axhline(1.0, color="#999", linewidth=0.7, linestyle=":")
         ax.set_xticks(np.arange(len(df)))
-        ax.set_xticklabels([LABELS.get(k, k) for k in df["key"]], rotation=35, ha="right")
+        ax.set_xticklabels([SHORT.get(k, k) for k in df["key"]], rotation=35, ha="right",
+                           fontsize=8)
         ax.set_ylabel(ylab)
         ax.set_title(title)
         ax.set_ylim(0, ym)
 
-    fig.suptitle("Single-model prediction performance — pixel & 30 km Lift "
-                 "(DL: 2023/24 287-window in-dist; baselines: leak-free 2022-25)",
-                 fontsize=11.5, y=1.01)
     fig.tight_layout()
     for ext in ("png", "pdf"):
         fig.savefig(os.path.join(OUT, f"fig_single_model_287.{ext}"), dpi=160, bbox_inches="tight")

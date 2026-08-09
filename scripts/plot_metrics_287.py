@@ -17,19 +17,18 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from plot_paper_style import COLORS, LABELS, apply_style  # noqa: E402
+from plot_paper_style import COLORS, SHORT, BAR_ORDER, apply_style  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CSV = os.path.join(ROOT, "results", "eval", "metrics_287_ci.csv")  # mean + bootstrap 95% CI
+CSV = os.path.join(ROOT, "results", "eval", "metrics_287_ci.csv")  # mean values
 OUT = os.path.join(ROOT, "figures")
 os.makedirs(OUT, exist_ok=True)
 
-# Fixed order across all four panels (ours first by quality, then baselines).
-ORDER = ["fcnhead", "convstem_novel", "convstem", "flatten", "convlstm",
-         "mlp", "persistence", "climatology", "fwi_oracle"]
-PANELS = [("f2", "F2  (recall-weighted detection)"),
+# Canonical 9-model order — identical across Fig 4/5/6/8 (plot_paper_style).
+ORDER = BAR_ORDER
+PANELS = [("f2", "F2"),
           ("mcc", "MCC"),
-          ("bss", "Brier Skill Score  (skill vs climatology)"),
+          ("bss", "Brier Skill Score"),
           ("pr_auc", "PR-AUC")]
 
 
@@ -47,25 +46,18 @@ def main():
                 continue
             ax.bar(i, v, color=COLORS.get(k, "#888"), edgecolor="black", linewidth=0.4,
                    alpha=0.55 if degen else 0.92, hatch="//" if degen else None)
-            lo, hi = r.get(f"{col}_lo", np.nan), r.get(f"{col}_hi", np.nan)
-            if np.isfinite(lo) and np.isfinite(hi):
-                ax.errorbar(i, v, yerr=[[max(v - lo, 0)], [max(hi - v, 0)]], fmt="none",
-                            ecolor="#222", elinewidth=0.9, capsize=2.5)
             off = 0.012 * (vmax if vmax else 1)
-            ytxt = (hi if np.isfinite(hi) else v) + off if v >= 0 else (lo if np.isfinite(lo) else v) - off
+            ytxt = v + off if v >= 0 else v - off
             ax.text(i, ytxt, f"{v:.2f}",
                     ha="center", va="bottom" if v >= 0 else "top", fontsize=7.5)
         if col == "bss":
             ax.axhline(0.0, color="#444", linewidth=0.8)
         ax.set_xticks(np.arange(len(df)))
-        ax.set_xticklabels([LABELS.get(k, k) for k in df["key"]], rotation=38, ha="right", fontsize=8)
+        ax.set_xticklabels([SHORT.get(k, k) for k in df["key"]], rotation=35, ha="right", fontsize=8)
         ax.set_title(title, fontsize=11)
-    fig.suptitle("Wildfire Prediction Validation Across F2, MCC, Brier Skill Score, and PR-AUC "
-                 "(all on the 287-window 2023/24 test)\n"
-                 "Persistence tops the rank metrics (degenerate — copies already-burning fire) "
-                 "but its BSS is negative; only fcnhead and MLP have BSS > 0",
-                 fontsize=12.5, y=1.0)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.suptitle("Wildfire prediction validation across F2, MCC, Brier Skill Score, and PR-AUC",
+                 fontsize=13, y=0.99)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
     for ext in ("png", "pdf"):
         fig.savefig(os.path.join(OUT, f"fig_metrics_287.{ext}"), dpi=160, bbox_inches="tight")
     plt.close(fig)

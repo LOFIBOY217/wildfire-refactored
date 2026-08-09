@@ -60,6 +60,74 @@ LABELS: dict[str, str] = {
 }
 
 
+# Compact, single-line-where-possible labels for crowded multi-bar / multi-panel
+# figures. Keep the SAME wording across every figure so a reader who has seen one
+# panel recognizes the models everywhere. Two-line only where unavoidable.
+SHORT: dict[str, str] = {
+    "convstem":       "conv-stem",
+    "convstem_novel": "conv-stem\n+novel loss",
+    "fcnhead":        "conv-stem\n+FCN head",
+    "flatten":        "flatten",
+    "sota_single":    "Patch Transformer",
+    "ensemble_prob":  "ensemble",
+    "ensemble_logit": "ensemble (logit)",
+    "convlstm":       "ConvLSTM",
+    "mlp":            "MLP",
+    "logreg":         "logreg",
+    "climatology":    "Climatology",
+    "persistence":    "Persistence",
+    "fwi_threshold":  "FWI > 30",
+    "fwi_oracle":     "FWI oracle",
+    "ecmwf_s2s":      "ECMWF S2S",
+}
+
+# Canonical left-to-right order for EVERY bar figure (Fig 4/5/6/8). Same 9-model
+# set, same order everywhere — a model missing/reordered in one panel misleads.
+# Grouped: ours (4) -> learned baselines (2) -> physical baselines (3).
+# ecmwf_s2s / logreg / unet are intentionally NOT here (dropped, 2026-08-08).
+BAR_ORDER: list[str] = [
+    "fcnhead", "convstem_novel", "convstem", "flatten",   # ours
+    "convlstm", "mlp",                                      # learned baselines
+    "climatology", "persistence", "fwi_oracle",            # physical baselines
+]
+
+
+# "Ours" = the patch-transformer family (every conv-stem / flatten variant + the
+# generic single ckpt). Everything else is a baseline. Used to draw the shaded
+# "Ours" band that separates our models from baselines in bar figures.
+OURS: frozenset[str] = frozenset({
+    "convstem", "convstem_novel", "fcnhead", "flatten", "sota_single",
+    "ensemble_prob", "ensemble_logit",
+})
+
+OURS_BAND = "#F4C7C3"   # very light red wash behind our-model bars
+
+
+def shade_ours(ax, keys, *, y0=0.0, y1=1.0, label=True) -> None:
+    """Shade the contiguous run of our-model bars (assumes they are grouped at
+    the start of `keys`) with a faint band + an "Ours" bracket label. `keys` is
+    the left-to-right list of model keys plotted on `ax`. y0/y1 are axis-fraction
+    span of the band. No-op if our models are not a leading contiguous block."""
+    ours_idx = [i for i, k in enumerate(keys) if k in OURS]
+    if not ours_idx:
+        return
+    lo, hi = min(ours_idx), max(ours_idx)
+    # only shade if it is a clean leading block (lo..hi all ours)
+    if any(k not in OURS for k in keys[lo:hi + 1]):
+        return
+    ax.axvspan(lo - 0.5, hi + 0.5, ymin=y0, ymax=y1, color=OURS_BAND,
+               alpha=0.35, zorder=0, linewidth=0)
+    if label:
+        ax.text((lo + hi) / 2.0, 0.985, "Ours", transform=_blend(ax),
+                ha="center", va="top", fontsize=8.5, style="italic",
+                color="#8B2E28", zorder=1)
+
+
+def _blend(ax):
+    import matplotlib.transforms as mtransforms
+    return mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
+
+
 def apply_style() -> None:
     """AAAI-compatible serif font + tight grid + vector PDF."""
     mpl.rcParams.update({
