@@ -127,6 +127,7 @@ from src.training.train_s2s_hotspot_cwfis_v2 import (
 V3_CHANNEL_DEFS = {
     "FWI":        {"type": "daily",   "required": True},
     "2t":         {"type": "daily",   "required": True},
+    "2t_anom":    {"type": "daily",   "required": False},
     "fire_clim":  {"type": "annual",  "required": True},
     "2d":         {"type": "daily",   "required": False},
     "tcw":        {"type": "daily",   "required": False},
@@ -143,6 +144,7 @@ V3_CHANNEL_DEFS = {
     "lightning_climatology": {"type": "static", "required": False},
     "burn_age":   {"type": "annual",  "required": False},
     "burn_count": {"type": "annual",  "required": False},
+    "dist_recent_burn": {"type": "annual",  "required": False},
     "u10":        {"type": "daily",   "required": False},
     "v10":        {"type": "daily",   "required": False},
     "CAPE":       {"type": "daily",   "required": False},
@@ -157,7 +159,7 @@ V3_CHANNEL_DEFS = {
 DEFAULT_CHANNELS = "FWI,2t,fire_clim,lightning,NDVI,population,deep_soil,precip_def,slope,burn_age,burn_count,u10,v10,CAPE"
 
 # Static channels to inject into decoder context (spatial info the decoder needs)
-DECODER_CTX_CHANNELS = {"fire_clim", "population", "slope", "burn_age", "burn_count"}
+DECODER_CTX_CHANNELS = {"fire_clim", "population", "slope", "burn_age", "burn_count", "dist_recent_burn"}
 
 
 # ------------------------------------------------------------------ #
@@ -368,6 +370,42 @@ def _tele_lookup(table, K, date_obj, miss_counter=None):
             miss_counter[0] += 1
         return np.zeros(K, dtype=np.float32)
     return vec
+
+
+def _d4(x, t, h, w):
+    """Apply one of 8 dihedral (D4) transforms on spatial dims (h, w)."""
+    if t == 1: return torch.rot90(x, 1, (h, w))
+    if t == 2: return torch.rot90(x, 2, (h, w))
+    if t == 3: return torch.rot90(x, 3, (h, w))
+    if t == 4: return torch.flip(x, (h,))
+    if t == 5: return torch.flip(x, (w,))
+    if t == 6: return torch.transpose(x, h, w)
+    if t == 7: return torch.flip(torch.transpose(x, h, w), (h,))
+    return x
+
+
+def _spatial_augment(xb_enc, yb, P, prob):
+    """Random per-sample D4 transform of the encoder patch + label together.
+    xb_enc: (B, Te, P*P*C)   yb: (B, Td, P*P)   -> same shapes, spatially transformed.
+    Decoder input is per-patch (S2S, no P^2 structure) and is NOT passed here.
+    Encoder/label flatten order is (P,P,*) [see patchify], so view->transform->reshape
+    is exact."""
+    B, Te, ed = xb_enc.shape
+    Td = yb.shape[1]
+    C = ed // (P * P)
+    e = xb_enc.view(B, Te, P, P, C)
+    l = yb.view(B, Td, P, P)
+    tid = torch.randint(0, 8, (B,), device=xb_enc.device)
+    if prob < 1.0:
+        keep = torch.rand(B, device=xb_enc.device) < prob
+        tid = torch.where(keep, tid, torch.zeros_like(tid))
+    for t in range(1, 8):
+        m = tid == t
+        if not bool(m.any()):
+            continue
+        e[m] = _d4(e[m], t, 2, 3)
+        l[m] = _d4(l[m], t, 2, 3)
+    return e.reshape(B, Te, ed), l.reshape(B, Td, P * P)
 
 
 # ------------------------------------------------------------------ #
@@ -1011,6 +1049,24 @@ def main():
     ap.add_argument("--rank_subsample", type=int, default=50000)
 
     # V3: hard negative mining
+    ap.add_argument("--region_balance", type=float, default=0.0,
+                    help="If >1, x-multiplier on West(BC/AB/YT) positive sampling weight.")
+    ap.add_argument("--patch_province_npy", type=str, default="outputs/patch_province.npy")
+    ap.add_argument("--province_shp", type=str,
+                    default="results/maps/ne_50m_admin_1/ne_50m_admin_1_states_provinces.shp")
+    ap.add_argument("--region_only", type=str, default="",
+                    help="Comma-separated province names; train ONLY on patches in these (region specialist).")
+    ap.add_argument("--region_loss_weight", type=float, default=0.0,
+                    help="If >1, x-multiplier on West(BC/AB/YT) per-sample LOSS weight.")
+    ap.add_argument("--novel_pos_weight", type=float, default=1.0,
+                    help="Up-weight per-sample loss by novel-ignition fraction: "
+                         "w = 1 + (novel_pos_weight-1)*novel_frac, where novel_frac "
+                         "is the share of the patch's window fire that was NOT "
+                         "burning in the prior --novel_lookback days. 1.0 = off. "
+                         "Aligns training with the novel-ignition eval metric.")
+    ap.add_argument("--novel_lookback", type=int, default=30,
+                    help="Days before the encoder window to treat as 'already "
+                         "burning' when computing novel_frac (default 30).")
     ap.add_argument("--hard_neg_fraction", type=float, default=0.5,
                     help="Fraction of negatives sampled proportional to fire_clim (0=uniform).")
 
@@ -1109,6 +1165,21 @@ def main():
     ap.add_argument("--dropout", type=float, default=0.1)
     ap.add_argument("--weight_decay", type=float, default=0.01)
     ap.add_argument("--label_smoothing", type=float, default=0.0)
+    ap.add_argument("--spatial_aug", type=float, default=0.0,
+                    help="Prob of applying a random D4 (flip/rotate) transform "
+                         "to each sample per step. Augments encoder patch + "
+                         "label together (decoder is per-patch S2S, untouched). "
+                         "Anti-overfitting / translation-invariance regularizer.")
+    ap.add_argument("--conv_output_head", action="store_true",
+                    help="Fully-conv translation-equivariant output head (zero "
+                         "position memorization at output).")
+    ap.add_argument("--conv_head_encmean", action="store_true",
+                    help="Feed the conv output head the 21-day MEAN encoder "
+                         "weather (vs last day) — coarser, less OOS overfit.")
+    ap.add_argument("--enc_conv_stem", action="store_true",
+                    help="Replace the flatten->Linear encoder patch embedding "
+                         "with a small CNN (translation-equivariant). Inherits "
+                         "ConvLSTM spatial inductive bias.")
     ap.add_argument("--neg_buffer", type=int, default=0)
     ap.add_argument("--neg_spatial_radius_km", type=float, default=0.0,
                     help="If > 0, restrict negative candidates per training "
@@ -1191,6 +1262,9 @@ def main():
                     help="End date of master cache (e.g. 2025-12-20). "
                          "If omitted, inferred from master cache filename.")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--build_cache_only", action="store_true",
+                    help="Build meteo cache to --cache_dir then exit "
+                         "before fire-patch/training (pre-build shared master).")
     ap.add_argument("--chunk_patches", type=int, default=200)
     ap.add_argument("--load_to_ram", action="store_true")
     ap.add_argument("--load_train_to_ram", action="store_true")
@@ -1413,6 +1487,7 @@ def main():
         if d:
             fwi_dict[d] = p
     t2m_dict = _build_file_dict(obs_root, "2t")
+    t2m_anom_dict = _build_flat_file_dict("data/2t_anom", "2t_anom") if "2t_anom" in CHANNEL_NAMES else {}
 
     # ERA5 observation channels (same directory structure as 2t)
     dew_dict = _build_file_dict(obs_root, "2d") if "2d" in CHANNEL_NAMES else {}
@@ -1473,6 +1548,16 @@ def main():
             try:
                 year = int(bn.replace("burn_count_", "").replace(".tif", ""))
                 burn_count_dict[year] = p
+            except ValueError:
+                pass
+
+    dist_recent_dict = {}
+    if "dist_recent_burn" in CHANNEL_NAMES:
+        for p in sorted(glob.glob(os.path.join("data/dist_recent_burn", "dist_recent_burn_*.tif"))):
+            bn = os.path.basename(p)
+            try:
+                year = int(bn.replace("dist_recent_burn_", "").replace(".tif", ""))
+                dist_recent_dict[year] = p
             except ValueError:
                 pass
 
@@ -1696,10 +1781,11 @@ def main():
         ch_stats.append(("FWI", m, s, f))
         print(f"  {'FWI':12s}  mean={m:8.3f}  std={s:8.3f}")
 
-        # 2t stats
-        m, s, f = _stream_channel_stats(t2m_paths[:train_end_idx])
-        ch_stats.append(("2t", m, s, f))
-        print(f"  {'2t':12s}  mean={m:8.3f}  std={s:8.3f}")
+        # 2t stats (only if 2t is an active channel; 2t_anom handled in loop)
+        if "2t" in CHANNEL_NAMES:
+            m, s, f = _stream_channel_stats(t2m_paths[:train_end_idx])
+            ch_stats.append(("2t", m, s, f))
+            print(f"  {'2t':12s}  mean={m:8.3f}  std={s:8.3f}")
 
         # Static channels: spatial mean/std
         for ch_name in CHANNEL_NAMES:
@@ -1716,6 +1802,7 @@ def main():
             elif ch_def["type"] == "daily":
                 # Stream from available files
                 _daily_dicts = {
+                    "2t_anom": t2m_anom_dict,
                     "2d": dew_dict, "tcw": tcw_dict, "sm20": sm20_dict,
                     "st20": st20_dict, "lightning": lightning_dict,
                     "deep_soil": deep_soil_dict, "u10": u10_dict,
@@ -2058,6 +2145,11 @@ def main():
             arr = _load_static_channel(path, H, W, f"bcount_{year}")
             burn_count_arrays[year] = np.maximum(arr, 0)
 
+        # Pre-load dist_recent_burn arrays by year (already log1p-encoded, leak-safe)
+        dist_recent_raw = {}
+        for year, path in dist_recent_dict.items():
+            dist_recent_raw[year] = _load_static_channel(path, H, W, f"distrb_{year}")
+
         def _encode_burn_age(raw_years, encoding):
             """Encode years-since-burn array based on --burn_age_encoding."""
             if encoding == "log1p":
@@ -2161,10 +2253,11 @@ def main():
                 elif ch_name == "NDVI":
                     frame[..., ch_idx] = _interpolate_ndvi(cur_date, ndvi_index, ndvi_cache, H, W)
 
-                elif ch_name in ("2d", "tcw", "sm20", "st20", "lightning",
+                elif ch_name in ("2t_anom", "2d", "tcw", "sm20", "st20", "lightning",
                                  "deep_soil", "u10", "v10", "CAPE",
                                  "FFMC", "DMC", "DC", "BUI", "ISI"):
                     _daily_dicts = {
+                        "2t_anom": t2m_anom_dict,
                         "2d": dew_dict, "tcw": tcw_dict, "sm20": sm20_dict,
                         "st20": st20_dict, "lightning": lightning_dict,
                         "deep_soil": deep_soil_dict, "u10": u10_dict,
@@ -2217,6 +2310,17 @@ def main():
                         if valid_years:
                             frame[..., ch_idx] = np.log1p(burn_count_arrays[max(valid_years)])
 
+                elif ch_name == "dist_recent_burn":
+                    # File for year Y already uses only Y-1..Y-3 burns (leak-safe),
+                    # and is pre-encoded as log1p(dist_km); use cur year directly.
+                    y = cur_date.year
+                    if y in dist_recent_raw:
+                        frame[..., ch_idx] = dist_recent_raw[y]
+                    elif dist_recent_raw:
+                        vy = [yy for yy in dist_recent_raw.keys() if yy <= y]
+                        if vy:
+                            frame[..., ch_idx] = dist_recent_raw[max(vy)]
+
             # Normalize and patchify
             frame -= meteo_means
             frame /= meteo_stds
@@ -2268,6 +2372,11 @@ def main():
             gc.collect()
             meteo_patched = _tmp
 
+    if getattr(args, "build_cache_only", False):
+        print("\n[BUILD_CACHE_ONLY] Meteo cache built. "
+              "Exiting before fire-patch/training.")
+        return
+
     # ----------------------------------------------------------------
     # STEP 7  Patchify fire labels
     # ----------------------------------------------------------------
@@ -2318,7 +2427,7 @@ def main():
                                      shape=(T, n_patches, out_dim))
         else:
             fire_patched = np.empty((T, n_patches, out_dim), dtype=np.uint8)
-        for t_idx in range(T):
+        for t_idx in range(min(T, fire_stack.shape[0])):
             frame_f = fire_stack[t_idx, :Hc, :Wc, np.newaxis].astype(np.float32)
             fire_patched[t_idx] = _patchify_frame(frame_f, P).astype(np.uint8)
         if fire_cache_path:
@@ -2544,9 +2653,41 @@ def main():
     neg_patches = (chosen % n_patches).astype(np.int32)
 
     pos_arr = np.array(pos_pairs, dtype=np.int32)
+    # --- Region-balanced positive resampling (2026-07: model blind to BC/West) ---
+    if getattr(args, "region_balance", 0.0) and args.region_balance > 1.0 and len(pos_arr) > 0:
+        _pp = np.load(args.patch_province_npy).astype(np.int64)   # (n_patches,) province id per patch
+        _WEST = {"British Columbia", "Alberta", "Yukon"}
+        import geopandas as _gpd
+        _g = _gpd.read_file(args.province_shp)
+        _ca = _g[_g["admin"] == "Canada"].reset_index(drop=True)
+        _west_ids = [i + 1 for i in range(len(_ca)) if _ca.iloc[i]["name"] in _WEST]
+        _prov = _pp[pos_arr[:, 1]]
+        _w = np.where(np.isin(_prov, _west_ids), float(args.region_balance), 1.0).astype(np.float64)
+        _w /= _w.sum()
+        _n = len(pos_arr)
+        _idx = rng.choice(_n, size=_n, replace=True, p=_w)
+        _before = float(np.isin(_prov, _west_ids).mean())
+        pos_arr = pos_arr[_idx]
+        _after = float(np.isin(_pp[pos_arr[:, 1]], _west_ids).mean())
+        print("  [region_balance x%s] West(BC/AB/YT) pos share %.1f%% -> %.1f%% (resampled %d)"
+              % (args.region_balance, 100 * _before, 100 * _after, _n))
     neg_arr = np.column_stack([neg_wins, neg_patches]).astype(np.int32)
     all_pairs = np.vstack([pos_arr, neg_arr])
     rng.shuffle(all_pairs)
+    # ── Region specialist: keep ONLY pairs in the named provinces ──
+    if getattr(args, 'region_only', ''):
+        _ppr = np.load(args.patch_province_npy).astype(np.int64)
+        import geopandas as _gpd
+        _gr = _gpd.read_file(args.province_shp)
+        _car = _gr[_gr['admin'] == 'Canada'].reset_index(drop=True)
+        _want = set(x.strip() for x in args.region_only.split(','))
+        _rids = [i + 1 for i in range(len(_car)) if _car.iloc[i]['name'] in _want]
+        _rmask = np.isin(_ppr[all_pairs[:, 1]], _rids)
+        _n0 = len(all_pairs)
+        all_pairs = all_pairs[_rmask].copy()
+        print('  [region_only] %s: kept %d/%d pairs (%.1f%%)' % (
+            args.region_only, len(all_pairs), _n0,
+            100.0 * len(all_pairs) / max(_n0, 1)))
 
     print(f"  Pos: {len(pos_pairs):,}  Neg: {len(chosen):,}  "
           f"Total: {len(all_pairs):,}")
@@ -2782,6 +2923,59 @@ def main():
         print(f"  [recency] sample weights mean={sample_weights_arr.mean():.3f} "
               f"(should be 1.0 by normalization)")
 
+    # ── Region loss weighting (2026-07: BC/West driver emphasis) ──
+    # Up-weight the per-sample loss of patches in under-recalled western
+    # provinces (BC/AB/YT). Composes multiplicatively with any per-year
+    # weight. Unlike positive-resampling (which failed), this reweights the
+    # gradient without changing which samples are seen.
+    if getattr(args, "region_loss_weight", 0.0) and args.region_loss_weight > 1.0:
+        _pp = np.load(args.patch_province_npy).astype(np.int64)
+        import geopandas as _gpd
+        _g = _gpd.read_file(args.province_shp)
+        _ca = _g[_g["admin"] == "Canada"].reset_index(drop=True)
+        _WEST = {"British Columbia", "Alberta", "Yukon"}
+        _west_ids = [i + 1 for i in range(len(_ca)) if _ca.iloc[i]["name"] in _WEST]
+        _prov = _pp[all_pairs_eff[:, 1]]
+        _wreg = np.where(np.isin(_prov, _west_ids),
+                         float(args.region_loss_weight), 1.0).astype(np.float32)
+        _wreg = _wreg / max(float(_wreg.mean()), 1e-6)
+        if sample_weights_arr is None:
+            sample_weights_arr = _wreg
+        else:
+            sample_weights_arr = (sample_weights_arr * _wreg)
+            sample_weights_arr = sample_weights_arr / max(float(sample_weights_arr.mean()), 1e-6)
+        print(f"  [region_loss] West(BC/AB/YT) x{args.region_loss_weight}; "
+              f"West sample frac={float(np.isin(_prov, _west_ids).mean()):.1%}; "
+              f"weight range {sample_weights_arr.min():.3f}-{sample_weights_arr.max():.3f}")
+
+    # ── Novel-ignition loss weighting (PER-PIXEL, fire-targeted) ───────
+    # Align training with the novel-ignition eval metric. Unlike a per-patch
+    # weight (which up-weights the whole 16x16 patch, background included),
+    # this boosts ONLY the fire pixels of a patch, graded by how novel the
+    # patch's window fire is (share NOT already burning in the prior
+    # --novel_lookback days). The per-pixel weight is reconstructed in the
+    # loss from yb's fire mask; here we only precompute the per-sample novel
+    # fraction and flag it. Carried as a 2nd weight column (see below).
+    _NOVEL_PERPIX = False
+    _novel_frac_arr = None
+    if getattr(args, "novel_pos_weight", 1.0) and args.novel_pos_weight > 1.0:
+        _L = int(args.novel_lookback)
+        _npatch = fire_patched.shape[1]
+        _nf = np.zeros((len(train_wins_eff), _npatch), dtype=np.float32)
+        for _wi, (_hs, _he, _ts, _te) in enumerate(train_wins_eff):
+            _lab = np.asarray(fire_patched[_ts:_te]).any(axis=0)          # (n_patches, P^2)
+            _rec = np.asarray(fire_patched[max(0, _hs - _L):_he]).any(axis=0)
+            _den = _lab.sum(axis=1).astype(np.float32)                    # (n_patches,)
+            _num = (_lab & ~_rec).sum(axis=1).astype(np.float32)
+            _nf[_wi] = np.where(_den > 0, _num / np.maximum(_den, 1.0), 0.0)
+        _novel_frac_arr = _nf[all_pairs_eff[:, 0], all_pairs_eff[:, 1]].astype(np.float32)
+        _NOVEL_PERPIX = True
+        _fire_mask = _novel_frac_arr > 0
+        print(f"  [novel_weight PER-PIXEL] x{args.novel_pos_weight} on FIRE pixels "
+              f"(lookback={_L}d); samples with novel fire={_fire_mask.mean():.1%}; "
+              f"mean novel_frac(novel-fire samples)="
+              f"{float(_novel_frac_arr[_fire_mask].mean()) if _fire_mask.any() else 0.0:.3f}")
+
     # ── Anomaly-aware loss weighting (per-patch) ───────────────────────
     # Compose multiplicatively with per-year weight (or initialise to 1
     # if no per-year weighting active). Each sample's weight is now
@@ -2827,6 +3021,19 @@ def main():
                 return out + (_tele_tensor[idx],)
 
         train_ds = _TeleconnectionDS()
+
+    # ── Carry per-pixel novel_frac as a 2nd weight column ─────────────
+    # sample_weights_arr becomes (n_samples, 2): [w_patch, novel_frac]. The
+    # dataset wrapper passes each row through; the loss reconstructs the
+    # per-pixel weight. w_patch = existing per-patch chain (or 1.0 if none).
+    if _NOVEL_PERPIX:
+        if sample_weights_arr is None:
+            _base_w = np.ones(len(all_pairs_eff), dtype=np.float32)
+        else:
+            _base_w = sample_weights_arr.astype(np.float32)
+        sample_weights_arr = np.stack([_base_w, _novel_frac_arr], axis=1).astype(np.float32)
+        print(f"  [novel_weight PER-PIXEL] carrying (n,2) weights; "
+              f"base_w mean={_base_w.mean():.3f}")
 
     # Apply weighted-sample wrapper if any per-year weights are active
     # (climate-similarity OR recency OR anomaly-aware).
@@ -2885,6 +3092,10 @@ def main():
             n_patches=(n_patches if args.use_patch_embed else 0),
             mlp_dec_embed=args.mlp_dec_embed,
             dec_ctx_dim=ctx_extra_dim if args.decoder_ctx else 0,
+            enc_conv_stem=args.enc_conv_stem,
+            patch_size=P,
+            conv_output_head=args.conv_output_head,
+            conv_head_encmean=args.conv_head_encmean,
         ).to(device)
     else:
         # Baseline: MLP or ConvLSTM. Drop-in replacement; same forward
@@ -3222,11 +3433,11 @@ def main():
         # Per-sample weighting active if any of: recency, climate-similarity,
         # or anomaly-aware (per-patch) loss weighting (all produce 5-tuple
         # batches via the same _PerYearWeightedDS wrapper).
-        _has_sample_weight = (
-            args.recency_tau > 0
-            or bool(args.climate_similarity_csv)
-            or args.anomaly_weight_pow > 0
-        )
+        # 2026-07: track the ACTUAL dataset arity. _PerYearWeightedDS appends a
+        # 5th element whenever sample_weights_arr is set (recency / climate-sim /
+        # anomaly / region_loss / region_balance / novel-perpix), so key off that
+        # directly. _has_tele is independent (teleconnection wrapper appends tele).
+        _has_sample_weight = sample_weights_arr is not None
         _has_tele = tele_per_sample is not None
         for batch_idx, batch in enumerate(train_dl):
             # Element layout (tele appended at index 4 by _TeleconnectionDS,
@@ -3253,6 +3464,8 @@ def main():
             yb = yb.to(device, non_blocking=True)
             if args.label_smoothing > 0:
                 yb = yb * (1 - args.label_smoothing) + 0.5 * args.label_smoothing
+            if args.spatial_aug > 0:
+                xb_enc, yb = _spatial_augment(xb_enc, yb, P, args.spatial_aug)
 
             # Augment decoder with static context + lead time (+ teleconnection)
             if args.decoder_ctx and _dec_ctx_np is not None:
@@ -3268,13 +3481,29 @@ def main():
                                 enabled=amp_enabled):
                 logits = model(xb_enc, xb_dec, _pids)
                 if sw is not None and args.loss_fn == "focal":
-                    # Per-sample loss, then weighted mean
-                    # FocalBCELoss with reduction='sample_mean' returns shape (B,)
-                    _orig_red = criterion.reduction
-                    criterion.reduction = "sample_mean"
-                    per_sample_loss = criterion(logits, yb)
-                    criterion.reduction = _orig_red
-                    loss = (per_sample_loss * sw).mean()
+                    if sw.dim() == 2:
+                        # PER-PIXEL novel weighting: sw = [w_patch, novel_frac].
+                        # Boost only fire pixels: w_pix = 1 + (W-1)*novel_frac*fire.
+                        _w_patch = sw[:, 0]
+                        _nf_b = sw[:, 1]
+                        _orig_red = criterion.reduction
+                        criterion.reduction = "none"
+                        _elem = criterion(logits, yb)               # (B, L, P^2)
+                        criterion.reduction = _orig_red
+                        _fire_pix = (yb > 0.5).any(dim=1, keepdim=True).float()  # (B,1,P^2)
+                        _Wn = float(args.novel_pos_weight)
+                        _w_pix = 1.0 + (_Wn - 1.0) * _nf_b.view(-1, 1, 1) * _fire_pix
+                        _w_full = _w_patch.view(-1, 1, 1) * _w_pix    # (B,1,P^2)
+                        loss = ((_elem * _w_full).sum()
+                                / _w_full.expand_as(_elem).sum().clamp_min(1e-6))
+                    else:
+                        # Per-sample scalar loss, then weighted mean
+                        # FocalBCELoss with reduction='sample_mean' returns (B,)
+                        _orig_red = criterion.reduction
+                        criterion.reduction = "sample_mean"
+                        per_sample_loss = criterion(logits, yb)
+                        criterion.reduction = _orig_red
+                        loss = (per_sample_loss * sw).mean()
                 else:
                     loss = criterion(logits, yb)
 

@@ -176,6 +176,26 @@ def _build_burn_age_index(burn_scars_dir: str,
     return out
 
 
+def _build_burn_count_index(burn_scars_dir: str,
+                            H: int, W: int) -> Dict[int, np.ndarray]:
+    """Map {year: log1p(burn_count) array}. Same encoding as burn_age
+    (max(0) then log1p). Empty if dir missing."""
+    out: Dict[int, np.ndarray] = {}
+    if not burn_scars_dir or not os.path.isdir(burn_scars_dir):
+        return out
+    for p in sorted(glob.glob(os.path.join(burn_scars_dir,
+                                           "burn_count_*.tif"))):
+        bn = os.path.basename(p)
+        try:
+            yr = int(bn.replace("burn_count_", "").replace(".tif", ""))
+        except ValueError:
+            continue
+        raw = _load_static_channel(p, H, W, f"burn_count_{yr}")
+        raw = np.maximum(raw, 0)
+        out[yr] = np.log1p(raw).astype(np.float32)
+    return out
+
+
 def _pick_burn_age(burn_index: Dict[int, np.ndarray],
                    cur_year: int, H: int, W: int) -> np.ndarray:
     """Year-1 offset to prevent leakage (train_v3.py:2089)."""
@@ -261,22 +281,37 @@ def forecast(args) -> None:
         )
 
     # ---- 2. Build model ----------------------------------------------------
-    model = S2SHotspotTransformer(
-        patch_dim_enc=patch_dim_enc,
-        patch_dim_dec=patch_dim_dec,
-        patch_dim_out=patch_dim_out,
-        d_model=saved_args["d_model"],
-        nhead=saved_args["nhead"],
-        num_encoder_layers=saved_args["enc_layers"],
-        num_decoder_layers=saved_args["dec_layers"],
-        dim_feedforward=saved_args["d_model"] * 4,
-        dropout=saved_args.get("dropout", 0.1),
-        encoder_days=in_days,
-        decoder_days=decoder_days,
-        n_patches=0,            # SOTA was trained with use_patch_embed=False
-        mlp_dec_embed=saved_args.get("mlp_dec_embed", False),
-        dec_ctx_dim=ctx_extra_dim if use_decoder_ctx else 0,
-    ).to(device)
+    _mt = saved_args.get("model_type", "transformer")
+    if _mt in ("mlp", "convlstm"):
+        from src.models.baselines import build_baseline as _bb
+        _P = int(round(patch_dim_out ** 0.5)); _nch = patch_dim_enc // max(_P*_P, 1)
+        print(f"  [BASELINE forecast] model_type={_mt} n_channels={_nch} P={_P}")
+        model = _bb(_mt, patch_dim_enc=patch_dim_enc, patch_dim_dec=patch_dim_dec,
+                    patch_dim_out=patch_dim_out, encoder_days=in_days,
+                    decoder_days=decoder_days, n_channels=_nch, patch_size=_P,
+                    d_model=saved_args["d_model"], dropout=saved_args.get("dropout", 0.2)).to(device)
+    else:
+        model = S2SHotspotTransformer(
+            patch_dim_enc=patch_dim_enc,
+            patch_dim_dec=patch_dim_dec,
+            patch_dim_out=patch_dim_out,
+            d_model=saved_args["d_model"],
+            nhead=saved_args["nhead"],
+            num_encoder_layers=saved_args["enc_layers"],
+            num_decoder_layers=saved_args["dec_layers"],
+            dim_feedforward=saved_args["d_model"] * 4,
+            dropout=saved_args.get("dropout", 0.1),
+            encoder_days=in_days,
+            decoder_days=decoder_days,
+            n_patches=0,            # SOTA was trained with use_patch_embed=False
+            mlp_dec_embed=saved_args.get("mlp_dec_embed", False),
+            dec_ctx_dim=ctx_extra_dim if use_decoder_ctx else 0,
+            enc_conv_stem=saved_args.get("enc_conv_stem", False),
+            patch_size=saved_args.get("patch_size", 16),
+            conv_output_head=saved_args.get("conv_output_head", False),
+            conv_head_encmean=saved_args.get("conv_head_encmean", False),
+        ).to(device)
+
     # Support both naming conventions (V2 = model_state_dict, V3 = model_state)
     state = (ckpt.get("model_state")
              or ckpt.get("model_state_dict")
@@ -372,9 +407,16 @@ def forecast(args) -> None:
         static_arrays["aspect"] = _load_static_channel(
             os.path.join(P_PATHS["terrain_dir"], "aspect.tif"),
             H, W, "aspect")
+    if "lightning_climatology" in CHANNEL_NAMES:
+        # Static per-pixel mean annual lightning (log1p); matches
+        # train_v3.py:1652. Without this the channel loaded as zeros.
+        static_arrays["lightning_climatology"] = _load_static_channel(
+            "data/lightning_climatology.tif", H, W, "lightning_climatology")
 
     burn_index = (_build_burn_age_index(P_PATHS["burn_scars_dir"], H, W)
                   if "burn_age" in CHANNEL_NAMES else {})
+    burn_count_index = (_build_burn_count_index(P_PATHS["burn_scars_dir"], H, W)
+                        if "burn_count" in CHANNEL_NAMES else {})
 
     ndvi_index = (_build_ndvi_index(P_PATHS["ndvi_dir"])
                   if "NDVI" in CHANNEL_NAMES else [])
@@ -465,6 +507,9 @@ def forecast(args) -> None:
                 elif ch_name == "burn_age":
                     meteo_y[t_idx, ..., ch_idx] = _pick_burn_age(
                         burn_index, cur_date.year, H, W)
+                elif ch_name == "burn_count":
+                    meteo_y[t_idx, ..., ch_idx] = _pick_burn_age(
+                        burn_count_index, cur_date.year, H, W)
 
                 elif ch_name == "NDVI":
                     meteo_y[t_idx, ..., ch_idx] = _interpolate_ndvi(
