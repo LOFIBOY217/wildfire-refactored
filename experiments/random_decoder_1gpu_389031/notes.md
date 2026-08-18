@@ -59,23 +59,23 @@
 Checkpoint: `checkpoints/random_decoder_reg_1gpu/best_model.pt`
 
 ## Analysis
-- **Lift 在 ep4 到顶，之后随 LR 下降而下滑** — 典型过正则化模式（与 v3 一致）
-- val_loss 继续缓降至 ep10（0.2845），但 Lift 不跟随 — loss 与 Lift 解耦，模型学到了平均概率而非空间排序
-- train loss 全程仅从 0.653 → 0.645，变化极小，说明模型容量被严重压制
-- GPU VRAM 仅用 0.3/80 GB（实际极低利用率），瓶颈在 IO 和正则化而非模型复杂度
-- ep10 grad max=1.0995 触发 CLIPPED，说明后期梯度不稳定
+- **Lift peaks at ep4, then declines as the LR decays** — a classic over-regularization pattern (consistent with v3)
+- val_loss keeps drifting down slowly to ep10 (0.2845), but Lift does not follow — loss and Lift are decoupled; the model learns an average probability rather than spatial ranking
+- train loss only moves from 0.653 -> 0.645 over the whole run, barely changing, indicating the model capacity is heavily suppressed
+- GPU VRAM uses only 0.3/80 GB (very low utilization); the bottleneck is IO and regularization, not model complexity
+- ep10 grad max=1.0995 triggered CLIPPED, indicating unstable gradients late in training
 
-## 与其他实验对比
+## Comparison with other experiments
 
-| 实验 | decoder | Lift@5000 | 正则化 |
+| Experiment | decoder | Lift@5000 | Regularization |
 |------|---------|-----------|--------|
-| Oracle (Windows, ep1) | oracle (future ERA5) | **19.09x** | 轻 |
-| S2S legacy v3 (Narval) | s2s (patch-mean, dec_dim=9) | 7.17x | 重 |
-| **Random decoder (Trillium)** | random noise | **7.93x** | 重 |
+| Oracle (Windows, ep1) | oracle (future ERA5) | **19.09x** | light |
+| S2S legacy v3 (Narval) | s2s (patch-mean, dec_dim=9) | 7.17x | heavy |
+| **Random decoder (Trillium)** | random noise | **7.93x** | heavy |
 
-**关键发现**: Random > S2S legacy — 随机噪声比 S2S 预报信息效果更好，说明旧 S2S 实现（patch-mean, dec_dim=9）提供的信息实际上在干扰模型，或与正则化叠加后负面效果更强。
+**Key finding**: Random > S2S legacy — random noise works better than the S2S forecast information, which means the old S2S implementation (patch-mean, dec_dim=9) actually interferes with the model, or its negative effect is amplified when stacked with regularization.
 
 ## What to try next
-- 减轻正则化（dropout=0.1, wd=0.01, 无 label_smoothing, 无 neg_buffer）对比公平
-- 新 S2S full-patch decoder（dec_dim=2048，与 Oracle 同格式）训练完成后与此对比
-- 目标：S2S full-patch 应显著超过 7.93x，接近 Oracle 19.09x
+- Reduce regularization (dropout=0.1, wd=0.01, no label_smoothing, no neg_buffer) for a fair comparison
+- Compare against the new S2S full-patch decoder (dec_dim=2048, same format as Oracle) once its training finishes
+- Goal: S2S full-patch should clearly exceed 7.93x, approaching Oracle 19.09x

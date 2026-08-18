@@ -1,7 +1,7 @@
 # Evaluation Results — Wildfire Prediction
 
 All 20-window results unless marked (full) = 811 windows.
-K=5000 pixels (~2万km²). Goal: improve Lift@5000 metric.
+K=5000 pixels (~20,000 km²). Goal: improve Lift@5000 metric.
 
 Last updated: **2026-04-17**
 

@@ -51,7 +51,7 @@ Regularization confirmed over-strong from v3 analysis.
 
 - **Best Lift@5000 = 9.28x @ ep5**, val_loss=0.283146
 - Speed: 27.7–27.9 batches/sec, 30,314 batches/epoch
-- 390277 是 390268 的重复运行（完全相同配置），结果一致，确认可复现
+- Job 390277 is a re-run of 390268 (identical config); results match, confirming reproducibility
 
 ## Architecture
 - **Decoder type**: `s2s` flag in old Trillium codebase = **patch-mean** (NOT full-patch)

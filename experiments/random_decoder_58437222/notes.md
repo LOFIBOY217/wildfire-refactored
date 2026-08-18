@@ -15,11 +15,11 @@
 | pred_end | 2024-10-31 |
 | lead_start–end | 14–46 (decoder_days=33) |
 | epochs | 6 |
-| batch_size | ~1024 (推测，16499 batches/epoch) |
+| batch_size | ~1024 (inferred, 16499 batches/epoch) |
 | lr | 1e-4 |
 | Parameters | 8,488,704 |
 
-**Note**: decoder 为纯随机噪声，用于建立 encoder-only baseline。decoder 本身不携带任何天气信息。
+**Note**: the decoder is pure random noise, used to establish an encoder-only baseline. The decoder itself carries no weather information.
 
 ## Results
 
@@ -36,17 +36,17 @@
 
 ## Analysis
 
-### Random decoder > S2S legacy decoder？
+### Random decoder > S2S legacy decoder?
 Random (8.15x) > S2S Legacy v4 (7.80x) > S2S Legacy v3 (6.78x)
 
-这说明：**S2S patch-mean 天气信号在 dec_dim=9 下几乎没有贡献，甚至略微干扰了训练**。
-模型主要依赖 encoder（7天历史气象 + FWI + fire climatology）来预测，decoder 信息几乎不起作用。
+This shows: **the S2S patch-mean weather signal contributes almost nothing at dec_dim=9, and may even slightly interfere with training**.
+The model relies mainly on the encoder (7-day historical meteorology + FWI + fire climatology) to predict; the decoder information barely matters.
 
-### 注意事项
-- pred_end=2024-10-31（比 v4 Narval 的 2025-10-31 短，val set 略不同）
-- 评估仍为 20-sample 快速估算，有一定方差
-- 当前在跑的 wf-dec-random (58759655) 使用 pred_end=2025-10-31，结果待更新
+### Caveats
+- pred_end=2024-10-31 (shorter than v4 Narval's 2025-10-31, so a slightly different val set)
+- Evaluation is still the 20-sample quick estimate, with some variance
+- The currently running wf-dec-random (58759655) uses pred_end=2025-10-31; results pending
 
 ## Next
-- 等 wf-dec-random (58759655) 完成后更新此结果（pred_end=2025-10-31 版本）
-- 与 S2S full-patch (dec_dim=2048) 对比，验证高维 S2S decoder 是否有效
+- Update this result once wf-dec-random (58759655) finishes (the pred_end=2025-10-31 version)
+- Compare against S2S full-patch (dec_dim=2048) to check whether the high-dimensional S2S decoder is effective

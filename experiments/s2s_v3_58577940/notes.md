@@ -55,12 +55,12 @@
 Checkpoint: `checkpoints/s2s_decoder_s2s_v3/best_model.pt`
 
 ## Analysis
-- **Conclusion**: 正则化过强，模型被压制，无法充分学习。
-- train loss 全程停在 0.643–0.653（接近随机猜测 ln2=0.693 不远），几乎不动。
-- dropout=0.2 + weight_decay=0.05 + label_smoothing=0.05 + neg_buffer=2 同时叠加，学习信号被严重稀释。
-- val loss ep4 开始反弹，ep7 出现短暂反弹后 ep8 再次上升，模型振荡而非收敛。
-- 对比目标：之前最优 Lift@5000=19.09x（不同数据范围，不同超参）。
+- **Conclusion**: regularization is too strong; the model is suppressed and cannot learn well.
+- train loss stays at 0.643-0.653 the whole time (not far from the random-guess ln2=0.693) and barely moves.
+- dropout=0.2 + weight_decay=0.05 + label_smoothing=0.05 + neg_buffer=2 stacked together heavily dilute the learning signal.
+- val loss bounces from ep4; after a brief dip at ep7 it rises again at ep8 — the model oscillates rather than converges.
+- Reference target: previous best Lift@5000=19.09x (different data range, different hyperparameters).
 
 ## What to try next
-- **v4** (`slurm/train_v2_s2s_decoder_narval_v4.sh`): dropout=0.1, weight_decay=0.01, 无 label_smoothing, 无 neg_buffer
-- 等 Narval 维护结束 (Apr 7 07:00) 后提交
+- **v4** (`slurm/train_v2_s2s_decoder_narval_v4.sh`): dropout=0.1, weight_decay=0.01, no label_smoothing, no neg_buffer
+- Submit after the Narval maintenance window ends (Apr 7 07:00)

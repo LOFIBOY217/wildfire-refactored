@@ -1,30 +1,34 @@
 """
 compare_ciffc_hotspot.py
 ========================
-对 CIFFC 里的每一条火灾记录，在 CWFIS 卫星热点（hotspot）数据中寻找
-时空最近的匹配点，并量化两者的空间距离误差。
+For every fire record in CIFFC, find the closest spatio-temporal match in the
+CWFIS satellite hotspot data and quantify the spatial distance error between
+the two.
 
-数据源说明
-----------
-CIFFC（Canadian Interagency Forest Fire Centre）:
-    人工上报的火灾状态记录。每条记录 = 一次状态更新（一个 lat/lon 点代表整场火灾）。
-    包含火灾面积（公顷）、控制状态、火因等丰富属性，时间精确到秒。
+Data sources
+------------
+CIFFC (Canadian Interagency Forest Fire Centre):
+    Manually reported fire status records. Each record = one status update
+    (a single lat/lon point stands for the whole fire). Rich attributes
+    including fire size (hectares), control status, and fire cause, with
+    timestamps precise to the second.
 
-Hotspot（CWFIS / VIIRS 卫星热像素）:
-    卫星自动探测的地表热异常像素（约 375m 分辨率）。
-    每条记录 = 一个像素的探测，仅有坐标+日期，无面积/状态信息。
-    每日数量远多于 CIFFC（~3,000 条/天 vs ~26 条/天）。
+Hotspot (CWFIS / VIIRS satellite thermal pixels):
+    Satellite-detected surface thermal-anomaly pixels (~375 m resolution).
+    Each record = one detected pixel, with coordinates + date only, no area
+    or status information. Far more numerous per day than CIFFC
+    (~3,000/day vs ~26/day).
 
-关键差异：
-    1. 颗粒度   CIFFC 一条 = 整场火灾；hotspot 一条 = 375m 单个像素
-    2. 面积     CIFFC 有 field_fire_size（ha）；hotspot 无
-    3. 时间精度 CIFFC 精确到秒；hotspot 仅日期
-    4. 数量     Hotspot 比 CIFFC 多约 100 倍
-    5. 来源     CIFFC 人工；hotspot 卫星自动
+Key differences:
+    1. Granularity  CIFFC row = a whole fire; hotspot row = one 375 m pixel
+    2. Area         CIFFC has field_fire_size (ha); hotspot has none
+    3. Time precision  CIFFC is second-precise; hotspot is date-only
+    4. Count        Hotspot outnumbers CIFFC by ~100x
+    5. Origin       CIFFC is manual; hotspot is automated satellite detection
 
 Usage
 -----
-# 显式路径
+# Explicit paths
 python -m src.evaluation.compare_ciffc_hotspot \\
     --ciffc_csv    path/to/ciffc.csv \\
     --hotspot_csv  path/to/hotspot.csv \\
@@ -32,7 +36,7 @@ python -m src.evaluation.compare_ciffc_hotspot \\
     --window_days  7 \\
     --match_km     10
 
-# 使用 config（读取 paths.ciffc_csv / paths.hotspot_csv）
+# Using config (reads paths.ciffc_csv / paths.hotspot_csv)
 python -m src.evaluation.compare_ciffc_hotspot \\
     --config configs/default.yaml \\
     --window_days 7 --match_km 10
@@ -48,7 +52,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# ── 项目内部工具（可选；脚本也支持不依赖 config 直接指定路径）──────────────
+# ── Project-internal helpers (optional; the script also works without config,
+#    taking paths directly from the CLI) ──────────────────────────────────────
 try:
     from src.config import add_config_argument, get_path, load_config
     from src.data_ops.processing.rasterize_fires import load_ciffc_data
@@ -58,7 +63,7 @@ except ImportError:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 工具函数
+# Helper functions
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _haversine_km(
@@ -68,18 +73,19 @@ def _haversine_km(
     lons: np.ndarray,
 ) -> np.ndarray:
     """
-    从一个点 (lat1, lon1) 到一组点 (lats, lons) 的 Haversine 大圆距离，单位 km。
+    Haversine great-circle distance in km from one point (lat1, lon1) to an
+    array of points (lats, lons).
 
     Parameters
     ----------
     lat1, lon1 : float
-        参考点（CIFFC 火灾位置）
+        Reference point (CIFFC fire location).
     lats, lons : np.ndarray  shape (N,)
-        候选 hotspot 坐标数组
+        Candidate hotspot coordinate arrays.
 
     Returns
     -------
-    np.ndarray  shape (N,)  每个候选点距参考点的距离（km）
+    np.ndarray  shape (N,)  distance (km) from each candidate to the reference.
     """
     R = 6371.0
     dlat = np.radians(lats - lat1)
@@ -93,8 +99,8 @@ def _haversine_km(
 
 def _load_hotspot_raw(hotspot_path: str) -> pd.DataFrame:
     """
-    加载 hotspot CSV，保留原始列名。
-    返回列：latitude, longitude, acq_date (date object)
+    Load the hotspot CSV, keeping the original column names.
+    Returns columns: latitude, longitude, acq_date (date object).
     """
     df = pd.read_csv(hotspot_path)
     df = df.dropna(subset=["acq_date"])
@@ -104,8 +110,9 @@ def _load_hotspot_raw(hotspot_path: str) -> pd.DataFrame:
 
 def _load_ciffc_raw(ciffc_path: str) -> pd.DataFrame:
     """
-    加载 CIFFC CSV，解析日期列。
-    如果项目环境可用则复用 load_ciffc_data()，否则自行解析。
+    Load the CIFFC CSV and parse the date column.
+    Reuse load_ciffc_data() if the project environment is available, otherwise
+    parse it directly.
     """
     if _HAS_PROJECT:
         return load_ciffc_data(ciffc_path)
@@ -118,39 +125,39 @@ def _build_hotspot_index(
     hotspot_df: pd.DataFrame,
 ) -> dict[date, np.ndarray]:
     """
-    将 hotspot DataFrame 预建为日期索引字典。
+    Pre-build the hotspot DataFrame into a date-indexed dictionary.
 
     Returns
     -------
-    dict  {date → np.ndarray shape (N, 2)}   每个元素 = [[lat, lon], ...]
+    dict  {date -> np.ndarray shape (N, 2)}   each element = [[lat, lon], ...]
     """
-    print("  建立 hotspot 日期索引（一次性）...", flush=True)
+    print("  Building hotspot date index (one-time)...", flush=True)
     idx: dict[date, np.ndarray] = {}
     for d, g in hotspot_df.groupby("acq_date"):
         idx[d] = g[["latitude", "longitude"]].values.astype(np.float64)
-    print(f"  索引建立完成，共 {len(idx):,} 个不同日期", flush=True)
+    print(f"  Index built: {len(idx):,} distinct dates", flush=True)
     return idx
 
 
 def _print_data_summary(ciffc_df: pd.DataFrame, hotspot_df: pd.DataFrame) -> None:
-    """打印两个数据源的内容对比摘要。"""
+    """Print a content-comparison summary of the two data sources."""
     cif_dates = pd.to_datetime(ciffc_df["field_situation_report_date"])
     hot_dates = hotspot_df["acq_date"]
 
     print()
     print("=" * 65)
-    print("  数据源对比：CIFFC vs CWFIS Hotspot")
+    print("  Data source comparison: CIFFC vs CWFIS Hotspot")
     print("=" * 65)
 
     print()
-    print("【CIFFC — 人工上报火灾记录】")
-    print(f"  记录数     : {len(ciffc_df):>10,} 条")
-    print(f"  时间范围   : {cif_dates.min().date()} → {cif_dates.max().date()}")
-    print(f"  列（12）   : field_agency_fire_id, field_agency_code,")
-    print(f"               field_situation_report_date (精确到秒),")
+    print("[CIFFC - manually reported fire records]")
+    print(f"  Records    : {len(ciffc_df):>10,}")
+    print(f"  Date range : {cif_dates.min().date()} -> {cif_dates.max().date()}")
+    print(f"  Columns(12): field_agency_fire_id, field_agency_code,")
+    print(f"               field_situation_report_date (second-precise),")
     print(f"               field_stage_of_control_status, field_system_fire_cause,")
     print(f"               field_response_type,")
-    print(f"               field_fire_size (公顷), field_latitude, field_longitude")
+    print(f"               field_fire_size (hectares), field_latitude, field_longitude")
     if "field_fire_size" in ciffc_df.columns:
         sz = ciffc_df["field_fire_size"].dropna()
         print(f"  fire_size  : min={sz.min():.1f} ha, median={sz.median():.1f} ha, "
@@ -159,37 +166,39 @@ def _print_data_summary(ciffc_df: pd.DataFrame, hotspot_df: pd.DataFrame) -> Non
         f"{k}:{v}"
         for k, v in ciffc_df["field_stage_of_control_status"].value_counts().items()
     ) if "field_stage_of_control_status" in ciffc_df.columns else "N/A"
-    print(f"  控制状态   : {status_str}")
-    print(f"  每条含义   : 一场火灾在某日的状态汇报，一个 lat/lon 代表整场火灾")
+    print(f"  Status     : {status_str}")
+    print(f"  Row meaning: one fire's status report on a given day; a single "
+          f"lat/lon stands for the whole fire")
 
     print()
-    print("【Hotspot — CWFIS 卫星热像素】")
-    print(f"  记录数     : {len(hotspot_df):>10,} 条")
-    print(f"  时间范围   : {hot_dates.min()} → {hot_dates.max()}")
-    print(f"  列（3）    : latitude, longitude, acq_date (仅日期，无时刻)")
-    lat_r = f"{hotspot_df['latitude'].min():.2f} → {hotspot_df['latitude'].max():.2f}"
-    lon_r = f"{hotspot_df['longitude'].min():.2f} → {hotspot_df['longitude'].max():.2f}"
-    print(f"  lat 范围   : {lat_r}")
-    print(f"  lon 范围   : {lon_r}")
-    print(f"  每条含义   : 卫星（VIIRS/MODIS ~375m）识别到的单个热像素")
+    print("[Hotspot - CWFIS satellite thermal pixels]")
+    print(f"  Records    : {len(hotspot_df):>10,}")
+    print(f"  Date range : {hot_dates.min()} -> {hot_dates.max()}")
+    print(f"  Columns(3) : latitude, longitude, acq_date (date only, no time)")
+    lat_r = f"{hotspot_df['latitude'].min():.2f} -> {hotspot_df['latitude'].max():.2f}"
+    lon_r = f"{hotspot_df['longitude'].min():.2f} -> {hotspot_df['longitude'].max():.2f}"
+    print(f"  lat range  : {lat_r}")
+    print(f"  lon range  : {lon_r}")
+    print(f"  Row meaning: a single thermal pixel detected by satellite "
+          f"(VIIRS/MODIS ~375 m)")
 
     print()
-    print("【关键差异】")
+    print("[Key differences]")
     rows = [
-        ("数据来源",   "人工上报（省/联邦机构）",        "卫星自动探测（CWFIS/VIIRS）"),
-        ("每条记录",   "整场火灾的一次状态汇报",         "一个 375m 卫星热像素"),
-        ("面积信息",   "有（field_fire_size, 公顷）",   "无"),
-        ("状态属性",   "有（OUT/UC/OC/BH/H）",         "无"),
-        ("时间精度",   "秒（ISO 8601 时间戳）",          "日（YYYY-MM-DD）"),
-        ("单日记录量", "~26 条（仅活跃火灾）",           "~3,000 条（全部热异常）"),
-        ("数量级",    f"{len(ciffc_df):,} 条（2年）",   f"{len(hotspot_df):,} 条"),
+        ("Source",      "Manual report (prov./federal agency)", "Automated satellite (CWFIS/VIIRS)"),
+        ("Per record",  "One status report for a whole fire",   "One 375 m satellite thermal pixel"),
+        ("Area info",   "Yes (field_fire_size, hectares)",      "No"),
+        ("Status attr", "Yes (OUT/UC/OC/BH/H)",                 "No"),
+        ("Time prec.",  "Second (ISO 8601 timestamp)",          "Day (YYYY-MM-DD)"),
+        ("Records/day", "~26 (active fires only)",              "~3,000 (all thermal anomalies)"),
+        ("Magnitude",   f"{len(ciffc_df):,} (2 yrs)",           f"{len(hotspot_df):,}"),
     ]
     col1_w = max(len(r[0]) for r in rows) + 2
     for label, cif_val, hot_val in rows:
         print(f"  {label:<{col1_w}} CIFFC: {cif_val}")
         print(f"  {'':<{col1_w}}         Hotspot: {hot_val}")
 
-    # 时间重叠检查
+    # Temporal overlap check
     cif_date_set = set(
         str(pd.to_datetime(ciffc_df["field_situation_report_date"]).dt.date)
         if False else  # pragma: no cover
@@ -199,17 +208,18 @@ def _print_data_summary(ciffc_df: pd.DataFrame, hotspot_df: pd.DataFrame) -> Non
     overlap = cif_date_set & hot_date_set
     print()
     if overlap:
-        print(f"  [OK] 时间重叠 : {len(overlap):,} 个共同日期（可进行匹配）")
+        print(f"  [OK] Temporal overlap: {len(overlap):,} shared dates (matchable)")
     else:
-        print(f"  [WARN] 时间无重叠：CIFFC {cif_dates.min().year}–{cif_dates.max().year}，"
-              f"Hotspot {hot_dates.min()}–{hot_dates.max()}")
-        print(f"     -> 用服务器上覆盖 2023–2025 的完整 hotspot 文件运行才能看到真实匹配率")
+        print(f"  [WARN] No temporal overlap: CIFFC {cif_dates.min().year}-{cif_dates.max().year}, "
+              f"Hotspot {hot_dates.min()}-{hot_dates.max()}")
+        print(f"     -> Run with a full hotspot file covering 2023-2025 to see the "
+              f"real match rate")
     print("=" * 65)
     print()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 核心匹配函数
+# Core matching function
 # ─────────────────────────────────────────────────────────────────────────────
 
 def match_ciffc_to_hotspot(
@@ -220,33 +230,33 @@ def match_ciffc_to_hotspot(
     date_field: str = "situation",
 ) -> pd.DataFrame:
     """
-    对 ciffc_df 每一行，在 hotspot_idx 中查找最近的热点。
+    For every row of ciffc_df, find the nearest hotspot in hotspot_idx.
 
     Parameters
     ----------
-    ciffc_df     : CIFFC DataFrame（含 date / field_latitude / field_longitude）
-    hotspot_idx  : {date → np.ndarray(N,2)} 日期索引
-    window_days  : 时间窗口 ±N 天
-    match_km     : "已匹配"判定阈值（km）
+    ciffc_df     : CIFFC DataFrame (with date / field_latitude / field_longitude)
+    hotspot_idx  : {date -> np.ndarray(N,2)} date index
+    window_days  : time window of +/-N days
+    match_km     : distance threshold (km) for declaring a match
     date_field   : "situation"=field_situation_report_date, "status"=field_status_date
 
     Returns
     -------
-    DataFrame：原始 CIFFC 列 + 新增匹配列
+    DataFrame: original CIFFC columns + new match columns.
     """
-    # 确定使用哪个日期列
+    # Decide which date column to use
     if date_field == "status" and "field_status_date" in ciffc_df.columns:
         ciffc_df = ciffc_df.copy()
         ciffc_df["date"] = pd.to_datetime(
             ciffc_df["field_status_date"]
         ).dt.date
-    # 若 load_ciffc_data 已解析 date 则直接用
+    # If load_ciffc_data already parsed `date`, use it directly
     dates = ciffc_df["date"].values
     lats  = ciffc_df["field_latitude"].values.astype(float)
     lons  = ciffc_df["field_longitude"].values.astype(float)
 
     n = len(ciffc_df)
-    # 结果列（预分配 NaN）
+    # Result columns (pre-allocated to NaN)
     same_day_nearest_km        = np.full(n, np.nan)
     window_nearest_km          = np.full(n, np.nan)
     window_nearest_day_offset  = np.full(n, np.nan)
@@ -254,8 +264,8 @@ def match_ciffc_to_hotspot(
     nearest_hotspot_lon        = np.full(n, np.nan)
     no_hotspots_in_window      = np.ones(n, dtype=bool)
 
-    print(f"[匹配中] {n:,} 条 CIFFC 记录，时间窗口 ±{window_days} 天，"
-          f"匹配阈值 {match_km} km ...", flush=True)
+    print(f"[matching] {n:,} CIFFC records, window +/-{window_days} days, "
+          f"threshold {match_km} km ...", flush=True)
 
     for i in range(n):
         if i % 500 == 0 and i > 0:
@@ -266,7 +276,7 @@ def match_ciffc_to_hotspot(
         lat1 = lats[i]
         lon1 = lons[i]
 
-        # --- 收集窗口内所有 hotspot 点 ---
+        # --- Collect all hotspot points within the window ---
         window_pts_list:  list[np.ndarray] = []
         day_offsets_list: list[np.ndarray] = []
 
@@ -278,18 +288,18 @@ def match_ciffc_to_hotspot(
                 day_offsets_list.append(np.full(len(pts), offset, dtype=np.int32))
 
         if not window_pts_list:
-            # 时间窗口内完全没有 hotspot（文件不覆盖该时段）
+            # No hotspot at all within the window (file does not cover this period)
             continue
 
         no_hotspots_in_window[i] = False
 
-        # --- 同日匹配 ---
+        # --- Same-day match ---
         same_day_pts = hotspot_idx.get(ciffc_date)
         if same_day_pts is not None and len(same_day_pts) > 0:
             dists = _haversine_km(lat1, lon1, same_day_pts[:, 0], same_day_pts[:, 1])
             same_day_nearest_km[i] = float(dists.min())
 
-        # --- 窗口最近匹配 ---
+        # --- Nearest match within the window ---
         combined  = np.vstack(window_pts_list)    # (M, 2)
         offsets   = np.concatenate(day_offsets_list)  # (M,)
         dists_all = _haversine_km(lat1, lon1, combined[:, 0], combined[:, 1])
@@ -301,7 +311,7 @@ def match_ciffc_to_hotspot(
 
     print(f"  Matching done.", flush=True)
 
-    # 拼接结果
+    # Assemble results
     out = ciffc_df.copy()
     out["ciffc_date"]                = [str(d) for d in dates]
     out["no_hotspots_in_window"]     = no_hotspots_in_window
@@ -320,7 +330,7 @@ def match_ciffc_to_hotspot(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 统计摘要
+# Statistical summary
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _print_match_summary(out: pd.DataFrame, window_days: int, match_km: float) -> None:
@@ -334,20 +344,20 @@ def _print_match_summary(out: pd.DataFrame, window_days: int, match_km: float) -
 
     print()
     print("=" * 65)
-    print(f"  匹配统计 (window=±{window_days}天, threshold={match_km}km)")
+    print(f"  Match statistics (window=+/-{window_days}d, threshold={match_km}km)")
     print("=" * 65)
-    print(f"  CIFFC 记录总数         : {n:>8,}")
-    print(f"  窗口内无 hotspot       : {no_win:>8,}  ({100*no_win/n:.1f}%)")
-    print(f"  窗口内有 hotspot       : {has_win:>8,}  ({100*has_win/n:.1f}%)")
-    print(f"  同日有 hotspot         : {same_day_has:>8,}  ({100*same_day_has/n:.1f}%)")
-    print(f"  同日匹配 (<{match_km:.0f}km)    : {matched_sd:>8,}  ({100*matched_sd/n:.1f}%)")
-    print(f"  窗口内匹配 (<{match_km:.0f}km)  : {matched_win:>8,}  ({100*matched_win/n:.1f}%)")
+    print(f"  Total CIFFC records      : {n:>8,}")
+    print(f"  No hotspot in window     : {no_win:>8,}  ({100*no_win/n:.1f}%)")
+    print(f"  Hotspot in window        : {has_win:>8,}  ({100*has_win/n:.1f}%)")
+    print(f"  Hotspot same day         : {same_day_has:>8,}  ({100*same_day_has/n:.1f}%)")
+    print(f"  Same-day match (<{match_km:.0f}km)  : {matched_sd:>8,}  ({100*matched_sd/n:.1f}%)")
+    print(f"  Window match (<{match_km:.0f}km)    : {matched_win:>8,}  ({100*matched_win/n:.1f}%)")
 
-    # 距离分布（只有有数据时才打印）
+    # Distance distribution (only printed when data is present)
     wkm = out["window_nearest_km"].dropna()
     if len(wkm) > 0:
         print()
-        print("  窗口内最近 hotspot 距离分布（km）：")
+        print("  Nearest-hotspot-in-window distance distribution (km):")
         for pct, val in [
             (0,   wkm.min()),
             (10,  wkm.quantile(0.10)),
@@ -362,7 +372,7 @@ def _print_match_summary(out: pd.DataFrame, window_days: int, match_km: float) -
     doff = out["window_nearest_day_offset"].dropna()
     if len(doff) > 0:
         print()
-        print("  最近 hotspot 日期偏移分布（天，负=hotspot 早于 CIFFC）：")
+        print("  Nearest-hotspot day-offset distribution (days, negative = hotspot before CIFFC):")
         for pct, val in [
             (0,   doff.min()),
             (25,  doff.quantile(0.25)),
@@ -370,12 +380,12 @@ def _print_match_summary(out: pd.DataFrame, window_days: int, match_km: float) -
             (75,  doff.quantile(0.75)),
             (100, doff.max()),
         ]:
-            print(f"    P{pct:>3}  {val:>+8.0f} 天")
+            print(f"    P{pct:>3}  {val:>+8.0f} days")
 
     if no_win == n:
         print()
-        print("  [WARN] 所有 CIFFC 记录在 hotspot 文件时间范围内均无数据。")
-        print("     -> 请在服务器使用覆盖 2023–2025 年的完整 hotspot 文件重新运行。")
+        print("  [WARN] Every CIFFC record falls outside the hotspot file's date range.")
+        print("     -> Re-run on the server with a full hotspot file covering 2023-2025.")
     print("=" * 65)
     print()
 
@@ -386,33 +396,33 @@ def _print_match_summary(out: pd.DataFrame, window_days: int, match_km: float) -
 
 def _parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="对 CIFFC 每条记录在 CWFIS hotspot 中查找最近匹配点",
+        description="For each CIFFC record, find the nearest CWFIS hotspot match",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     if _HAS_PROJECT:
         add_config_argument(ap)
     ap.add_argument("--ciffc_csv",   type=str, default=None,
-                    help="CIFFC CSV 路径（覆盖 config 中的 ciffc_csv）")
+                    help="Path to CIFFC CSV (overrides ciffc_csv in config)")
     ap.add_argument("--hotspot_csv", type=str, default=None,
-                    help="Hotspot CSV 路径（覆盖 config 中的 hotspot_csv）")
+                    help="Path to hotspot CSV (overrides hotspot_csv in config)")
     ap.add_argument("--output_csv",  type=str, default="ciffc_hotspot_match.csv",
-                    help="输出 CSV 路径（默认 ciffc_hotspot_match.csv）")
+                    help="Output CSV path (default ciffc_hotspot_match.csv)")
     ap.add_argument("--window_days", type=int, default=7,
-                    help="时间窗口 ±N 天（默认 7）")
+                    help="Time window of +/-N days (default 7)")
     ap.add_argument("--match_km",    type=float, default=10.0,
-                    help="判定匹配的最大距离 km（默认 10.0）")
+                    help="Max distance in km to count as a match (default 10.0)")
     ap.add_argument("--date_field",  choices=["situation", "status"],
                     default="situation",
-                    help="使用 field_situation_report_date(situation) 或 "
-                         "field_status_date(status)（默认 situation）")
+                    help="Use field_situation_report_date(situation) or "
+                         "field_status_date(status) (default situation)")
     return ap.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
 
-    # ── 解析路径 ────────────────────────────────────────────────────────────
+    # ── Resolve paths ────────────────────────────────────────────────────────
     ciffc_path   = args.ciffc_csv
     hotspot_path = args.hotspot_csv
 
@@ -425,30 +435,30 @@ def main() -> None:
 
     if not ciffc_path or not hotspot_path:
         sys.exit(
-            "错误：请通过 --ciffc_csv / --hotspot_csv 或 --config 指定数据路径。"
+            "Error: specify data paths via --ciffc_csv / --hotspot_csv or --config."
         )
 
     ciffc_path   = str(ciffc_path)
     hotspot_path = str(hotspot_path)
 
-    # ── 加载数据 ─────────────────────────────────────────────────────────────
-    print(f"\n[STEP 1] 加载 CIFFC  ← {ciffc_path}")
+    # ── Load data ────────────────────────────────────────────────────────────
+    print(f"\n[STEP 1] Load CIFFC  <- {ciffc_path}")
     ciffc_df = _load_ciffc_raw(ciffc_path)
-    print(f"  {len(ciffc_df):,} 条记录")
+    print(f"  {len(ciffc_df):,} records")
 
-    print(f"\n[STEP 2] 加载 Hotspot ← {hotspot_path}")
+    print(f"\n[STEP 2] Load Hotspot <- {hotspot_path}")
     hotspot_df = _load_hotspot_raw(hotspot_path)
-    print(f"  {len(hotspot_df):,} 条记录")
+    print(f"  {len(hotspot_df):,} records")
 
-    # ── 数据对比摘要 ─────────────────────────────────────────────────────────
+    # ── Data comparison summary ──────────────────────────────────────────────
     _print_data_summary(ciffc_df, hotspot_df)
 
-    # ── 建立 hotspot 日期索引 ─────────────────────────────────────────────────
-    print("[STEP 3] 建立 hotspot 日期索引...")
+    # ── Build hotspot date index ─────────────────────────────────────────────
+    print("[STEP 3] Build hotspot date index...")
     hotspot_idx = _build_hotspot_index(hotspot_df)
 
-    # ── 逐条匹配 ─────────────────────────────────────────────────────────────
-    print("\n[STEP 4] 开始匹配...")
+    # ── Match record by record ───────────────────────────────────────────────
+    print("\n[STEP 4] Start matching...")
     out_df = match_ciffc_to_hotspot(
         ciffc_df     = ciffc_df,
         hotspot_idx  = hotspot_idx,
@@ -457,14 +467,14 @@ def main() -> None:
         date_field   = args.date_field,
     )
 
-    # ── 统计摘要 ─────────────────────────────────────────────────────────────
+    # ── Statistical summary ──────────────────────────────────────────────────
     _print_match_summary(out_df, args.window_days, args.match_km)
 
-    # ── 保存输出 CSV ─────────────────────────────────────────────────────────
+    # ── Save output CSV ──────────────────────────────────────────────────────
     out_path = Path(args.output_csv)
     out_df.to_csv(out_path, index=False)
-    print(f"[完成] 结果已保存到：{out_path.resolve()}")
-    print(f"  共 {len(out_df):,} 行，新增列：")
+    print(f"[done] Results saved to: {out_path.resolve()}")
+    print(f"  {len(out_df):,} rows, new columns:")
     new_cols = [
         "ciffc_date", "no_hotspots_in_window",
         "same_day_nearest_km", "window_nearest_km",

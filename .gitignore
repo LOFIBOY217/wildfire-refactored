@@ -29,3 +29,6 @@ notes/
 HANDOFF.md
 HANDOFF_*.md
 docs/HANDOFF_*.md
+
+# AI-assistant working context (kept local, not for public repo)
+CLAUDE.md
