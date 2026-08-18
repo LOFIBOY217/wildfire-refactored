@@ -58,7 +58,7 @@ conda activate wildfore-r
 For a GPU build, reinstall PyTorch from the CUDA index that matches your driver:
 
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install torch --index-url https://download.pytorch.org/whl/cu124
 ```
 
 Reading GRIB files (ERA5 downloads) needs a backend — apply one overlay:

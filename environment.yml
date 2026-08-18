@@ -31,10 +31,7 @@ dependencies:
   - pyproj
   - xarray
   - netCDF4
-  - tifffile
   - pillow
-  - libpysal
-  - spreg
 
   # Data download
   - cdsapi
@@ -53,10 +50,8 @@ dependencies:
 
   - pip
   - pip:
-    # PyTorch: install torch + torchvision + torchaudio together so their
-    # builds match. Plain pip installs CPU wheels from PyPI; for a GPU build,
+    # PyTorch. Plain pip installs a CPU wheel from PyPI; for a GPU build,
     # instead run (after creating the env):
-    #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    #   pip install torch --index-url https://download.pytorch.org/whl/cu124
+    # (torchvision / torchaudio are not used by this codebase.)
     - torch
-    - torchvision
-    - torchaudio
