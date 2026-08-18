@@ -1,0 +1,46 @@
+# pip alternative to environment.yml, for users who prefer pip over conda.
+#
+#   python3.11 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Versions match environment.yml and the set verified on the training cluster.
+#
+# NOTE: the geospatial packages (rasterio, geopandas, pyproj) need a system GDAL
+# available at build time. conda installs it for you; with pip you must provide
+# it yourself (system package manager, or use environment.yml instead).
+# Reading ERA5 GRIB files also needs an eccodes system library; then add a GRIB
+# backend, e.g. `pip install cfgrib` (HPC) or `pip install pygrib` (local).
+
+# Core scientific stack (numpy pinned <2: the code is not numpy-2 ready)
+numpy==1.26.4
+scipy==1.17.0
+pandas==3.0.0
+scikit-learn==1.8.0
+matplotlib
+
+# Geospatial / raster (require a system GDAL — see note above)
+rasterio==1.4.3
+geopandas==1.1.3
+pyproj==3.7.2
+xarray==2026.2.0
+netCDF4==1.7.4
+pillow
+
+# Data download
+cdsapi==0.7.7
+ecmwf-api-client==1.6.5
+requests==2.32.5
+boto3==1.42.70
+s3fs==2026.3.0
+earthaccess==0.17.0
+pyhdf==0.11.6
+
+# Utilities / dev
+pyyaml==6.0.3
+tqdm==4.67.3
+psutil==7.2.2
+pytest==9.0.3
+
+# PyTorch (CPU wheels from PyPI by default). For a GPU build, instead run:
+#   pip install "torch==2.10.0" --index-url https://download.pytorch.org/whl/cu124
+torch==2.10.0

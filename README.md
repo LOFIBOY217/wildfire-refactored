@@ -68,6 +68,14 @@ conda env update -n wildfore-r -f environments/environment.local-pygrib.yml  # l
 conda env update -n wildfore-r -f environments/environment.hpc-cfgrib.yml    # HPC (cfgrib)
 ```
 
+Prefer pip? Use `requirements.txt` instead (same versions). Note that the
+geospatial packages need a system GDAL, which conda otherwise provides for you:
+
+```bash
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
 ## Configuration and credentials
 
 All paths live in `configs/default.yaml` (relative to the repo root). To point
