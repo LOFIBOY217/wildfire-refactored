@@ -17,19 +17,19 @@ Prerequisites:
 
 Usage:
     # Download + convert one year
-    python -m src.data_ops.download.fwi_historical --year 2020
+    python -m src.data_ops.download.download_fwi_historical --year 2020
 
     # Download full range 2015-2022
-    python -m src.data_ops.download.fwi_historical --start 2015 --end 2022
+    python -m src.data_ops.download.download_fwi_historical --start 2015 --end 2022
 
     # Download specific months (fire season only)
-    python -m src.data_ops.download.fwi_historical --start 2015 --end 2022 --months 5 6 7 8 9 10
+    python -m src.data_ops.download.download_fwi_historical --start 2015 --end 2022 --months 5 6 7 8 9 10
 
     # Skip reprojection (keep raw NetCDFs only)
-    python -m src.data_ops.download.fwi_historical --year 2020 --no-reproject
+    python -m src.data_ops.download.download_fwi_historical --year 2020 --no-reproject
 
     # With custom config
-    python -m src.data_ops.download.fwi_historical --year 2020 --config configs/paths_mac.yaml
+    python -m src.data_ops.download.download_fwi_historical --year 2020 --config configs/paths_mac.yaml
 """
 
 import argparse
@@ -361,13 +361,13 @@ def main():
         epilog="""
 Examples:
     # Single year
-    python -m src.data_ops.download.fwi_historical --year 2020
+    python -m src.data_ops.download.download_fwi_historical --year 2020
 
     # Full range, fire season only
-    python -m src.data_ops.download.fwi_historical --start 2015 --end 2022 --months 5 6 7 8 9 10
+    python -m src.data_ops.download.download_fwi_historical --start 2015 --end 2022 --months 5 6 7 8 9 10
 
     # Full range, all months
-    python -m src.data_ops.download.fwi_historical --start 2015 --end 2022
+    python -m src.data_ops.download.download_fwi_historical --start 2015 --end 2022
         """,
     )
     add_config_argument(parser)

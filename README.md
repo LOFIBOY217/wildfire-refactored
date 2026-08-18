@@ -98,7 +98,7 @@ are downloaded from public providers and processed onto the common 2 km grid.
 
 | Data | Source | Downloader |
 |------|--------|-----------|
-| FWI / FFMC / DMC / DC / ISI / BUI | Copernicus CDS (cems-fire-historical-v1) | `python -m src.data_ops.download.fwi_historical` |
+| FWI / FFMC / DMC / DC / ISI / BUI | Copernicus CDS (cems-fire-historical-v1) | `python -m src.data_ops.download.download_fwi_historical` |
 | ERA5 meteorology | Copernicus CDS (reanalysis-era5-single-levels) | `python -m src.data_ops.download.download_ecmwf_reanalysis_observations` |
 | Fire hotspots | CWFIS | `python -m src.data_ops.download.download_hotspots` |
 

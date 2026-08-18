@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Download CWFIS fire hotspot data (2018–2025) via WFS.
 

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Download ECMWF S2S Fire Danger Seasonal Forecast (SEAS5-driven FWI) from
 the Copernicus CDS, restricted to Canada.

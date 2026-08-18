@@ -31,10 +31,10 @@ Output files:
     data/ecmwf_hres/tigge_ecmf_<YYYY-MM-DD>.grib
 
 Usage:
-    Single date:   python -m src.data_ops.download.hres_7day_ecmwf 2023-04-28
-    Date range:    python -m src.data_ops.download.hres_7day_ecmwf 2023-04-28 2025-08-21
-    Batch mode:    python -m src.data_ops.download.hres_7day_ecmwf --batch
-                   python -m src.data_ops.download.hres_7day_ecmwf --batch-start 2023-04-28 --batch-end 2025-08-21
+    Single date:   python -m src.data_ops.download.download_ecmwf_hres_7day 2023-04-28
+    Date range:    python -m src.data_ops.download.download_ecmwf_hres_7day 2023-04-28 2025-08-21
+    Batch mode:    python -m src.data_ops.download.download_ecmwf_hres_7day --batch
+                   python -m src.data_ops.download.download_ecmwf_hres_7day --batch-start 2023-04-28 --batch-end 2025-08-21
 """
 
 import argparse

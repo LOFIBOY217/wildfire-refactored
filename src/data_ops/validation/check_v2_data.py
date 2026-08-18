@@ -393,7 +393,7 @@ def main():
         print(BOLD("  Fix commands:"))
         print()
         print("  # FWI / FFMC / DMC / DC / BUI")
-        print("  python -m src.data_ops.download.fwi_historical \\")
+        print("  python -m src.data_ops.download.download_fwi_historical \\")
         print(f"      --start {data_start.year} --end {data_end.year} \\")
         print("      --months 4 5 6 7 8 9 10 \\")
         print("      --reference data/fwi_data/fwi_20250615.tif")

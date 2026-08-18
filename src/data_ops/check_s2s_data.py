@@ -329,7 +329,7 @@ def main():
         print("  ❌  S2S hindcast data NOT FOUND.")
         print()
         print("  To download (requires ECMWF API key at ~/.ecmwfapirc):")
-        print("    python -m src.data_ops.download.s2s_ecmwf \\")
+        print("    python -m src.data_ops.download.download_ecmwf_s2s \\")
         print(f"        {TRAIN_START} {TRAIN_END}")
         print()
         print("  The decoder currently uses ERA5 oracle (real future weather).")

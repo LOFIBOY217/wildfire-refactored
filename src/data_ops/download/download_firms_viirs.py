@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Download NASA FIRMS VIIRS S-NPP active fire hotspot data (2012-2017) via API.
 

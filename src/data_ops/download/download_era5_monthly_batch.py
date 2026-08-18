@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 ERA5 MONTHLY batch downloader — one CDS request per month (vs per day).
 

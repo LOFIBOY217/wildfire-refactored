@@ -13,13 +13,13 @@ pressure sets use separate filenames so existing core downloads are untouched.
 
 Usage:
     # Core (already downloaded):
-    python -m src.data_ops.download.s2s_ecmwf --batch
+    python -m src.data_ops.download.download_ecmwf_s2s --batch
 
     # Supplement wind + precip + deep soil moisture:
-    python -m src.data_ops.download.s2s_ecmwf --batch --param-set extended
+    python -m src.data_ops.download.download_ecmwf_s2s --batch --param-set extended
 
     # Supplement 500 hPa geopotential (blocking index):
-    python -m src.data_ops.download.s2s_ecmwf --batch --param-set pressure
+    python -m src.data_ops.download.download_ecmwf_s2s --batch --param-set pressure
 """
 
 import argparse

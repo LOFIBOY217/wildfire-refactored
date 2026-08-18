@@ -1,5 +1,5 @@
 # Trillium (SciNet) path configuration
-# Usage: python -m src.data_ops.download.fwi_historical --config configs/paths_trillium.yaml
+# Usage: python -m src.data_ops.download.download_fwi_historical --config configs/paths_trillium.yaml
 
 paths:
   project_root: "/scratch/jiaqi217/wildfire-refactored"
