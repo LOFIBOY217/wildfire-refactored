@@ -1,11 +1,15 @@
-# Base environment shared by all platforms.
-# Then apply one optional overlay:
-# - Local with pygrib: environments/environment.local-pygrib.yml
-# - HPC with cfgrib:   environments/environment.hpc-cfgrib.yml
+# Base conda environment for wildfire-refactored.
 #
-# NOTE: channel_priority: strict is required so that conda-forge packages
-# (especially rasterio/GDAL) are not mixed with defaults channel DLLs,
-# which causes silent crashes on Windows.
+# PyTorch is installed via pip (in the pip: section below) because its build
+# depends on your CUDA / CPU target. By default this installs CPU wheels;
+# for a GPU build see the comment next to the torch packages and the README.
+#
+# Optional GRIB backend overlay (apply one after creating the base env):
+#   conda env update -n wildfore-r -f environments/environment.local-pygrib.yml  # pygrib
+#   conda env update -n wildfore-r -f environments/environment.hpc-cfgrib.yml    # cfgrib
+#
+# NOTE: channel_priority: strict keeps conda-forge and defaults from mixing
+# GDAL/rasterio binaries, which can cause silent crashes (especially on Windows).
 name: wildfore-r
 channels:
   - conda-forge
@@ -13,30 +17,46 @@ channels:
 channel_priority: strict
 dependencies:
   - python=3.11
-  - pyyaml
+
+  # Core scientific stack
   - numpy
-  - netCDF4
-  - cdsapi
-  - ecmwf-api-client
-  - rasterio
-  - jupyterlab
-  - pillow
-  - tqdm
-  - psutil
-  - torchaudio
-  - torchvision
-  - tifffile
+  - scipy
   - pandas
+  - scikit-learn
+  - matplotlib
+
+  # Geospatial / raster
+  - rasterio
   - geopandas
+  - pyproj
+  - xarray
+  - netCDF4
+  - tifffile
+  - pillow
   - libpysal
   - spreg
-  # New data download dependencies
+
+  # Data download
+  - cdsapi
+  - ecmwf-api-client
+  - requests
   - boto3        # AWS S3 access (used by s3fs for GOES GLM)
   - s3fs         # S3 filesystem interface (GOES-16/17/18 GLM lightning)
   - earthaccess  # NASA Earthdata unified download (MODIS NDVI + SRTM slope)
   - pyhdf        # HDF4 reader (MODIS MOD13A2 format)
+
+  # Utilities / dev
+  - pyyaml
+  - tqdm
+  - psutil
+  - pytest
+
+  - pip
   - pip:
-    # GPU PyTorch must be installed via pip with the CUDA index URL.
-    # Run manually after conda env create:
+    # PyTorch: install torch + torchvision + torchaudio together so their
+    # builds match. Plain pip installs CPU wheels from PyPI; for a GPU build,
+    # instead run (after creating the env):
     #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
     - torch
+    - torchvision
+    - torchaudio

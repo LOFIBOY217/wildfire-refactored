@@ -47,17 +47,25 @@ docs/                  # data conventions, label methodology, metric definitions
 
 ## Installation
 
-Requires Python 3.11. Create the base environment with conda (conda-forge),
-then install PyTorch separately (its build depends on your CUDA / CPU target).
+Requires Python 3.11. The conda environment installs everything, including a
+CPU build of PyTorch.
 
 ```bash
 conda env create -f environment.yml
 conda activate wildfore-r
+```
 
-# GPU build (pick the CUDA tag that matches your driver):
+For a GPU build, reinstall PyTorch from the CUDA index that matches your driver:
+
+```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-# CPU-only:
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+Reading GRIB files (ERA5 downloads) needs a backend — apply one overlay:
+
+```bash
+conda env update -n wildfore-r -f environments/environment.local-pygrib.yml  # local (pygrib)
+conda env update -n wildfore-r -f environments/environment.hpc-cfgrib.yml    # HPC (cfgrib)
 ```
 
 ## Configuration and credentials
