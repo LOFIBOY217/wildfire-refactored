@@ -1,8 +1,12 @@
 # Base conda environment for wildfire-refactored.
 #
-# PyTorch is installed via pip (in the pip: section below) because its build
-# depends on your CUDA / CPU target. By default this installs CPU wheels;
-# for a GPU build see the comment next to the torch packages and the README.
+# Versions below are pinned to the set verified working on the training cluster
+# (Python 3.11 pip venv). They are known to be mutually compatible. If the conda
+# solver cannot satisfy an exact pin (a build may be missing on conda-forge),
+# relax that single line to a lower bound, e.g. `numpy>=1.26,<2`.
+#
+# PyTorch is installed via pip (its build depends on your CUDA / CPU target).
+# Plain pip gives CPU wheels; for a GPU build see the pip: section and the README.
 #
 # Optional GRIB backend overlay (apply one after creating the base env):
 #   conda env update -n wildfore-r -f environments/environment.local-pygrib.yml  # pygrib
@@ -18,40 +22,40 @@ channel_priority: strict
 dependencies:
   - python=3.11
 
-  # Core scientific stack
-  - numpy
-  - scipy
-  - pandas
-  - scikit-learn
-  - matplotlib
+  # Core scientific stack (numpy pinned <2: the code is not numpy-2 ready)
+  - numpy=1.26.4
+  - scipy=1.17.0
+  - pandas=3.0.0
+  - scikit-learn=1.8.0
+  - matplotlib        # not on the training cluster (plots are made locally); unpinned
 
   # Geospatial / raster
-  - rasterio
-  - geopandas
-  - pyproj
-  - xarray
-  - netCDF4
-  - pillow
+  - rasterio=1.4.3
+  - geopandas=1.1.3
+  - pyproj=3.7.2
+  - xarray=2026.2.0
+  - netCDF4=1.7.4
+  - pillow            # cluster uses the Pillow-SIMD variant; standard pillow is fine, unpinned
 
   # Data download
-  - cdsapi
-  - ecmwf-api-client
-  - requests
-  - boto3        # AWS S3 access (used by s3fs for GOES GLM)
-  - s3fs         # S3 filesystem interface (GOES-16/17/18 GLM lightning)
-  - earthaccess  # NASA Earthdata unified download (MODIS NDVI + SRTM slope)
-  - pyhdf        # HDF4 reader (MODIS MOD13A2 format)
+  - cdsapi=0.7.7
+  - ecmwf-api-client=1.6.5
+  - requests=2.32.5
+  - boto3=1.42.70     # AWS S3 access (s3fs backend for GOES GLM)
+  - s3fs=2026.3.0     # S3 filesystem interface (GOES-16/17/18 GLM lightning)
+  - earthaccess=0.17.0  # NASA Earthdata download (MODIS NDVI + SRTM slope)
+  - pyhdf=0.11.6      # HDF4 reader (MODIS MOD13A2 format)
 
   # Utilities / dev
-  - pyyaml
-  - tqdm
-  - psutil
-  - pytest
+  - pyyaml=6.0.3
+  - tqdm=4.67.3
+  - psutil=7.2.2
+  - pytest=9.0.3
 
   - pip
   - pip:
     # PyTorch. Plain pip installs a CPU wheel from PyPI; for a GPU build,
     # instead run (after creating the env):
-    #   pip install torch --index-url https://download.pytorch.org/whl/cu124
+    #   pip install "torch==2.10.0" --index-url https://download.pytorch.org/whl/cu124
     # (torchvision / torchaudio are not used by this codebase.)
-    - torch
+    - torch==2.10.0
