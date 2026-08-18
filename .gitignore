@@ -32,3 +32,34 @@ docs/HANDOFF_*.md
 
 # AI-assistant working context (kept local, not for public repo)
 CLAUDE.md
+
+# Internal research diary / personal notes (kept local, not for public repo)
+/RESUME_HIGHLIGHTS.md
+/docs/BOSS_REPORT_2026_04_27.md
+/docs/JOBS_REGISTRY.md
+/docs/SOTA_ATTACKS_2026_05_10.md
+/docs/SOTA_ATTACK_PLAN_2026_05_02.md
+/docs/SCALING_LAW_LOG_2026_04_25_26.md
+/docs/SCALING_LAW_LOG_2026_05_02.md
+/docs/BUG_HUNT_2026_05_10.md
+/docs/PAPER_FIGURES_PLAN_2026_05_02.md
+/docs/PAPER_STORY_RANKING_VS_CALIBRATION_2026_05_03.md
+/docs/ANALYSIS_PLAN.md
+/docs/SSL_PRETRAINING_IDEAS.md
+/docs/CHANNEL_EXTENSION_ROADMAP.md
+/docs/UNUSED_FIELDS_ROADMAP.md
+/docs/TECH_DEBT.md
+/docs/CALIBRATION_VS_RANK_HYPOTHESIS.md
+/docs/CSTEM_2324_CONDITION_ANALYSIS.md
+/docs/LIFT_30KM_DEFINITION_AUDIT_2026_05_11.md
+/docs/LIGHTNING_DATA_PLAN_2026_05_04.md
+/docs/LABEL_FUSION_FALLBACKS.md
+/docs/RESULTS_TABLE_2026_05_03.md
+/docs/ARCHITECTURE_DIAGRAM_PROMPT.md
+/experiments/benchmark_baselines_58628984/notes.md
+/experiments/benchmark_baselines_58628984/benchmark_baselines_per_leadday.csv
+/experiments/random_decoder_1gpu_389031/notes.md
+/experiments/random_decoder_58437222/notes.md
+/experiments/s2s_patchmean_trillium_390268/notes.md
+/experiments/s2s_v3_58577940/notes.md
+/experiments/s2s_v4_58748998/notes.md
