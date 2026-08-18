@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from src.evaluation.metrics import (
+    compute_confusion_metrics,
     compute_ranking_metrics,
     compute_imbalanced_metrics,
     compute_brier_decomposition,
@@ -17,6 +18,69 @@ from src.evaluation.metrics import (
     compute_all_metrics,
     bootstrap_ci,
 )
+
+
+# ---------- compute_confusion_metrics ---------- #
+
+def test_confusion_perfect_at_threshold():
+    """Clean separation at threshold 0.5 → perfect confusion metrics."""
+    y_true = np.array([1, 1, 0, 0], dtype=np.float32)
+    y_prob = np.array([0.9, 0.8, 0.2, 0.1], dtype=np.float32)
+    r = compute_confusion_metrics(y_true, y_prob, threshold=0.5)
+    assert (r['tp'], r['fp'], r['tn'], r['fn']) == (2, 0, 2, 0)
+    assert r['pod'] == 1.0
+    assert r['far'] == 0.0
+    assert r['csi'] == 1.0
+    assert r['precision'] == 1.0
+    assert r['f1'] == 1.0
+    assert r['auc'] == pytest.approx(1.0)
+
+
+def test_confusion_threshold_splits_positives():
+    """Threshold above one positive's score turns it into a false negative."""
+    y_true = np.array([1, 1, 0, 0], dtype=np.float32)
+    y_prob = np.array([0.6, 0.4, 0.3, 0.1], dtype=np.float32)
+    r = compute_confusion_metrics(y_true, y_prob, threshold=0.5)
+    assert (r['tp'], r['fp'], r['tn'], r['fn']) == (1, 0, 2, 1)
+    assert r['pod'] == pytest.approx(0.5)
+
+
+def test_confusion_nodata_mask_drops_pixels():
+    """A masked-out false alarm should not count."""
+    y_true = np.array([1, 1, 0, 0], dtype=np.float32)
+    y_prob = np.array([0.9, 0.9, 0.9, 0.1], dtype=np.float32)
+    mask = np.array([True, True, False, True])  # drop the FP at index 2
+    r = compute_confusion_metrics(y_true, y_prob, threshold=0.5, nodata_mask=mask)
+    assert r['n_samples'] == 3
+    assert r['fp'] == 0
+
+
+def test_confusion_empty_returns_none():
+    r = compute_confusion_metrics(np.array([], dtype=np.float32),
+                                  np.array([], dtype=np.float32), threshold=0.5)
+    assert r is None
+
+
+def test_confusion_nan_rows_filtered():
+    y_true = np.array([1, 0, 1], dtype=np.float32)
+    y_prob = np.array([0.9, np.nan, 0.8], dtype=np.float32)
+    r = compute_confusion_metrics(y_true, y_prob, threshold=0.5)
+    assert r['n_samples'] == 2
+
+
+def test_confusion_skip_auc_returns_nan():
+    y_true = np.array([1, 0, 1, 0], dtype=np.float32)
+    y_prob = np.array([0.9, 0.1, 0.8, 0.2], dtype=np.float32)
+    r = compute_confusion_metrics(y_true, y_prob, threshold=0.5, skip_auc=True)
+    assert np.isnan(r['auc'])
+
+
+def test_confusion_single_class_auc_nan():
+    """AUC is undefined when only one class is present."""
+    y_true = np.array([0, 0, 0], dtype=np.float32)
+    y_prob = np.array([0.2, 0.3, 0.4], dtype=np.float32)
+    r = compute_confusion_metrics(y_true, y_prob, threshold=0.5)
+    assert np.isnan(r['auc'])
 
 
 # ---------- compute_ranking_metrics ---------- #
