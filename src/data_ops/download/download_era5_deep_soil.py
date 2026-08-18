@@ -39,7 +39,9 @@ except ModuleNotFoundError:
 # ------------------------------------------------------------------ #
 
 DEFAULT_AREA = [83, -141, 41, -52]  # [N, W, S, E] — Canada bounding box
-DEFAULT_CDS_API_KEY = "d952a10c-f9c0-4ff3-92e1-aac8756dd123"
+# CDS API key is read from --cds-api-key, the CDS_API_KEY env var, config, or
+# ~/.cdsapirc. Never hardcode a key here.
+DEFAULT_CDS_API_KEY = ""
 
 
 def _make_cds_client(api_key: str):

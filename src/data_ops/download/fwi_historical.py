@@ -62,7 +62,9 @@ CANADA_AREA = [84, -142, 41, -52]
 
 # All days in a month template
 ALL_DAYS = [f"{d:02d}" for d in range(1, 32)]
-DEFAULT_CDS_API_KEY = "d952a10c-f9c0-4ff3-92e1-aac8756dd123"
+# CDS API key is read from --cds-key, the CDS_API_KEY env var, or ~/.cdsapirc.
+# Never hardcode a key here.
+DEFAULT_CDS_API_KEY = ""
 
 # 2026: intermediate_dataset (recent months) uses netcdf/netcdf4 engine,
 # not consolidated/netcdf_legacy. Overridable via CLI; read by request+reader.
@@ -482,8 +484,7 @@ Examples:
             client_kwargs['key'] = args.cds_key
         elif os.environ.get('CDS_API_KEY'):
             client_kwargs['key'] = os.environ['CDS_API_KEY']
-        else:
-            client_kwargs['key'] = DEFAULT_CDS_API_KEY
+        # else: no explicit key -> cdsapi.Client falls back to ~/.cdsapirc
 
         try:
             client = cdsapi.Client(**client_kwargs)
