@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Verify S2S Forecast Skill vs ERA5 Observations
 ===============================================
@@ -12,7 +13,7 @@ Channels verified: 2t, 2d, tcw, sm20, st20
   (VPD is S2S-only derived; skipped for direct obs comparison)
 
 Usage:
-    python -m src.data_ops.validation.verify_s2s_skill \\
+    python -m src.data_ops.validation.check_s2s_skill \\
         --s2s-cache /scratch/jiaqi217/meteo_cache/s2s_decoder_cache.dat \\
         --era5-dir data/ecmwf_observation \\
         --reference data/fwi_data/fwi_20250615.tif \\

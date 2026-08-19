@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 check_v2_data.py -- V2 training data availability check
 =========================================================

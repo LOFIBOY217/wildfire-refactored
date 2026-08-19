@@ -339,7 +339,7 @@ def main():
     print("NEXT STEP: Verify alignment")
     print("=" * 70)
     print("Run verification to ensure perfect alignment:")
-    print(f"  python -m src.data_ops.validation.verify_alignment \\")
+    print(f"  python -m src.data_ops.validation.check_alignment \\")
     print(f"    --fwi-dir <fwi_dir> \\")
     print(f"    --ecmwf-dir {output_root}")
     print("=" * 70)

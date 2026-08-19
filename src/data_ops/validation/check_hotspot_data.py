@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Validate downloaded CWFIS hotspot data against NASA FIRMS source.
 

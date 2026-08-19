@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 compare_season_hotspots.py
 ==========================

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Diagnostic script: check whether 2t and 2d TIF files are identical.
 Run from project root:
