@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Build S2S Full-Patch Decoder Cache
 ===================================

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Consolidate Encoder Source Data into Single Contiguous Array
 =============================================================

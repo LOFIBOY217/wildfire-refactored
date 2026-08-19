@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Reproject ECMWF S2S Fire Danger NetCDF (1° lat/lon, all leadtimes per
 file) to per-issue, per-leadday GeoTIFFs aligned to the EPSG:3978 2 km

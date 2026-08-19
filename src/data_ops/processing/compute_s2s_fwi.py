@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Compute FWI from ECMWF S2S forecast variables.
 

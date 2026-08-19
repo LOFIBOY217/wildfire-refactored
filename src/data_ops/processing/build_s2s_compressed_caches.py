@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Build Compressed S2S Decoder Caches from Full-Patch Cache
 ==========================================================
