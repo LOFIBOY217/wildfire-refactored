@@ -121,10 +121,12 @@ class ApproxNDCGLoss(nn.Module):
         if y.sum() < 1.0:
             return s.new_tensor(0.0)
 
-        # Approximate ranks via sigmoid on pairwise score differences
-        # rank_i ≈ sum_j sigmoid((s_j - s_i) / temperature) + 1
-        diff = s.unsqueeze(0) - s.unsqueeze(1)  # (K, K): diff[j, i] = s_j - s_i
-        approx_rank = torch.sigmoid(diff / self.temperature).sum(dim=0) + 1.0  # (K,)
+        # Approximate ranks via sigmoid on pairwise score differences.
+        # rank_i ≈ 1 + #{j : s_j > s_i} = 1 + sum_j sigmoid((s_j - s_i) / T)
+        # diff[i, j] = s_j - s_i, so summing over j (dim=1) counts items ranked
+        # ABOVE i. (Summing dim=0 would count items below — an inverted rank.)
+        diff = s.unsqueeze(0) - s.unsqueeze(1)  # (K, K): diff[i, j] = s_j - s_i
+        approx_rank = torch.sigmoid(diff / self.temperature).sum(dim=1) + 1.0  # (K,)
 
         # DCG with approximate ranks
         discount = 1.0 / torch.log2(approx_rank + 1.0)

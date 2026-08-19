@@ -6,7 +6,6 @@ ApproxNDCGLoss and HybridLoss.
 
 Run: python -m pytest tests/test_losses_ranking.py -v
 """
-import pytest
 import torch
 
 from src.training.losses import ApproxNDCGLoss, HybridLoss, FocalBCELoss
@@ -14,16 +13,6 @@ from src.training.losses import ApproxNDCGLoss, HybridLoss, FocalBCELoss
 
 # ---------- ApproxNDCGLoss ---------- #
 
-# NOTE: the two tests below assert the *intended* contract (a lower loss when
-# positives are ranked above negatives). They currently xfail: ApproxNDCGLoss
-# builds approx_rank with `sigmoid(diff).sum(dim=0)` where diff[i,j] = s[j]-s[i],
-# which counts items *below* each element rather than above (its docstring
-# intends "above"). The rank direction is therefore inverted, so a perfect
-# ranking scores a *higher* loss. Fixing the loss (sum over dim=1) should flip
-# these to xpass. Kept as executable documentation of the correct behavior.
-
-@pytest.mark.xfail(reason="ApproxNDCG rank direction inverted (sum dim=0 vs dim=1)",
-                   strict=False)
 def test_approxndcg_perfect_ranking_low_loss():
     """Positives ranked strictly above negatives -> loss near 0."""
     loss = ApproxNDCGLoss(temperature=0.1)
@@ -32,8 +21,6 @@ def test_approxndcg_perfect_ranking_low_loss():
     assert loss(logits, targets).item() < 0.2
 
 
-@pytest.mark.xfail(reason="ApproxNDCG rank direction inverted (sum dim=0 vs dim=1)",
-                   strict=False)
 def test_approxndcg_bad_ranking_worse_than_good():
     """Inverted ranking should score a strictly higher loss than a good one."""
     loss = ApproxNDCGLoss(temperature=0.1)
