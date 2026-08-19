@@ -11,7 +11,7 @@ Patches applied:
   3. Post-training load: use model.module.load_state_dict() for DataParallel models
 
 Usage:
-    python -m src.training.train_s2s_hotspot_cwfis_v2_4gpu \\
+    python -m src.training.legacy.train_s2s_hotspot_cwfis_v2_4gpu \\
         --config configs/paths_trillium.yaml \\
         --num_workers 12 --batch_size 512 --epochs 10 --load_to_ram
 """

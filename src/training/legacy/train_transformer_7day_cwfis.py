@@ -28,7 +28,7 @@ Mixed sampling (identical to posaware):
   Validation: unfiltered (all patches) — honest evaluation.
 
 Usage:
-    python -m src.training.train_transformer_7day_cwfis \\
+    python -m src.training.legacy.train_transformer_7day_cwfis \\
         --config configs/default.yaml \\
         --data_start 2018-05-01 \\
         --pred_start 2024-05-01 \\

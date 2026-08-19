@@ -10,8 +10,8 @@ Advantages over CIFFC:
   - Higher density: ~10-100x more fire pixels per day
 
 Usage:
-    python -m src.training.train_logistic_cwfis --config configs/default.yaml
-    python -m src.training.train_logistic_cwfis --config configs/default.yaml \\
+    python -m src.training.legacy.train_logistic_cwfis --config configs/default.yaml
+    python -m src.training.legacy.train_logistic_cwfis --config configs/default.yaml \\
         --data_start 2018-05-01 --pred_start 2024-05-01 --pred_end 2024-10-31
 
 Output:

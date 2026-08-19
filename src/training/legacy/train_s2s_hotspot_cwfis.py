@@ -39,7 +39,7 @@ Memory note (ERA5 oracle mode)
   T=1000 days  →  meteo ≈ 75 GB,  fire ≈ 6.2 GB
 
 Usage (ERA5 oracle, quick test — 1 year training):
-    python -m src.training.train_s2s_hotspot_cwfis \\
+    python -m src.training.legacy.train_s2s_hotspot_cwfis \\
         --config configs/default.yaml \\
         --data_start 2022-05-01 \\
         --pred_start 2023-05-01 \\
