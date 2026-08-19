@@ -63,3 +63,6 @@ CLAUDE.md
 /experiments/s2s_patchmean_trillium_390268/notes.md
 /experiments/s2s_v3_58577940/notes.md
 /experiments/s2s_v4_58748998/notes.md
+
+# HPC submission scripts (personal cluster account/paths/email; kept local)
+slurm/

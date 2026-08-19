@@ -40,7 +40,6 @@ src/
   evaluation/          # metrics (Lift@K, Lift@30km, BSS), baselines, comparisons
 configs/               # default.yaml + per-machine path overrides
 scripts/               # data builders, audits, analysis
-slurm/                 # example HPC submission scripts
 tests/                 # unit tests (pytest)
 docs/                  # data conventions, label methodology, metric definitions
 ```
@@ -141,8 +140,9 @@ python -m src.training.train_v3 \
 ```
 
 Run `python -m src.training.train_v3 --help` for the full flag list (channels,
-architecture size, decoder mode, regularization, evaluation options). Example
-HPC submission scripts are in `slurm/`.
+architecture size, decoder mode, regularization, evaluation options). On a
+SLURM cluster, wrap this command in a batch script (set your own account,
+paths, and modules).
 
 ## Evaluation
 
