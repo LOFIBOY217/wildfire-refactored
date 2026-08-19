@@ -12,7 +12,7 @@ Run this on a CPU node BEFORE submitting GPU training jobs.
 Usage:
     python scripts/build_meteo_cache.py \
         --config configs/paths_narval.yaml \
-        --cache-dir /scratch/jiaqi217/meteo_cache \
+        --cache-dir $SCRATCH/meteo_cache \
         --data-start 2018-01-01 \
         --pred-end 2025-12-31 \
         --lead-end 45 \

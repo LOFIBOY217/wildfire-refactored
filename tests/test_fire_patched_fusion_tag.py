@@ -50,7 +50,7 @@ def test_fire_patched_filename_construction_simulation():
     and verify the strings differ.
     """
     # Replicate the f-string from train_v3.py
-    cache_dir = "/scratch/jiaqi217/meteo_cache/v3_9ch_2000"
+    cache_dir = "$SCRATCH/meteo_cache/v3_9ch_2000"
     dilate_radius = 14
     aligned_dates_first = "2000-05-01"
     aligned_dates_last = "2025-12-20"

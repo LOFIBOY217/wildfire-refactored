@@ -2,16 +2,16 @@
   "ensemble_mode": "logit_mean",
   "n_ckpts": 10,
   "ckpt_dirs": [
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc21_12y_2014",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc21_12y_2014_climsim",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc21_12y_2014_climblend_a0.3",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc21_12y_2014_climblend_a0.5",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc28_12y_2014",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc35_12y_2014",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_13ch_enc14_12y_2014",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_13ch_enc21_12y_2014",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_13ch_enc28_12y_2014",
-    "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_13ch_enc35_12y_2014"
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc21_12y_2014",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc21_12y_2014_climsim",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc21_12y_2014_climblend_a0.3",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc21_12y_2014_climblend_a0.5",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc28_12y_2014",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_9ch_enc35_12y_2014",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_13ch_enc14_12y_2014",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_13ch_enc21_12y_2014",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_13ch_enc28_12y_2014",
+    "/scratch/USER/wildfire-refactored/outputs/window_scores_full/v3_13ch_enc35_12y_2014"
   ],
   "n_windows": 402,
   "lift_5000": {

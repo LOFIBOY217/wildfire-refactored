@@ -35,7 +35,7 @@ Companion file: {out_file}.dates.npy — sorted date strings.
 Usage:
     python -m src.data_ops.processing.build_s2s_full_patch_cache \\
         --s2s-dir data/s2s_processed \\
-        --out-file /scratch/jiaqi217/meteo_cache/s2s_full_patch_cache.dat \\
+        --out-file $SCRATCH/meteo_cache/s2s_full_patch_cache.dat \\
         --reference data/fwi_data/fwi_20250615.tif \\
         --fire-clim data/fire_climatology.tif \\
         --ffmc-dir data/ffmc_data \\

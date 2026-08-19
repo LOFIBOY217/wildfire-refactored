@@ -66,3 +66,8 @@ CLAUDE.md
 
 # HPC submission scripts (personal cluster account/paths/email; kept local)
 slurm/
+
+# Cluster orchestration scripts that drive the (local-only) slurm/ scripts
+scripts/check_fullpatch_ready.sh
+scripts/gate3_training_smoke.sh
+scripts/submit_loyo_all.sh

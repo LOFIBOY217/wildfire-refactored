@@ -4,7 +4,7 @@ Quick sanity checks on the S2S decoder cache before training.
 
 Usage:
     python scripts/verify_s2s_cache.py \
-        --cache /scratch/jiaqi217/meteo_cache/s2s_decoder_cache.dat \
+        --cache $SCRATCH/meteo_cache/s2s_decoder_cache.dat \
         --data-start 2018-05-01 \
         --pred-start 2022-05-01 \
         --pred-end   2024-10-31

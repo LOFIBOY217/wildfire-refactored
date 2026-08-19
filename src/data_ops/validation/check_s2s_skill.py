@@ -14,7 +14,7 @@ Channels verified: 2t, 2d, tcw, sm20, st20
 
 Usage:
     python -m src.data_ops.validation.check_s2s_skill \\
-        --s2s-cache /scratch/jiaqi217/meteo_cache/s2s_decoder_cache.dat \\
+        --s2s-cache $SCRATCH/meteo_cache/s2s_decoder_cache.dat \\
         --era5-dir data/ecmwf_observation \\
         --reference data/fwi_data/fwi_20250615.tif \\
         --n-dates 100 \\

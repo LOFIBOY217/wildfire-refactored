@@ -28,7 +28,7 @@ Usage:
         --config configs/paths_narval.yaml \\
         --channels "FWI,2t,fire_clim,2d,tcw,sm20,deep_soil,precip_def,u10,v10,CAPE,NDVI,population,slope,burn_age,burn_count" \\
         --data_start 2018-05-01 --data_end 2025-12-31 \\
-        --out-file /scratch/jiaqi217/meteo_cache/encoder_consolidated_16ch.dat
+        --out-file $SCRATCH/meteo_cache/encoder_consolidated_16ch.dat
 """
 
 import argparse

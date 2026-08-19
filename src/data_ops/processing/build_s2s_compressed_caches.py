@@ -17,17 +17,17 @@ The full-patch layout is: 2048 = P*P*C = 16*16*8, stored as
 Usage:
     python -m src.data_ops.processing.build_s2s_compressed_caches \\
         --full-cache data/s2s_full_patch_cache.dat \\
-        --out-file /scratch/jiaqi217/meteo_cache/s2s_multistat_cache.dat \\
+        --out-file $SCRATCH/meteo_cache/s2s_multistat_cache.dat \\
         --mode multi_stat
 
     python -m src.data_ops.processing.build_s2s_compressed_caches \\
         --full-cache data/s2s_full_patch_cache.dat \\
-        --out-file /scratch/jiaqi217/meteo_cache/s2s_subpatch4x4_cache.dat \\
+        --out-file $SCRATCH/meteo_cache/s2s_subpatch4x4_cache.dat \\
         --mode subpatch_4x4
 
     python -m src.data_ops.processing.build_s2s_compressed_caches \\
         --full-cache data/s2s_full_patch_cache.dat \\
-        --out-file /scratch/jiaqi217/meteo_cache/s2s_pca128_cache.dat \\
+        --out-file $SCRATCH/meteo_cache/s2s_pca128_cache.dat \\
         --mode pca --pca-components 128 --pca-samples 1000000
 """
 

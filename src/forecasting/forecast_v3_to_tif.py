@@ -42,8 +42,8 @@ Run example:
 
     python -m src.forecasting.forecast_v3_to_tif \
         --config configs/paths_narval.yaml \
-        --ckpt /scratch/jiaqi217/wildfire-refactored/checkpoints/v3_9ch_enc21_12y_2014/best_model.pt \
-        --s2s_cache /scratch/jiaqi217/wildfire-refactored/data/s2s_processed/s2s_decoder_cache.dat \
+        --ckpt $SCRATCH/wildfire-refactored/checkpoints/v3_9ch_enc21_12y_2014/best_model.pt \
+        --s2s_cache $SCRATCH/wildfire-refactored/data/s2s_processed/s2s_decoder_cache.dat \
         --issue_dates 2023-05-15 2023-08-15 2022-08-15 \
         --out_dir outputs/v3_9ch_enc21_12y_2014_fire_prob
 """

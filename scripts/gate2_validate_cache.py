@@ -15,7 +15,7 @@ Exit 0 if all pass, 1 if any fail. Prints a summary table.
 
 Usage:
   python scripts/gate2_validate_cache.py \\
-      --cache_dir /scratch/jiaqi217/meteo_cache/v3_9ch_2000 \\
+      --cache_dir $SCRATCH/meteo_cache/v3_9ch_2000 \\
       --n_channels 9
 
 Designed to be run ON NARVAL (needs the venv with numpy/rasterio).

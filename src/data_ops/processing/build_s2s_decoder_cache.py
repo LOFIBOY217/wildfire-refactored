@@ -24,7 +24,7 @@ Grid defaults (patch_size=16):
 Usage:
     python -m src.data_ops.processing.build_s2s_decoder_cache \\
         --s2s-dir data/s2s_processed \\
-        --out-file /scratch/jiaqi217/meteo_cache/s2s_decoder_cache.dat \\
+        --out-file $SCRATCH/meteo_cache/s2s_decoder_cache.dat \\
         --reference data/fwi_data/fwi_20250615.tif \\
         --patch-size 16 \\
         --workers 8

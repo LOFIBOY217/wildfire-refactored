@@ -200,7 +200,7 @@ def check_standalone_npy_matches_caches(label_npy, failures):
 
     # Find all cache NBAC+NFDB dilated files
     cache_files = sorted(glob.glob(
-        "/scratch/jiaqi217/meteo_cache/v3_*ch*/fire_dilated_r*_nbac_nfdb_*.npy"
+        "$SCRATCH/meteo_cache/v3_*ch*/fire_dilated_r*_nbac_nfdb_*.npy"
     ))
     if not cache_files:
         _warn("no cache fire_dilated files found")
@@ -232,7 +232,7 @@ def check_standalone_npy_matches_caches(label_npy, failures):
 def check_score_npz_label_consistency(failures):
     print(f"\n[4] Score npz files: label_agg consistency check")
     score_dirs = sorted(glob.glob(
-        "/scratch/jiaqi217/wildfire-refactored/outputs/window_scores_full/v3_*"
+        "$SCRATCH/wildfire-refactored/outputs/window_scores_full/v3_*"
     ))
     if not score_dirs:
         _warn("no save_scores output dirs found yet")
@@ -275,9 +275,9 @@ def main():
                     default=["v3_9ch_4y_2018", "v3_9ch_12y_2014", "v3_9ch_2000",
                             "v3_13ch_4y_2018", "v3_13ch_2000",
                             "v3_16ch_4y_2018", "v3_16ch_2000"])
-    ap.add_argument("--cache_root", default="/scratch/jiaqi217/meteo_cache")
+    ap.add_argument("--cache_root", default="$SCRATCH/meteo_cache")
     ap.add_argument("--label_npy",
-                    default="/scratch/jiaqi217/wildfire-refactored/data/fire_labels/fire_labels_nbac_nfdb_2000-05-01_2025-12-21_2281x2709_r14.npy")
+                    default="$SCRATCH/wildfire-refactored/data/fire_labels/fire_labels_nbac_nfdb_2000-05-01_2025-12-21_2281x2709_r14.npy")
     args = ap.parse_args()
 
     failures = []
