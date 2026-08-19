@@ -37,7 +37,7 @@ from src.utils.date_utils import parse_date_arg
 from src.utils.patch_utils import patchify, depatchify, build_windows
 from src.utils.normalization import standardize
 from src.utils.raster_io import NODATA_THRESHOLD, clean_nodata
-from src.models.transformer_fwi import PatchTemporalTransformer
+from src.models.legacy.transformer_fwi import PatchTemporalTransformer
 from src.datasets.fwi_weekly import FWIWeeklyDataset
 
 import glob

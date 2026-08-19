@@ -66,7 +66,7 @@ from src.utils.date_utils import extract_date_from_filename
 from src.utils.raster_io import read_singleband_stack, clean_nodata
 from src.utils.patch_utils import patchify, depatchify
 from src.data_ops.processing.rasterize_fires import load_ciffc_data, rasterize_fires_batch
-from src.models.transformer_7day import FireProb7DayTransformer
+from src.models.legacy.transformer_7day import FireProb7DayTransformer
 
 
 # ------------------------------------------------------------------ #
