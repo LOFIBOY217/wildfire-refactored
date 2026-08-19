@@ -44,12 +44,10 @@ DEFAULT_AREA = [83, -141, 41, -52]  # [N, W, S, E] — Canada bounding box
 DEFAULT_CDS_API_KEY = ""
 
 
-def _make_cds_client(api_key: str):
-    import cdsapi
-    return cdsapi.Client(
-        url="https://cds.climate.copernicus.eu/api",
-        key=api_key,
-    )
+from src.data_ops.download._common import (
+    make_cds_client as _make_cds_client,
+    generate_date_list,
+)
 
 
 def download_single_date(client, date_str, outdir, area=None, verbose=True):
@@ -119,18 +117,6 @@ def download_with_retries(date_str, outdir, area, retries, retry_wait,
                       f"after {retry_wait}s")
             time.sleep(max(0, retry_wait))
     return date_str, False
-
-
-def generate_date_list(start_date, end_date):
-    """Generate list of YYYY-MM-DD strings between start and end (inclusive)."""
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    dates = []
-    current = start
-    while current <= end:
-        dates.append(current.strftime("%Y-%m-%d"))
-        current += timedelta(days=1)
-    return dates
 
 
 def main():

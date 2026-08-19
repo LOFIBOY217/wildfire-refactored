@@ -68,16 +68,7 @@ VARIANTS = {
 }
 
 
-def _make_cds_client(api_key=None):
-    import cdsapi
-    if api_key is None:
-        # Read from env var; empty falls back to ~/.cdsapirc. Never hardcode a key.
-        api_key = os.environ.get("CDS_API_KEY", "")
-    return cdsapi.Client(
-        url="https://cds.climate.copernicus.eu/api",
-        key=api_key,
-        quiet=False,
-    )
+from src.data_ops.download._common import make_cds_client as _make_cds_client
 
 
 def download_month(year, month, variant_cfg, out_dir, area, skip_existing=True):
@@ -102,7 +93,7 @@ def download_month(year, month, variant_cfg, out_dir, area, skip_existing=True):
     }
 
     try:
-        client = _make_cds_client()
+        client = _make_cds_client(quiet=False)
         client.retrieve("reanalysis-era5-single-levels", req, str(out_path))
         size_mb = out_path.stat().st_size / 1e6
         return (year, month, f"ok ({size_mb:.0f}MB)")

@@ -144,11 +144,7 @@ def download_single_date(client, date_str, outdir, area=None, verbose=True):
         return False
 
 
-def _make_cds_client(cds_api_key):
-    return cdsapi.Client(
-        url="https://cds.climate.copernicus.eu/api",
-        key=cds_api_key,
-    )
+from src.data_ops.download._common import make_cds_client as _make_cds_client
 
 
 def download_with_retries(date_str, outdir, area, retries, retry_wait, cds_api_key, client=None, verbose=True):
