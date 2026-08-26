@@ -68,8 +68,8 @@ def unzip(zip_path: Path, dest: Path):
 # NFDB
 # ------------------------------------------------------------------ #
 
-POINT_URL = "https://cwfis.cfs.nrcan.gc.ca/downloads/nfdb/fire_pnt/current_version/NFDB_point.zip"
-LARGE_URL = "https://cwfis.cfs.nrcan.gc.ca/downloads/nfdb/fire_pnt/current_version/NFDB_point_large_fires.zip"
+POINT_URL = "https://cwfis.cfs.nrcan.gc.ca/downloads/nfdb/fire_pnt/current_version/NFDB_point_shp.zip"
+LARGE_URL = "https://cwfis.cfs.nrcan.gc.ca/downloads/nfdb/fire_pnt/current_version/NFDB_point_large_fires_shp.zip"
 
 
 def fetch_nfdb(base_dir: Path):
@@ -155,7 +155,9 @@ def fetch_fwi_archive(fwi_dir: Path, date: str):
 # NBAC 30m
 # ------------------------------------------------------------------ #
 
-NBAC_URL = "https://cwfis.cfs.nrcan.gc.ca/downloads/nbac/NBAC_MRB_1972to2024_30m.tif.zip"
+# NBAC MRB (Most Recent Burn) — the year in the name advances on each annual
+# release (2024 -> 2025 -> ...); check the /downloads/nbac/ listing if this 404s.
+NBAC_URL = "https://cwfis.cfs.nrcan.gc.ca/downloads/nbac/NBAC_MRB_1972to2025_30m.tif.zip"
 
 
 def fetch_nbac_30m(nbac_dir: Path):

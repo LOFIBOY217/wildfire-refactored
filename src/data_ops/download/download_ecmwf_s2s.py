@@ -2,6 +2,14 @@
 """
 Download ECMWF S2S (Realtime, Daily averaged) for specific dates.
 
+.. warning::
+   UPSTREAM DEPRECATION (verified 2026-08): the ECMWF S2S dataset has been
+   migrated off the legacy Web-API (``api.ecmwf.int/v1``) to the new ECMWF
+   Data Store (ECDS, https://ecds.ecmwf.int). Requests through this script now
+   return ``ERROR 102: S2S service has been migrated to ECDS``. Credentials and
+   the request path here are correct, but retrieving S2S requires porting to
+   the ECDS client. This is left as a TODO pending a maintainer decision.
+
 Two param sets (--param-set):
   core     [default] : tcw / 2t / 2d / sm20 / st20        → s2s_ecmf_cf_YYYY-MM-DD.grib
   extended           : 10u / 10v / tp / cp / sm100         → s2s_ecmf_cf_ext_YYYY-MM-DD.grib
@@ -315,11 +323,13 @@ def main(argv=None):
         cfg.get("credentials", {}).get("ecmwf_key", ""),
     )
 
-    if not ecmwf_email or not ecmwf_key:
+    ecmwfapirc = Path.home() / ".ecmwfapirc"
+    if (not ecmwf_email or not ecmwf_key) and not ecmwfapirc.exists():
         print(
             "ERROR: ECMWF credentials not found.\n"
-            "Set ECMWF_EMAIL and ECMWF_KEY environment variables, "
-            "or configure them in your YAML config under 'credentials'.",
+            "Set ECMWF_EMAIL and ECMWF_KEY environment variables, configure "
+            "them in your YAML config under 'credentials', or create "
+            "~/.ecmwfapirc (get a key at https://api.ecmwf.int/v1/key/).",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -352,11 +362,16 @@ def main(argv=None):
         sys.exit(2)
 
     # ---- Connect to ECMWF ----
-    server = ECMWFDataServer(
-        url="https://api.ecmwf.int/v1",
-        key=ecmwf_key,
-        email=ecmwf_email,
-    )
+    # Prefer explicit env/config credentials; otherwise let ECMWFDataServer
+    # read ~/.ecmwfapirc (the standard ECMWF WebAPI credential file).
+    if ecmwf_email and ecmwf_key:
+        server = ECMWFDataServer(
+            url="https://api.ecmwf.int/v1",
+            key=ecmwf_key,
+            email=ecmwf_email,
+        )
+    else:
+        server = ECMWFDataServer()
 
     param_set = args.param_set
     ps = PARAM_SETS[param_set]

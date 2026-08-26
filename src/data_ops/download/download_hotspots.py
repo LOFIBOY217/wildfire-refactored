@@ -48,6 +48,11 @@ WFS_PARAMS = dict(
     typeName="public:hotspots",
     outputFormat="application/json",
     srsName="EPSG:4326",
+    # sortBy is REQUIRED for pagination: the hotspots layer has no primary
+    # key, so GeoServer cannot establish a stable "natural order" and returns
+    # HTTP 400 ("Cannot do natural order without a primary key") whenever
+    # startIndex is used without an explicit sort.
+    sortBy="rep_date",
 )
 
 PAGE_SIZE   = 10_000   # Records per WFS page

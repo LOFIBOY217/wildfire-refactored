@@ -66,10 +66,11 @@ ALL_DAYS = [f"{d:02d}" for d in range(1, 32)]
 # Never hardcode a key here.
 DEFAULT_CDS_API_KEY = ""
 
-# 2026: intermediate_dataset (recent months) uses netcdf/netcdf4 engine,
-# not consolidated/netcdf_legacy. Overridable via CLI; read by request+reader.
+# 2026: EWDS retired the `netcdf_legacy` format for cems-fire-historical-v1 —
+# it now returns HTTP 400. Both consolidated_dataset and intermediate_dataset
+# use `netcdf` (read with the netcdf4 engine). Overridable via CLI.
 _FWI_DATASET_TYPE = "consolidated_dataset"
-_FWI_DATA_FORMAT = "netcdf_legacy"
+_FWI_DATA_FORMAT = "netcdf"
 
 # CDS request variable name → (candidate NetCDF variable names, short output prefix)
 # The NetCDF internal name sometimes differs from the CDS request name, so we try
@@ -391,8 +392,9 @@ Examples:
                         help='CDS API URL (if different from default)')
     parser.add_argument('--dataset-type', type=str, default='consolidated_dataset',
                         help='consolidated_dataset or intermediate_dataset (recent months).')
-    parser.add_argument('--data-format', type=str, default='netcdf_legacy',
-                        help='netcdf_legacy or netcdf (required for intermediate_dataset).')
+    parser.add_argument('--data-format', type=str, default='netcdf',
+                        help='netcdf (default; netcdf_legacy was retired by EWDS '
+                             'and now returns HTTP 400).')
     parser.add_argument('--cds-key', type=str, default=None,
                         help='CDS API key (overrides env var / .cdsapirc)')
     parser.add_argument('--workers', type=int, default=1,

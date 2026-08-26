@@ -50,8 +50,11 @@ except ModuleNotFoundError:
 # Bounding box for Canada: [min_lon, min_lat, max_lon, max_lat]
 BBOX_CANADA = [-141.0, 41.7, -52.6, 83.1]
 
-# API endpoints
-CWFIS_API = "https://cwfis.cfs.nrcan.gc.ca/geoserver/cwfis/ows"
+# API endpoints. Hotspots live in the `public` workspace at /geoserver/ows;
+# the old `cwfis:` workspace path (/geoserver/cwfis/ows) now 404s. For true
+# fire-perimeter AREA (not per-pixel hotspots) use layer `public:m3polygons`,
+# which carries an `area` (ha) column and Polygon geometry.
+CWFIS_API = "https://cwfis.cfs.nrcan.gc.ca/geoserver/ows"
 NASA_FIRMS_API = "https://firms.modaps.eosdis.nasa.gov/api/country/csv"
 
 
@@ -83,56 +86,92 @@ def download_cwfis_data(start_date, end_date, bbox=None):
         'service': 'WFS',
         'version': '2.0.0',
         'request': 'GetFeature',
-        'typeName': 'cwfis:hotspots',
-        'outputFormat': 'json',
+        'typeName': 'public:hotspots',
+        'outputFormat': 'application/json',
         'srsName': 'EPSG:4326',
-        'bbox': f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]},EPSG:4326",
+        # No `bbox`: the hotspots layer is already Canada-only, and GeoServer
+        # rejects bbox + CQL_FILTER together with HTTP 500.
+        # sortBy is required whenever the server paginates this primary-key-less
+        # layer (see download_hotspots.py for the same GeoServer constraint).
+        'sortBy': 'rep_date',
     }
 
     # CQL filter for time range
-    cql_filter = f"rep_date >= '{start_date}' AND rep_date <= '{end_date}'"
-    params['CQL_FILTER'] = cql_filter
+    params['CQL_FILTER'] = f"rep_date >= '{start_date}' AND rep_date <= '{end_date}'"
 
-    try:
-        print(f"Request URL: {CWFIS_API}")
-        print(f"Date range:  {start_date} to {end_date}")
-        print(f"Bounding box: {bbox}")
-        print("\nDownloading... (may take a few minutes)")
+    # Page the request: a single unpaginated GET over a busy fire-season window
+    # returns tens of thousands of features and makes GeoServer time out (504).
+    page_size = 10_000
+    print(f"Request URL: {CWFIS_API}")
+    print(f"Date range:  {start_date} to {end_date}")
+    print("\nDownloading (paged)...")
 
-        response = requests.get(CWFIS_API, params=params, timeout=300)
-        response.raise_for_status()
+    max_retries = 3
+    retry_wait = 5   # seconds between retries
 
-        data = response.json()
+    records = []
+    start_index = 0
+    while True:
+        page_params = {**params, 'count': page_size, 'startIndex': start_index}
 
-        if 'features' not in data or len(data['features']) == 0:
-            print("WARNING: CWFIS returned empty data")
-            return None
+        # Per-page retry: GeoServer regularly returns transient 504 gateway
+        # time-outs on busy fire-season windows. A single failure must NOT
+        # abort the whole download (and discard already-fetched pages).
+        features = None
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.get(CWFIS_API, params=page_params, timeout=300)
+                response.raise_for_status()
+                features = response.json().get('features', [])
+                break
+            except Exception as e:
+                last_err = e
+                print(f"  [retry {attempt}/{max_retries}] "
+                      f"page @ startIndex={start_index}: {e}")
+                if attempt < max_retries:
+                    time.sleep(retry_wait)
 
-        # Parse GeoJSON
-        records = []
-        for feature in data['features']:
-            props = feature['properties']
-            coords = feature['geometry']['coordinates']
+        if features is None:
+            # Every retry for this page failed. Keep whatever we already have
+            # rather than throwing it away — partial data beats no data.
+            print(f"[WARN] CWFIS page @ startIndex={start_index} failed after "
+                  f"{max_retries} attempts: {last_err}")
+            break
+        if not features:
+            break
 
-            record = {
+        for feature in features:
+            geom = feature.get('geometry')
+            if not geom or not geom.get('coordinates'):
+                continue   # skip records with missing geometry
+            props = feature.get('properties', {})
+            coords = geom['coordinates']
+            records.append({
                 'field_situation_report_date': props.get('rep_date', ''),
                 'field_latitude': coords[1],
                 'field_longitude': coords[0],
-                'fire_id': props.get('fire_id', ''),
+                'fire_id': props.get('uid', ''),
                 'agency': props.get('agency', ''),
-                'fire_size_ha': props.get('size_ha', 0),
-                'fire_type': props.get('fire_type', ''),
+                # `estarea` = per-hotspot estimated area (ha); the layer has
+                # no `size_ha`. For agency fire size use m3polygons `area`.
+                'fire_size_ha': props.get('estarea', 0),
+                'fire_type': props.get('fuel', ''),
                 'source': 'CWFIS',
-            }
-            records.append(record)
+            })
+        print(f"  page @ startIndex={start_index}: +{len(features)} "
+              f"(total {len(records)})")
+        if len(features) < page_size:
+            break
+        start_index += page_size
 
-        df = pd.DataFrame(records)
-        print(f"[OK] Downloaded {len(df)} CWFIS fire records")
-        return df
-
-    except Exception as e:
-        print(f"[FAIL] CWFIS download failed: {e}")
+    if not records:
+        print("WARNING: CWFIS returned empty data")
         return None
+
+    df = pd.DataFrame(records)
+    print(f"[OK] Downloaded {len(df)} CWFIS fire records")
+    return df
 
 
 def download_nasa_firms_data(start_date, end_date, country="CAN"):

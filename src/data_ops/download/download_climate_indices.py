@@ -83,107 +83,86 @@ def _fetch(url: str, name: str) -> str:
                 raise RuntimeError(f"[{name}] Failed after {RETRY} attempts: {e}") from e
 
 
+# ONI is a 3-month running mean labelled by an overlapping season code; we map
+# each season to its centre month (DJF -> Jan, JFM -> Feb, ..., NDJ -> Dec).
+_ONI_SEASON_TO_MONTH = {
+    "DJF": 1, "JFM": 2, "FMA": 3, "MAM": 4, "AMJ": 5, "MJJ": 6,
+    "JJA": 7, "JAS": 8, "ASO": 9, "SON": 10, "OND": 11, "NDJ": 12,
+}
+
+
+def _is_missing(val: float) -> bool:
+    """True for NOAA missing-value sentinels (e.g. 99.99, -99.99, -9.9)."""
+    return abs(val) >= 90.0
+
+
 def _parse_oni(text: str) -> dict[tuple[int, int], float]:
     """
-    ONI format (fixed-width):
-        YR  MON  TOTAL  CLIM  ANOM  ...
+    ONI format (whitespace-delimited, header ``SEAS YR TOTAL ANOM``):
+        DJF  1950  25.01  -1.32
+        JFM  1950  25.36  -1.20
         ...
-    We want the ANOM column (index 4).
+    Column 0 is the overlapping-season code, column 1 the year, and column 3
+    the SST anomaly (the ONI value). We keep the anomaly, keyed by centre month.
     """
     result = {}
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) < 5:
+        if len(parts) < 4 or parts[0] not in _ONI_SEASON_TO_MONTH:
             continue
         try:
-            year  = int(parts[0])
-            month = int(parts[1])
-            anom  = float(parts[4])
-            result[(year, month)] = anom
+            year  = int(parts[1])
+            month = _ONI_SEASON_TO_MONTH[parts[0]]
+            anom  = float(parts[3])
         except ValueError:
             continue
+        if _is_missing(anom):
+            continue
+        result[(year, month)] = anom
     return result
 
 
-def _parse_pdo(text: str) -> dict[tuple[int, int], float]:
+def _parse_year_month_matrix(text: str) -> dict[tuple[int, int], float]:
     """
-    PDO format:
-        Year Jan Feb Mar ... Dec
-        1900  val val ...
+    Parse a NOAA "year row x month column" table, shared by PDO/NAO/AO.
+
+        <year>  <Jan> <Feb> ... <Dec>
+
+    Robust to the two header styles NOAA ships (``Year Jan ... Dec`` for PDO,
+    a bare ``Jan ... Dec`` for NAO/AO) because header rows have a non-numeric
+    first token and are skipped. Trailing months of the current year may be
+    absent (short row) or filled with a sentinel; both are dropped.
     """
     result = {}
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    header_found = False
     for line in text.splitlines():
         parts = line.split()
-        if not parts:
-            continue
-        # Detect header row
-        if parts[0] == "Year":
-            header_found = True
-            continue
-        if not header_found:
-            continue
-        try:
-            year = int(parts[0])
-        except ValueError:
-            continue
-        for m_idx, val_str in enumerate(parts[1:13], start=1):
-            try:
-                val = float(val_str)
-                if val < -99:   # missing sentinel
-                    continue
-                result[(year, m_idx)] = val
-            except ValueError:
-                continue
-    return result
-
-
-def _parse_nao_table(text: str) -> dict[tuple[int, int], float]:
-    """
-    NAO format (tabular, year as first column, months as subsequent columns):
-        Year  Jan   Feb  ...  Dec
-        1950  val   val  ...  val
-    """
-    result = {}
-    header_found = False
-    for line in text.splitlines():
-        parts = line.split()
-        if not parts:
-            continue
-        if parts[0] in ("Year", "YEAR"):
-            header_found = True
-            continue
-        if not header_found:
+        if len(parts) < 2:
             continue
         try:
             year = int(parts[0])
         except ValueError:
             continue
+        if not (1800 <= year <= 2100):
+            continue
         for m_idx, val_str in enumerate(parts[1:13], start=1):
             try:
                 val = float(val_str)
-                if val < -99:
-                    continue
-                result[(year, m_idx)] = val
             except ValueError:
                 continue
+            if _is_missing(val):
+                continue
+            result[(year, m_idx)] = val
     return result
 
 
-def _parse_ao_table(text: str) -> dict[tuple[int, int], float]:
-    """
-    AO format:  Year Jan Feb ... Dec  (same as NAO)
-    """
-    return _parse_nao_table(text)
-
-
+# PDO, NAO, and AO all ship as a "year row x month column" table, so they share
+# one parser. (NAO/AO drop the ``Year`` header label; PDO keeps it — both work
+# because header rows have a non-numeric first token.)
 PARSERS = {
     "ONI": _parse_oni,
-    "PDO": _parse_pdo,
-    "NAO": _parse_nao_table,
-    "AO":  _parse_ao_table,
+    "PDO": _parse_year_month_matrix,
+    "NAO": _parse_year_month_matrix,
+    "AO":  _parse_year_month_matrix,
 }
 
 

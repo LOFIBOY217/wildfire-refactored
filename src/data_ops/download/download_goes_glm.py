@@ -233,6 +233,15 @@ def main():
     args = parser.parse_args()
     cfg = load_config(args.config)
 
+    # Preflight: netCDF4 is imported per-granule inside a broad except that
+    # otherwise swallows a missing dependency, silently producing all-zero
+    # output. Fail loudly here instead (project lesson #1: silent > loud).
+    try:
+        import netCDF4  # noqa: F401
+    except ImportError:
+        sys.exit("ERROR: netCDF4 is required to read GLM granules "
+                 "(pip install netCDF4). Aborting to avoid writing empty TIFs.")
+
     # Output to lightning_raw/ (intermediate, not lightning/ which is FWI-grid)
     lightning_dir = Path(get_path(cfg, "lightning_dir"))
     raw_dir = lightning_dir.parent / "lightning_raw"

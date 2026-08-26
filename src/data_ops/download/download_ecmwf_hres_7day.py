@@ -7,6 +7,14 @@ accessible to all registered ECMWF users. It contains real historical
 forecast values (not reanalysis), making it suitable as a 7-day decoder
 input for comparison experiments with logistic baseline.
 
+.. warning::
+   UPSTREAM DEPRECATION (verified 2026-08): the legacy ECMWF Web-API
+   (``api.ecmwf.int/v1``) is being retired in favour of the ECMWF Data Store
+   (ECDS, https://ecds.ecmwf.int). Retrievals through this script currently
+   fail at the MARS stage ("Bad request"). Credentials and the connection path
+   are correct; retrieving TIGGE now requires porting to the ECDS client. Left
+   as a TODO pending a maintainer decision.
+
     S2S  (s2s_ecmwf.py)      : 14-46 day forecasts  ->  data/ecmwf_s2s/
     TIGGE (hres_7day_ecmwf.py): 1-7  day forecasts  ->  data/ecmwf_hres/
 
@@ -259,10 +267,12 @@ def main(argv=None):
         cfg.get("credentials", {}).get("ecmwf_key", ""),
     )
 
-    if not ecmwf_email or not ecmwf_key:
+    ecmwfapirc = Path.home() / ".ecmwfapirc"
+    if (not ecmwf_email or not ecmwf_key) and not ecmwfapirc.exists():
         print(
             "ERROR: ECMWF credentials not found.\n"
-            "Set ECMWF_EMAIL and ECMWF_KEY environment variables.",
+            "Set ECMWF_EMAIL and ECMWF_KEY environment variables, or create "
+            "~/.ecmwfapirc (get a key at https://api.ecmwf.int/v1/key/).",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -293,11 +303,16 @@ def main(argv=None):
 
     # ---- Connect to ECMWF ----
     # TIGGE is a public dataset accessible via ECMWFDataServer (same as S2S).
-    server = ECMWFDataServer(
-        url="https://api.ecmwf.int/v1",
-        key=ecmwf_key,
-        email=ecmwf_email,
-    )
+    # Prefer explicit env/config credentials; otherwise let ECMWFDataServer
+    # read ~/.ecmwfapirc (the standard ECMWF WebAPI credential file).
+    if ecmwf_email and ecmwf_key:
+        server = ECMWFDataServer(
+            url="https://api.ecmwf.int/v1",
+            key=ecmwf_key,
+            email=ecmwf_email,
+        )
+    else:
+        server = ECMWFDataServer()
 
     # ---- Download ----
     if len(dates) == 1:

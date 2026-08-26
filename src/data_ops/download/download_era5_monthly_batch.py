@@ -167,7 +167,10 @@ def main():
     daily_dir = args.daily_dir or get_path(cfg, variant_cfg["output_dir_key"])
     monthly_dir = args.monthly_dir or os.path.join(daily_dir, "_monthly")
     os.makedirs(monthly_dir, exist_ok=True)
-    os.makedirs(daily_dir, exist_ok=True)
+    # Only the split step writes to daily_dir; don't require it when --no-split
+    # (its config default may be an unwritable path on this machine).
+    if not args.no_split:
+        os.makedirs(daily_dir, exist_ok=True)
 
     # Build job list
     jobs = []
