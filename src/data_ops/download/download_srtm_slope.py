@@ -18,7 +18,14 @@ Usage:
 
 Prerequisites:
     pip install earthaccess
-    Set env vars: EARTHDATA_USERNAME, EARTHDATA_PASSWORD
+    Set env vars: EARTHDATA_USERNAME, EARTHDATA_PASSWORD (or use ~/.netrc)
+
+Maintenance (if this breaks, the SRTM product/collection short-name changed):
+    Source of truth : https://lpdaac.usgs.gov/products/srtmgl1v003/
+                      https://search.earthdata.nasa.gov/
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

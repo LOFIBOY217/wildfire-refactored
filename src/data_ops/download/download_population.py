@@ -11,6 +11,13 @@ Output: {data_dir}/population_raw/can_pd_2020_1km.tif
 
 Usage:
     python -m src.data_ops.download.download_population
+
+Maintenance (if this breaks, WorldPop moved/renamed the file):
+    Source of truth : https://hub.worldpop.org/geodata/summary?id=24777
+                      https://data.worldpop.org/GIS/Population_Density/Global_2000_2020_1km/2020/CAN/
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

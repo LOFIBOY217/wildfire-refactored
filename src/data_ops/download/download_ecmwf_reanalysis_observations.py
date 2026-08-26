@@ -16,6 +16,13 @@ Usage:
     Single date:    python -m src.data_ops.download.download_ecmwf_reanalysis_observations 2025-09-12
     Date range:     python -m src.data_ops.download.download_ecmwf_reanalysis_observations 2025-09-12 2025-10-10
     Batch mode:     python -m src.data_ops.download.download_ecmwf_reanalysis_observations --batch
+
+Maintenance (if this breaks, the CDS dataset id/variable names likely changed):
+    Source of truth : https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels
+                      (open the Download tab, "Show API request code" = ground truth)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

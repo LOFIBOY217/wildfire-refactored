@@ -12,6 +12,12 @@ Output: {burn_scars_raw_dir}/nbac_{YYYY}.zip
 Usage:
     python -m src.data_ops.download.download_nbac_burn_scars
     python -m src.data_ops.download.download_nbac_burn_scars --start_year 2000 --end_year 2024
+
+Maintenance (if this breaks, the NBAC file naming/location likely changed):
+    Source of truth : https://cwfis.cfs.nrcan.gc.ca/downloads/nbac/  (browse the listing)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

@@ -100,6 +100,13 @@ NASA FIRMS/Earthdata scripts use their own keys (see each script's `--help`).
 The raw datasets (hundreds of GB) are **not** included in the repository. They
 are downloaded from public providers and processed onto the common 2 km grid.
 
+The downloaders pull from live external services, which drift over time (layers
+renamed, formats changed, whole APIs decommissioned). Every downloader carries a
+**Maintenance** block in its docstring, and
+[`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) is the central registry of each
+dataset's authoritative source URL, credential, and *where to look when a
+downloader breaks*.
+
 | Data | Source | Downloader |
 |------|--------|-----------|
 | FWI / FFMC / DMC / DC / ISI / BUI | Copernicus CDS (cems-fire-historical-v1) | `python -m src.data_ops.download.download_fwi_historical` |

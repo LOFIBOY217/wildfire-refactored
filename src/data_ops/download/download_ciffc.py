@@ -17,6 +17,12 @@ Usage:
     python -m src.data_ops.download.download_ciffc --start 2025-05-01 --end 2025-10-31
     python -m src.data_ops.download.download_ciffc --sample
     python -m src.data_ops.download.download_ciffc --config configs/custom.yaml
+
+Maintenance (if this breaks, the CWFIS WFS layer/paging likely changed):
+    Source of truth : https://cwfis.cfs.nrcan.gc.ca/geoserver/ows?service=WFS&version=2.0.0&request=GetCapabilities
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

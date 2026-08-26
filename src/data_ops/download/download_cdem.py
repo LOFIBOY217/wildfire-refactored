@@ -19,6 +19,12 @@ Usage:
 
 Prerequisites:
     pip install requests
+
+Maintenance (if this breaks, the NRCan FTP tree layout likely changed):
+    Source of truth : https://ftp.maps.canada.ca/pub/nrcan_rncan/elevation/cdem_mnec/
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

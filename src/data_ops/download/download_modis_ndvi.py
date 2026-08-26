@@ -16,7 +16,14 @@ Usage:
 
 Prerequisites:
     pip install earthaccess
-    Set env vars: EARTHDATA_USERNAME, EARTHDATA_PASSWORD
+    Set env vars: EARTHDATA_USERNAME, EARTHDATA_PASSWORD (or use ~/.netrc)
+
+Maintenance (if this breaks, the product version/collection likely changed):
+    Source of truth : https://lpdaac.usgs.gov/products/mod13a2v061/
+                      https://search.earthdata.nasa.gov/  (confirm collection short-name)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

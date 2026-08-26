@@ -16,6 +16,12 @@ Usage:
         --output data/hotspot/hotspot_firms_viirs_2012_2017.csv
 
 Get a free MAP_KEY at: https://firms.modaps.eosdis.nasa.gov/api/map_key/
+
+Maintenance (if this breaks, the FIRMS API product/params likely changed):
+    Source of truth : https://firms.modaps.eosdis.nasa.gov/api/area/
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

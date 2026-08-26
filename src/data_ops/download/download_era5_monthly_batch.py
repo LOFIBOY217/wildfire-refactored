@@ -13,6 +13,13 @@ so that era5_to_daily.py can process them unchanged.
 Usage:
     python -m src.data_ops.download.download_era5_monthly_batch 2009 2017 --workers 4 --variant main
     python -m src.data_ops.download.download_era5_monthly_batch 2000 2017 --workers 4 --variant deep_soil
+
+Maintenance (if this breaks, the CDS dataset id/variable names likely changed):
+    Source of truth : https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels
+                      (open the Download tab, "Show API request code" = ground truth)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

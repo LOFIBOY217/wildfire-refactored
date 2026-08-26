@@ -15,6 +15,13 @@ Output: {deep_soil_dir}/era5_swvl2_YYYY_MM_DD.grib
 Usage:
     python -m src.data_ops.download.download_era5_deep_soil 2018-01-01 2025-10-31
     python -m src.data_ops.download.download_era5_deep_soil 2018-01-01 2025-10-31 --workers 2
+
+Maintenance (if this breaks, the CDS dataset id/variable names likely changed):
+    Source of truth : https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels
+                      (open the Download tab, "Show API request code" = ground truth)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

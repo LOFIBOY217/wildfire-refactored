@@ -6,6 +6,12 @@ Usage:
     python -m src.data_ops.download.download_fwi_grids 20240901
     python -m src.data_ops.download.download_fwi_grids 20240901 20241231
     python -m src.data_ops.download.download_fwi_grids --config configs/custom.yaml 20240901
+
+Maintenance (if this breaks, the CWFIS WCS coverage/naming likely changed):
+    Source of truth : https://cwfis.cfs.nrcan.gc.ca/geoserver/ows?service=WCS&version=1.0.0&request=GetCapabilities
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

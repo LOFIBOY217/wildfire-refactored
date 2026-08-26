@@ -34,6 +34,14 @@ Usage:
     Date range:    python -m src.data_ops.download.download_ecmwf_hres_7day 2023-04-28 2025-08-21
     Batch mode:    python -m src.data_ops.download.download_ecmwf_hres_7day --batch
                    python -m src.data_ops.download.download_ecmwf_hres_7day --batch-start 2023-04-28 --batch-end 2025-08-21
+
+Maintenance (if this breaks, the ECDS collection or request form changed):
+    Source of truth : https://ecds.ecmwf.int/datasets/tigge-forecasts?tab=download
+                      (open the Download tab, "Show API request code" = ground truth
+                      for variable names / leadtime_hour values)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

@@ -30,6 +30,13 @@ Usage:
 
     # With custom config
     python -m src.data_ops.download.download_fwi_historical --year 2020 --config configs/paths_mac.yaml
+
+Maintenance (CEMS fire moved CDS->EWDS and dropped the netcdf_legacy format):
+    Source of truth : https://ewds.climate.copernicus.eu/datasets/cems-fire-historical-v1
+                      (open the Download tab, "Show API request code" = ground truth)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

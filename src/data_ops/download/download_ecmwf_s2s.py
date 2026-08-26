@@ -34,6 +34,14 @@ Usage:
 
     # Supplement wind + precip:
     python -m src.data_ops.download.download_ecmwf_s2s 2023-05-01 --param-set extended
+
+Maintenance (if this breaks, the ECDS collection or request form changed):
+    Source of truth : https://ecds.ecmwf.int/datasets/s2s-forecasts?tab=download
+                      (open the Download tab, "Show API request code" = ground truth
+                      for variable names / leadtime_hour values)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

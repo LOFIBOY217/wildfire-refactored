@@ -24,7 +24,14 @@ Usage:
         --start 20230601 --end 20230630 --workers 8
 
 Prerequisites:
-    pip install s3fs netCDF4
+    pip install s3fs netCDF4          # netCDF4 is required, or empty rasters result
+
+Maintenance (if this breaks, the GOES S3 bucket/product path likely changed):
+    Source of truth : https://registry.opendata.aws/noaa-goes/
+                      (buckets noaa-goes16 / noaa-goes18, product GLM-L2-LCFA)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

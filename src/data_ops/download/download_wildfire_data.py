@@ -18,6 +18,13 @@ Usage:
     python -m src.data_ops.download.download_wildfire_data fwi-archive 20250906
     python -m src.data_ops.download.download_wildfire_data nbac
     python -m src.data_ops.download.download_wildfire_data fbp
+
+Maintenance (if a subcommand 404s, the CWFIS file name/path likely changed —
+NFDB/NBAC/FBP file names carry year suffixes that advance yearly):
+    Source of truth : https://cwfis.cfs.nrcan.gc.ca/downloads/  (browse the tree)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 
 import argparse

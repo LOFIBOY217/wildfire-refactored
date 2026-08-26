@@ -26,6 +26,13 @@ Usage:
       --output_dir data/ecmwf_s2s_fire \\
       --workers 2 \\
       --variables fwinx
+
+Maintenance (if this breaks, the CDS/EWDS dataset id or request form changed):
+    Source of truth : https://ewds.climate.copernicus.eu/datasets/cems-fire-seasonal
+                      (open the Download tab, "Show API request code" = ground truth)
+    Last verified   : 2026-08
+    See docs/DATA_SOURCES.md for the full endpoint registry and the
+    "what to check when a downloader breaks" playbook.
 """
 from __future__ import annotations
 import argparse

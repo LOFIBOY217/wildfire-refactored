@@ -15,6 +15,12 @@ Usage:
     python -m src.data_ops.download.download_climate_indices
     python -m src.data_ops.download.download_climate_indices --config configs/paths_windows.yaml
     python -m src.data_ops.download.download_climate_indices --overwrite
+
+Maintenance (if a column comes out empty, NOAA reformatted that ASCII file):
+    Source of truth : https://www.cpc.ncep.noaa.gov/data/teledoc/telecontents.shtml
+    Last verified   : 2026-08
+    curl each URL in SOURCES and eyeball the layout. See docs/DATA_SOURCES.md
+    for the full endpoint registry and the debugging playbook.
 """
 
 import argparse
