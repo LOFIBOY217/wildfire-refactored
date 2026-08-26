@@ -38,8 +38,7 @@ dependencies:
   - pillow            # cluster uses the Pillow-SIMD variant; standard pillow is fine, unpinned
 
   # Data download
-  - cdsapi=0.7.7
-  - ecmwf-api-client=1.6.5
+  - cdsapi=0.7.7        # Copernicus CDS + ECMWF Data Store (ECDS: S2S / TIGGE)
   - requests=2.32.5
   - boto3=1.42.70     # AWS S3 access (s3fs backend for GOES GLM)
   - s3fs=2026.3.0     # S3 filesystem interface (GOES-16/17/18 GLM lightning)

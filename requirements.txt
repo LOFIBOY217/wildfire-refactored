@@ -27,8 +27,7 @@ netCDF4==1.7.4
 pillow
 
 # Data download
-cdsapi==0.7.7
-ecmwf-api-client==1.6.5
+cdsapi==0.7.7          # Copernicus CDS + ECMWF Data Store (ECDS: S2S / TIGGE)
 requests==2.32.5
 boto3==1.42.70
 s3fs==2026.3.0

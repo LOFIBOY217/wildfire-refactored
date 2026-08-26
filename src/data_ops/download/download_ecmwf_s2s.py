@@ -1,33 +1,39 @@
 #!/usr/bin/env python3
 """
-Download ECMWF S2S (Realtime, Daily averaged) for specific dates.
+Download ECMWF S2S (Realtime) control forecasts for specific dates.
 
-.. warning::
-   UPSTREAM DEPRECATION (verified 2026-08): the ECMWF S2S dataset has been
-   migrated off the legacy Web-API (``api.ecmwf.int/v1``) to the new ECMWF
-   Data Store (ECDS, https://ecds.ecmwf.int). Requests through this script now
-   return ``ERROR 102: S2S service has been migrated to ECDS``. Credentials and
-   the request path here are correct, but retrieving S2S requires porting to
-   the ECDS client. This is left as a TODO pending a maintainer decision.
+Data source: the ECMWF Data Store (ECDS, https://ecds.ecmwf.int), collection
+``s2s-forecasts``. S2S was migrated here off the retired ECMWF Web-API
+(api.ecmwf.int/v1) in 2026; this script uses the `cdsapi` client against ECDS.
 
-Two param sets (--param-set):
-  core     [default] : tcw / 2t / 2d / sm20 / st20        → s2s_ecmf_cf_YYYY-MM-DD.grib
-  extended           : 10u / 10v / tp / cp / sm100         → s2s_ecmf_cf_ext_YYYY-MM-DD.grib
-  pressure           : gh500 (geopotential @ 500 hPa)       → s2s_ecmf_cf_pl_YYYY-MM-DD.grib
+Prerequisites (one-time, per user):
+  1. Create an ECMWF account and log in at https://ecds.ecmwf.int.
+  2. Accept the S2S dataset licence on the dataset's Download tab.
+  3. Put your personal access token in ~/.cdsapirc (the token is the same one
+     used for CDS/ADS/CEMS), or set ECDS_API_KEY / CDS_API_KEY. See
+     https://ecds.ecmwf.int/how-to-api.
+
+Three param sets (--param-set):
+  core     [default] : tcw / 2t / 2d / sm20 / st20   → s2s_ecmf_cf_YYYY-MM-DD.grib
+                       (daily-averaged single-level fields)
+  extended           : 10u / 10v / cp / tp           → s2s_ecmf_cf_ext_YYYY-MM-DD.grib
+                       (instantaneous/accumulated single-level fields)
+  pressure           : gh500 (geopotential @ 500 hPa) → s2s_ecmf_cf_pl_YYYY-MM-DD.grib
 
 Use --param-set extended (or pressure) to download supplementary channels needed
-for FWI computation and large-scale fire-weather features.  The extended and
+for FWI computation and large-scale fire-weather features. The extended and
 pressure sets use separate filenames so existing core downloads are untouched.
 
 Usage:
-    # Core (already downloaded):
-    python -m src.data_ops.download.download_ecmwf_s2s --batch
+    # Core (daily-averaged) for one date:
+    python -m src.data_ops.download.download_ecmwf_s2s 2023-05-01
 
-    # Supplement wind + precip + deep soil moisture:
-    python -m src.data_ops.download.download_ecmwf_s2s --batch --param-set extended
+    # Batch all Mon/Thu issue dates in a range:
+    python -m src.data_ops.download.download_ecmwf_s2s --batch \\
+        --batch-start 2023-05-01 --batch-end 2023-05-31 --mon-thu-only
 
-    # Supplement 500 hPa geopotential (blocking index):
-    python -m src.data_ops.download.download_ecmwf_s2s --batch --param-set pressure
+    # Supplement wind + precip:
+    python -m src.data_ops.download.download_ecmwf_s2s 2023-05-01 --param-set extended
 """
 
 import argparse
@@ -37,10 +43,9 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ecmwfapi import ECMWFDataServer
-
 try:
     from src.config import load_config, get_path, add_config_argument
+    from src.data_ops.download._common import make_ecds_client
 except ModuleNotFoundError:
     import sys
     from pathlib import Path
@@ -49,58 +54,86 @@ except ModuleNotFoundError:
             sys.path.insert(0, str(parent))
             break
     from src.config import load_config, get_path, add_config_argument
+    from src.data_ops.download._common import make_ecds_client
+
+# ECDS collection id for the S2S real-time forecasts.
+S2S_COLLECTION = "s2s-forecasts"
 
 
 # ------------------------------------------------------------------ #
 # Core download logic
 # ------------------------------------------------------------------ #
 
-# Daily-average step ranges for core set (lead days 14-46, 24h averages)
-STEP_STRING_DAILY_AVG = (
-    "336-360/360-384/384-408/408-432/432-456/456-480/480-504/"
-    "504-528/528-552/552-576/576-600/600-624/624-648/648-672/"
-    "672-696/696-720/720-744/744-768/768-792/792-816/816-840/"
-    "840-864/864-888/888-912/912-936/936-960/960-984/984-1008/"
-    "1008-1032/1032-1056/1056-1080/1080-1104"
-)
-
-# Instantaneous steps for extended set (wind/precip not available as daily avg)
-# Every 24h from lead day 14 (336h) to day 46 (1104h), 33 steps
-STEP_STRING_INSTANT = "/".join(str(h) for h in range(336, 1104 + 1, 24))
-
-# Backward-compatible alias
-STEP_STRING = STEP_STRING_DAILY_AVG
+# ECDS leadtime_hour values, lead days 14-46 (336h-1104h).
+#  - Daily-averaged fields use 24h-mean RANGE strings "<start>_<end>" (24h stride).
+#  - Instantaneous/accumulated fields use point-step strings (24h stride here).
+# Both subsets exist in the ECDS s2s-forecasts form; values verified against it.
+LEADTIME_DAILY_AVG = [f"{h}_{h + 24}" for h in range(336, 1080 + 1, 24)]  # 336_360 .. 1080_1104
+LEADTIME_INSTANT   = [str(h) for h in range(336, 1104 + 1, 24)]           # "336" .. "1104"
 
 # ------------------------------------------------------------------ #
-# Param sets
+# Param sets  (ECDS s2s-forecasts request templates)
 # ------------------------------------------------------------------ #
+# Variable names, level_type, forecast_type and leadtime_hour values are the
+# exact ECDS API strings (from the s2s-forecasts Download form). A request must
+# not mix daily-averaged and instantaneous variables — they take different
+# leadtime families — so each set is internally consistent.
 
 PARAM_SETS = {
     "core": {
-        "levtype": "sfc",
-        "param":   "136/167/168/228086/228095",  # tcw/2t/2d/sm20/st20
-        "prefix":  "s2s_ecmf_cf_",
-        "desc":    "tcw / 2t / 2d / sm20 / st20",
+        "level_type": "single_level",
+        "variable": [
+            "total_column_water",          # tcw
+            "2_m_temperature",             # 2t
+            "2_m_dewpoint_temperature",    # 2d
+            "soil_moisture_top_20_cm",     # sm20
+            "soil_temperature_top_20_cm",  # st20
+        ],
+        "leadtime_hour": LEADTIME_DAILY_AVG,
+        "prefix": "s2s_ecmf_cf_",
+        "desc":   "tcw / 2t / 2d / sm20 / st20 (daily averaged)",
     },
     "extended": {
-        "levtype": "sfc",
-        # 10u / 10v / cp / tp — wind + precip for FWI computation
-        # sm100 (228088) excluded: not available in MARS for S2S
-        "param":   "165/166/143/228",
-        # Must use instantaneous steps — daily-average ranges not available
-        # for wind/precip in S2S MARS archive
-        "step":    STEP_STRING_INSTANT,
-        "prefix":  "s2s_ecmf_cf_ext_",
-        "desc":    "10u / 10v / cp / tp",
+        "level_type": "single_level",
+        "variable": [
+            "10_m_u_component_of_wind",    # 10u
+            "10_m_v_component_of_wind",    # 10v
+            "convective_precipitation",    # cp
+            "total_precipitation",         # tp
+        ],
+        "leadtime_hour": LEADTIME_INSTANT,
+        "prefix": "s2s_ecmf_cf_ext_",
+        "desc":   "10u / 10v / cp / tp (instantaneous/accumulated)",
     },
     "pressure": {
-        "levtype":  "pl",
-        "levelist": "500",
-        "param":    "129",   # geopotential → gh500 after dividing by g
-        "prefix":   "s2s_ecmf_cf_pl_",
-        "desc":     "gh500 (geopotential @ 500 hPa)",
+        "level_type": "pressure",
+        "level_value": ["500"],
+        "variable": ["geopotential_height"],   # gh500 (blocking index)
+        "leadtime_hour": LEADTIME_INSTANT,
+        "prefix": "s2s_ecmf_cf_pl_",
+        "desc":   "gh500 (geopotential @ 500 hPa)",
     },
 }
+
+
+def _build_request(date_str, ps):
+    """Build the ECDS s2s-forecasts request dict for one issue date + param set."""
+    year, month, day = date_str.split("-")
+    req = {
+        "origin":        "ecmwf",
+        "forecast_type": "control_forecast",
+        "level_type":    ps["level_type"],
+        "variable":      ps["variable"],
+        "year":          year,
+        "month":         month,
+        "day":           day,
+        "time":          "00:00",
+        "leadtime_hour": ps["leadtime_hour"],
+        "data_format":   "grib",
+    }
+    if "level_value" in ps:
+        req["level_value"] = ps["level_value"]
+    return req
 
 
 def download_single_date(server, date_str, outdir, param_set="core"):
@@ -108,7 +141,7 @@ def download_single_date(server, date_str, outdir, param_set="core"):
     Download ECMWF S2S data for a single date.
 
     Args:
-        server:     ECMWFDataServer instance
+        server:     cdsapi client for ECDS (from make_ecds_client)
         date_str:   Date in YYYY-MM-DD format
         outdir:     Output directory (Path)
         param_set:  One of 'core', 'extended', 'pressure'
@@ -125,27 +158,11 @@ def download_single_date(server, date_str, outdir, param_set="core"):
         print(f"[SKIP] {date_str} ({param_set}) - already exists: {target}")
         return True
 
-    req = {
-        "class":   "s2",
-        "dataset": "s2s",
-        "date":    date_str,
-        "expver":  "prod",
-        "levtype": ps["levtype"],
-        "model":   "glob",
-        "origin":  "ecmf",
-        "param":   ps["param"],
-        "step":    ps.get("step", STEP_STRING),
-        "stream":  "enfo",
-        "time":    "00:00:00",
-        "type":    "cf",
-        "target":  str(target),
-    }
-    if "levelist" in ps:
-        req["levelist"] = ps["levelist"]
+    req = _build_request(date_str, ps)
 
     try:
         print(f"[DOWNLOADING] {date_str} ({param_set}: {ps['desc']}) -> {target.name}")
-        server.retrieve(req)
+        server.retrieve(S2S_COLLECTION, req, str(target))
 
         if target.exists() and target.stat().st_size > 0:
             print(f"[SUCCESS] {date_str} ({param_set}) - {target.stat().st_size / 1e6:.1f} MB")
@@ -196,7 +213,7 @@ def download_batch(server, dates, outdir, wait_time=5, param_set="core"):
     Download a list of dates with progress reporting and rate limiting.
 
     Args:
-        server:     ECMWFDataServer instance
+        server:     cdsapi client for ECDS (from make_ecds_client)
         dates:      List of date strings
         outdir:     Output directory (Path)
         wait_time:  Seconds to sleep between requests
@@ -311,25 +328,25 @@ def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    # ---- Load config and credentials from environment ----
+    # ---- Load config and credentials ----
     cfg = load_config(args.config)
 
-    ecmwf_email = os.environ.get(
-        "ECMWF_EMAIL",
-        cfg.get("credentials", {}).get("ecmwf_email", ""),
+    # ECDS access token: ECDS_API_KEY / CDS_API_KEY env, then config, else
+    # cdsapi falls back to ~/.cdsapirc. The token is the unified ECMWF one.
+    ecds_key = (
+        os.environ.get("ECDS_API_KEY")
+        or os.environ.get("CDS_API_KEY")
+        or cfg.get("credentials", {}).get("ecds_api_key", "")
+        or cfg.get("credentials", {}).get("cds_api_key", "")
     )
-    ecmwf_key = os.environ.get(
-        "ECMWF_KEY",
-        cfg.get("credentials", {}).get("ecmwf_key", ""),
-    )
-
-    ecmwfapirc = Path.home() / ".ecmwfapirc"
-    if (not ecmwf_email or not ecmwf_key) and not ecmwfapirc.exists():
+    cdsapirc = Path.home() / ".cdsapirc"
+    if not ecds_key and not cdsapirc.exists():
         print(
-            "ERROR: ECMWF credentials not found.\n"
-            "Set ECMWF_EMAIL and ECMWF_KEY environment variables, configure "
-            "them in your YAML config under 'credentials', or create "
-            "~/.ecmwfapirc (get a key at https://api.ecmwf.int/v1/key/).",
+            "ERROR: ECDS credentials not found.\n"
+            "Set ECDS_API_KEY (or CDS_API_KEY), add it to your YAML config under "
+            "'credentials', or create ~/.cdsapirc. Get a personal access token "
+            "at https://ecds.ecmwf.int/how-to-api and accept the S2S licence at "
+            "https://ecds.ecmwf.int/datasets/s2s-forecasts.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -361,17 +378,10 @@ def main(argv=None):
         parser.print_help()
         sys.exit(2)
 
-    # ---- Connect to ECMWF ----
-    # Prefer explicit env/config credentials; otherwise let ECMWFDataServer
-    # read ~/.ecmwfapirc (the standard ECMWF WebAPI credential file).
-    if ecmwf_email and ecmwf_key:
-        server = ECMWFDataServer(
-            url="https://api.ecmwf.int/v1",
-            key=ecmwf_key,
-            email=ecmwf_email,
-        )
-    else:
-        server = ECMWFDataServer()
+    # ---- Connect to ECDS ----
+    # cdsapi client pointed at the ECDS API root (see make_ecds_client). Passing
+    # an empty key lets cdsapi read the token from ~/.cdsapirc.
+    server = make_ecds_client(ecds_key or None)
 
     param_set = args.param_set
     ps = PARAM_SETS[param_set]

@@ -2,38 +2,29 @@
 """
 Download ECMWF TIGGE 7-day ensemble control forecasts for a date range.
 =======================================================================
-TIGGE (THORPEX Interactive Grand Global Ensemble) is a public dataset
-accessible to all registered ECMWF users. It contains real historical
-forecast values (not reanalysis), making it suitable as a 7-day decoder
-input for comparison experiments with logistic baseline.
+TIGGE (THORPEX Interactive Grand Global Ensemble) contains real historical
+forecast values (not reanalysis), making it suitable as a 7-day decoder input
+for comparison experiments with the logistic baseline.
 
-.. warning::
-   UPSTREAM DEPRECATION (verified 2026-08): the legacy ECMWF Web-API
-   (``api.ecmwf.int/v1``) is being retired in favour of the ECMWF Data Store
-   (ECDS, https://ecds.ecmwf.int). Retrievals through this script currently
-   fail at the MARS stage ("Bad request"). Credentials and the connection path
-   are correct; retrieving TIGGE now requires porting to the ECDS client. Left
-   as a TODO pending a maintainer decision.
+Data source: the ECMWF Data Store (ECDS, https://ecds.ecmwf.int), collection
+``tigge-forecasts``. TIGGE was migrated here off the retired ECMWF Web-API
+(api.ecmwf.int/v1) in 2026; this script uses the `cdsapi` client against ECDS.
 
-    S2S  (s2s_ecmwf.py)      : 14-46 day forecasts  ->  data/ecmwf_s2s/
-    TIGGE (hres_7day_ecmwf.py): 1-7  day forecasts  ->  data/ecmwf_hres/
+    S2S   (download_ecmwf_s2s.py)       : 14-46 day forecasts -> data/ecmwf_s2s/
+    TIGGE (download_ecmwf_hres_7day.py) : 1-7   day forecasts -> data/ecmwf_hres/
 
-MARS parameters:
-    class   : ti          (TIGGE)
-    dataset : tigge
-    origin  : ecmf        (ECMWF deterministic-equivalent control)
-    type    : cf          (control forecast, 1 member = deterministic)
-    stream  : glob
-    expver  : prod
-    step    : 24/48/72/96/120/144/168  (days 1-7)
-    grid    : 0.5/0.5     (TIGGE standard, finer than S2S but coarser than ERA5)
+Request (ECDS tigge-forecasts):
+    origin        : ecmwf
+    forecast_type : control_forecast
+    level_type    : single_level
+    leadtime_hour : 24/48/72/96/120/144/168  (days 1-7)
+    variable      : tcw / 2t / 2d / sm20 / st20
 
-Variables (param):
-    167  2m temperature          (2t)
-    168  2m dewpoint temperature  (2d)
-    136  total column water       (tcw)
-    soil moisture and soil temperature are requested separately
-    (TIGGE uses WMO GRIB2 IDs, not ECMWF-local IDs)
+Prerequisites (one-time, per user):
+  1. Create an ECMWF account and log in at https://ecds.ecmwf.int.
+  2. Accept the TIGGE dataset licence on the dataset's Download tab.
+  3. Put your personal access token in ~/.cdsapirc (same token as CDS/ADS/CEMS),
+     or set ECDS_API_KEY / CDS_API_KEY. See https://ecds.ecmwf.int/how-to-api.
 
 Output files:
     data/ecmwf_hres/tigge_ecmf_<YYYY-MM-DD>.grib
@@ -52,10 +43,9 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ecmwfapi import ECMWFDataServer
-
 try:
     from src.config import load_config, get_path, add_config_argument
+    from src.data_ops.download._common import make_ecds_client
 except ModuleNotFoundError:
     from pathlib import Path as _Path
     for _parent in _Path(__file__).resolve().parents:
@@ -63,22 +53,30 @@ except ModuleNotFoundError:
             sys.path.insert(0, str(_parent))
             break
     from src.config import load_config, get_path, add_config_argument
+    from src.data_ops.download._common import make_ecds_client
 
 
 # ------------------------------------------------------------------ #
-# MARS request constants
+# ECDS tigge-forecasts request constants
 # ------------------------------------------------------------------ #
 
-# Steps: 24h to 168h (day 1 through day 7)
-STEP_STRING = "24/48/72/96/120/144/168"
+# ECDS collection id for the TIGGE forecasts.
+TIGGE_COLLECTION = "tigge-forecasts"
 
-# TIGGE params available for ECMWF origin:
-#   167 = 2m temperature (2t)
-#   168 = 2m dewpoint    (2d)
-#   136 = total column water (tcw)
-#   228086 = volumetric soil moisture  (swvl1, 0-7cm)
-#   228095 = soil temperature layer 1  (stl1,  0-7cm)
-PARAM_STRING = "136/167/168/228086/228095"
+# Leadtime hours: 24h to 168h (day 1 through day 7), point steps.
+LEADTIME_HOUR = ["24", "48", "72", "96", "120", "144", "168"]
+
+# Single-level variables (exact ECDS API names); same fields as the S2S core set.
+VARIABLES = [
+    "total_column_water",          # tcw
+    "2_m_temperature",             # 2t
+    "2_m_dewpoint_temperature",    # 2d
+    "soil_moisture_top_20_cm",     # sm20
+    "soil_temperature_top_20_cm",  # st20
+]
+
+# Canada bounding box [North, West, South, East].
+AREA_CANADA = [83, -141, 41, -52]
 
 
 # ------------------------------------------------------------------ #
@@ -90,7 +88,7 @@ def download_single_date(server, date_str, outdir):
     Download ECMWF TIGGE 7-day control forecast for a single date.
 
     Args:
-        server:   ECMWFDataServer instance
+        server:   cdsapi client for ECDS (from make_ecds_client)
         date_str: Forecast initialisation date, YYYY-MM-DD
         outdir:   Output directory (Path)
 
@@ -103,26 +101,24 @@ def download_single_date(server, date_str, outdir):
         print(f"[SKIP] {date_str} - already exists: {target}")
         return True
 
+    year, month, day = date_str.split("-")
     req = {
-        "class":   "ti",          # TIGGE
-        "dataset": "tigge",
-        "origin":  "ecmf",        # ECMWF control forecast
-        "type":    "cf",          # control forecast (deterministic equivalent)
-        "stream":  "glob",
-        "expver":  "prod",
-        "levtype": "sfc",
-        "param":   PARAM_STRING,
-        "date":    date_str,
-        "time":    "00:00:00",
-        "step":    STEP_STRING,
-        "grid":    "0.5/0.5",     # TIGGE standard resolution
-        "area":    "83/-141/41/-52",  # Canada bounding box (N/W/S/E)
-        "target":  str(target),
+        "origin":        "ecmwf",
+        "forecast_type": "control_forecast",
+        "level_type":    "single_level",
+        "variable":      VARIABLES,
+        "year":          year,
+        "month":         month,
+        "day":           day,
+        "time":          "00:00",
+        "leadtime_hour": LEADTIME_HOUR,
+        "area":          AREA_CANADA,
+        "data_format":   "grib",
     }
 
     try:
         print(f"[DOWNLOADING] {date_str} -> {target}")
-        server.retrieve(req)
+        server.retrieve(TIGGE_COLLECTION, req, str(target))
 
         if target.exists() and target.stat().st_size > 0:
             print(f"[SUCCESS] {date_str} - {target.stat().st_size / 1e6:.1f} MB")
@@ -258,21 +254,22 @@ def main(argv=None):
     # ---- Load config and credentials ----
     cfg = load_config(args.config)
 
-    ecmwf_email = os.environ.get(
-        "ECMWF_EMAIL",
-        cfg.get("credentials", {}).get("ecmwf_email", ""),
+    # ECDS access token: ECDS_API_KEY / CDS_API_KEY env, then config, else
+    # cdsapi falls back to ~/.cdsapirc. The token is the unified ECMWF one.
+    ecds_key = (
+        os.environ.get("ECDS_API_KEY")
+        or os.environ.get("CDS_API_KEY")
+        or cfg.get("credentials", {}).get("ecds_api_key", "")
+        or cfg.get("credentials", {}).get("cds_api_key", "")
     )
-    ecmwf_key = os.environ.get(
-        "ECMWF_KEY",
-        cfg.get("credentials", {}).get("ecmwf_key", ""),
-    )
-
-    ecmwfapirc = Path.home() / ".ecmwfapirc"
-    if (not ecmwf_email or not ecmwf_key) and not ecmwfapirc.exists():
+    cdsapirc = Path.home() / ".cdsapirc"
+    if not ecds_key and not cdsapirc.exists():
         print(
-            "ERROR: ECMWF credentials not found.\n"
-            "Set ECMWF_EMAIL and ECMWF_KEY environment variables, or create "
-            "~/.ecmwfapirc (get a key at https://api.ecmwf.int/v1/key/).",
+            "ERROR: ECDS credentials not found.\n"
+            "Set ECDS_API_KEY (or CDS_API_KEY), add it to your YAML config under "
+            "'credentials', or create ~/.cdsapirc. Get a personal access token "
+            "at https://ecds.ecmwf.int/how-to-api and accept the TIGGE licence at "
+            "https://ecds.ecmwf.int/datasets/tigge-forecasts.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -301,18 +298,10 @@ def main(argv=None):
         parser.print_help()
         sys.exit(2)
 
-    # ---- Connect to ECMWF ----
-    # TIGGE is a public dataset accessible via ECMWFDataServer (same as S2S).
-    # Prefer explicit env/config credentials; otherwise let ECMWFDataServer
-    # read ~/.ecmwfapirc (the standard ECMWF WebAPI credential file).
-    if ecmwf_email and ecmwf_key:
-        server = ECMWFDataServer(
-            url="https://api.ecmwf.int/v1",
-            key=ecmwf_key,
-            email=ecmwf_email,
-        )
-    else:
-        server = ECMWFDataServer()
+    # ---- Connect to ECDS ----
+    # cdsapi client pointed at the ECDS API root (see make_ecds_client). Passing
+    # an empty key lets cdsapi read the token from ~/.cdsapirc.
+    server = make_ecds_client(ecds_key or None)
 
     # ---- Download ----
     if len(dates) == 1:

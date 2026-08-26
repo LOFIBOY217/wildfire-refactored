@@ -81,14 +81,19 @@ All paths live in `configs/default.yaml` (relative to the repo root). To point
 at a different data location, copy it and pass `--config your_paths.yaml`;
 values are merged on top of the defaults.
 
-Data-download scripts read credentials from environment variables only — never
-commit keys:
+Data-download scripts read credentials from environment variables (or a
+`~/.cdsapirc` file) — never commit keys:
 
 ```bash
 export CDS_API_KEY=your-copernicus-cds-key      # https://cds.climate.copernicus.eu
-export ECMWF_EMAIL=your-ecmwf-email
-export ECMWF_KEY=your-ecmwf-key
+export ECDS_API_KEY=your-ecmwf-datastore-token  # https://ecds.ecmwf.int (S2S / TIGGE)
 ```
+
+`CDS_API_KEY` covers the Copernicus CDS / CEMS datasets (ERA5, FWI). The S2S and
+TIGGE downloaders use the ECMWF Data Store (ECDS); set `ECDS_API_KEY` to your
+ECMWF personal access token (the same token works, so `CDS_API_KEY` is used as a
+fallback), and accept each dataset's licence once on its ECDS Download tab.
+NASA FIRMS/Earthdata scripts use their own keys (see each script's `--help`).
 
 ## Data
 
