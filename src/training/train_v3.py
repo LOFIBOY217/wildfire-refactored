@@ -1493,6 +1493,173 @@ def run_eval_mode(
     return
 
 
+def build_model(
+        args,
+        N_CHANNELS,
+        P,
+        Hc,
+        Wc,
+        patch_dim_enc,
+        patch_dim_dec,
+        patch_dim_out,
+        ctx_extra_dim,
+        decoder_days,
+        in_days,
+        n_patches,
+        device,
+        static_arrays):
+    """Construct the model (transformer/baseline + optional clim-blend/gating
+    wrappers) and move it to device. Extracted verbatim from main().
+
+    Every parameter is a setup-local value the original inline block read
+    (audited via AST free-variable analysis). Logic unchanged.
+    """
+    if args.model_type == "transformer":
+        model = S2SHotspotTransformer(
+            patch_dim_enc=patch_dim_enc,
+            patch_dim_dec=patch_dim_dec,
+            patch_dim_out=patch_dim_out,
+            d_model=args.d_model,
+            nhead=args.nhead,
+            num_encoder_layers=args.enc_layers,
+            num_decoder_layers=args.dec_layers,
+            dim_feedforward=args.d_model * 4,
+            dropout=args.dropout,
+            encoder_days=in_days,
+            decoder_days=decoder_days,
+            n_patches=(n_patches if args.use_patch_embed else 0),
+            mlp_dec_embed=args.mlp_dec_embed,
+            dec_ctx_dim=ctx_extra_dim if args.decoder_ctx else 0,
+            enc_conv_stem=args.enc_conv_stem,
+            patch_size=P,
+            conv_output_head=args.conv_output_head,
+            conv_head_encmean=args.conv_head_encmean,
+        ).to(device)
+    else:
+        # Baseline: MLP or ConvLSTM. Drop-in replacement; same forward
+        # signature (encoder_input, decoder_input) → (B, T_dec, P*P).
+        model = build_baseline(
+            args.model_type,
+            patch_dim_enc=patch_dim_enc,
+            patch_dim_dec=patch_dim_dec,
+            patch_dim_out=patch_dim_out,
+            encoder_days=in_days,
+            decoder_days=decoder_days,
+            n_channels=N_CHANNELS,
+            patch_size=P,
+            d_model=args.d_model,
+            dropout=args.dropout,
+        ).to(device)
+        print(f"  [BASELINE] model_type={args.model_type}")
+
+    # ── Climatology blending wrapper ────────────────────────────────────
+    # Adds α × log(fire_clim) as a fixed bias to logits at every
+    # (patch, lead-day, sub-pixel). Model only learns the residual.
+    if args.clim_blend_alpha > 0:
+        if "fire_clim" not in static_arrays:
+            print("  [clim_blend] WARNING: fire_clim not in static_arrays; "
+                  "skipping blend.")
+        else:
+            _fc = static_arrays["fire_clim"][:Hc, :Wc]
+            _fc_patched = _patchify_frame(_fc[:, :, np.newaxis], P)  # (n_patches, P*P)
+            _eps = 1e-6
+            _clim_logit_np = np.log(np.maximum(_fc_patched, _eps)).astype(np.float32)
+            # Center to zero mean so α is interpretable; baseline rate
+            # still encoded by model bias.
+            _clim_logit_np = _clim_logit_np - _clim_logit_np.mean()
+            _clim_logit_buf = torch.from_numpy(_clim_logit_np)
+            _alpha_blend = float(args.clim_blend_alpha)
+            _base_for_blend = model
+
+            class _ClimBlendModel(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    self.base = _base_for_blend
+                    self.register_buffer("clim_logit", _clim_logit_buf)
+                    self.alpha = _alpha_blend
+
+                def forward(self, encoder_input, decoder_input, patch_ids=None):
+                    out = self.base(encoder_input, decoder_input, patch_ids)
+                    if patch_ids is not None and self.alpha != 0:
+                        bias = self.clim_logit[patch_ids]   # (B, P*P)
+                        out = out + self.alpha * bias.unsqueeze(1)
+                    return out
+
+            model = _ClimBlendModel().to(device)
+            print(f"  [clim_blend] alpha={_alpha_blend}, "
+                  f"clim_logit shape={_clim_logit_np.shape}, "
+                  f"|clim_logit|: min={_clim_logit_np.min():.2f} "
+                  f"max={_clim_logit_np.max():.2f}")
+
+    # ── Static-prior gating wrapper ─────────────────────────────────────
+    # Generalizes clim_blend: instead of a fixed α, learn how much to
+    # blend the climatological prior. Generalizes to per-lead and per-
+    # pixel α via sigmoid(parameter). Initialized so sigmoid(0) = 0.5 →
+    # at start, the climatology contributes half the post-hoc α=0.4 effect.
+    if args.gating != "none":
+        if "fire_clim" not in static_arrays:
+            raise SystemExit("[gating] fire_clim not in static_arrays — "
+                             "gating requires the climatology channel.")
+        _fc = static_arrays["fire_clim"][:Hc, :Wc]
+        _fc_patched = _patchify_frame(_fc[:, :, np.newaxis], P)
+        _eps_gate = 1e-6
+        _clim_logit_np = np.log(np.maximum(_fc_patched, _eps_gate)).astype(np.float32)
+        _clim_logit_np = _clim_logit_np - _clim_logit_np.mean()
+        _clim_logit_buf = torch.from_numpy(_clim_logit_np)
+        _base_for_gate = model
+        _gating_mode = args.gating
+        _dec_days = decoder_days
+        _patch_dim_out = patch_dim_out
+
+        class _GatedClimBlendModel(nn.Module):
+            """Learnable mixing between base logits and log(clim) bias.
+
+            Forward:
+                base_logits = base(...)
+                gated_out   = base_logits + alpha * clim_logit
+            where alpha ∈ (0, 1) via sigmoid:
+                global    → 1 scalar
+                per_lead  → (decoder_days,) vector
+                per_pixel → predicted from base logits: Linear(P², P²)
+            """
+            def __init__(self):
+                super().__init__()
+                self.base = _base_for_gate
+                self.register_buffer("clim_logit", _clim_logit_buf)
+                self.gating_mode = _gating_mode
+                if _gating_mode == "global":
+                    # init logit=0 → sigmoid(0)=0.5
+                    self.gate_logit = nn.Parameter(torch.zeros(1))
+                elif _gating_mode == "per_lead":
+                    self.gate_logit = nn.Parameter(torch.zeros(_dec_days))
+                elif _gating_mode == "per_pixel":
+                    # Predict per-pixel gate from base logits. Init to all-zeros
+                    # so initial gate = sigmoid(0) = 0.5 uniformly.
+                    self.gate_head = nn.Linear(_patch_dim_out, _patch_dim_out)
+                    nn.init.zeros_(self.gate_head.weight)
+                    nn.init.zeros_(self.gate_head.bias)
+
+            def forward(self, encoder_input, decoder_input, patch_ids=None):
+                out = self.base(encoder_input, decoder_input, patch_ids)
+                if patch_ids is None:
+                    return out
+                bias = self.clim_logit[patch_ids].unsqueeze(1)   # (B, 1, P²)
+                if self.gating_mode == "global":
+                    alpha = torch.sigmoid(self.gate_logit)        # (1,)
+                elif self.gating_mode == "per_lead":
+                    alpha = torch.sigmoid(self.gate_logit).view(1, -1, 1)
+                else:  # per_pixel
+                    alpha = torch.sigmoid(self.gate_head(out))    # (B, dec, P²)
+                return out + alpha * bias
+
+        model = _GatedClimBlendModel().to(device)
+        _gate_params = sum(p.numel() for n, p in model.named_parameters()
+                           if "gate" in n and p.requires_grad)
+        print(f"  [gating] mode={_gating_mode}  added_params={_gate_params}  "
+              f"clim_logit shape={_clim_logit_np.shape}")
+    return model
+
+
 def main():
     run_started_at = time.time()
     run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
@@ -3258,149 +3425,22 @@ def main():
     patch_dim_dec = dec_dim
     patch_dim_out = out_dim
 
-    if args.model_type == "transformer":
-        model = S2SHotspotTransformer(
-            patch_dim_enc=patch_dim_enc,
-            patch_dim_dec=patch_dim_dec,
-            patch_dim_out=patch_dim_out,
-            d_model=args.d_model,
-            nhead=args.nhead,
-            num_encoder_layers=args.enc_layers,
-            num_decoder_layers=args.dec_layers,
-            dim_feedforward=args.d_model * 4,
-            dropout=args.dropout,
-            encoder_days=in_days,
-            decoder_days=decoder_days,
-            n_patches=(n_patches if args.use_patch_embed else 0),
-            mlp_dec_embed=args.mlp_dec_embed,
-            dec_ctx_dim=ctx_extra_dim if args.decoder_ctx else 0,
-            enc_conv_stem=args.enc_conv_stem,
-            patch_size=P,
-            conv_output_head=args.conv_output_head,
-            conv_head_encmean=args.conv_head_encmean,
-        ).to(device)
-    else:
-        # Baseline: MLP or ConvLSTM. Drop-in replacement; same forward
-        # signature (encoder_input, decoder_input) → (B, T_dec, P*P).
-        model = build_baseline(
-            args.model_type,
-            patch_dim_enc=patch_dim_enc,
-            patch_dim_dec=patch_dim_dec,
-            patch_dim_out=patch_dim_out,
-            encoder_days=in_days,
-            decoder_days=decoder_days,
-            n_channels=N_CHANNELS,
-            patch_size=P,
-            d_model=args.d_model,
-            dropout=args.dropout,
-        ).to(device)
-        print(f"  [BASELINE] model_type={args.model_type}")
-
-    # ── Climatology blending wrapper ────────────────────────────────────
-    # Adds α × log(fire_clim) as a fixed bias to logits at every
-    # (patch, lead-day, sub-pixel). Model only learns the residual.
-    if args.clim_blend_alpha > 0:
-        if "fire_clim" not in static_arrays:
-            print("  [clim_blend] WARNING: fire_clim not in static_arrays; "
-                  "skipping blend.")
-        else:
-            _fc = static_arrays["fire_clim"][:Hc, :Wc]
-            _fc_patched = _patchify_frame(_fc[:, :, np.newaxis], P)  # (n_patches, P*P)
-            _eps = 1e-6
-            _clim_logit_np = np.log(np.maximum(_fc_patched, _eps)).astype(np.float32)
-            # Center to zero mean so α is interpretable; baseline rate
-            # still encoded by model bias.
-            _clim_logit_np = _clim_logit_np - _clim_logit_np.mean()
-            _clim_logit_buf = torch.from_numpy(_clim_logit_np)
-            _alpha_blend = float(args.clim_blend_alpha)
-            _base_for_blend = model
-
-            class _ClimBlendModel(nn.Module):
-                def __init__(self):
-                    super().__init__()
-                    self.base = _base_for_blend
-                    self.register_buffer("clim_logit", _clim_logit_buf)
-                    self.alpha = _alpha_blend
-
-                def forward(self, encoder_input, decoder_input, patch_ids=None):
-                    out = self.base(encoder_input, decoder_input, patch_ids)
-                    if patch_ids is not None and self.alpha != 0:
-                        bias = self.clim_logit[patch_ids]   # (B, P*P)
-                        out = out + self.alpha * bias.unsqueeze(1)
-                    return out
-
-            model = _ClimBlendModel().to(device)
-            print(f"  [clim_blend] alpha={_alpha_blend}, "
-                  f"clim_logit shape={_clim_logit_np.shape}, "
-                  f"|clim_logit|: min={_clim_logit_np.min():.2f} "
-                  f"max={_clim_logit_np.max():.2f}")
-
-    # ── Static-prior gating wrapper ─────────────────────────────────────
-    # Generalizes clim_blend: instead of a fixed α, learn how much to
-    # blend the climatological prior. Generalizes to per-lead and per-
-    # pixel α via sigmoid(parameter). Initialized so sigmoid(0) = 0.5 →
-    # at start, the climatology contributes half the post-hoc α=0.4 effect.
-    if args.gating != "none":
-        if "fire_clim" not in static_arrays:
-            raise SystemExit("[gating] fire_clim not in static_arrays — "
-                             "gating requires the climatology channel.")
-        _fc = static_arrays["fire_clim"][:Hc, :Wc]
-        _fc_patched = _patchify_frame(_fc[:, :, np.newaxis], P)
-        _eps_gate = 1e-6
-        _clim_logit_np = np.log(np.maximum(_fc_patched, _eps_gate)).astype(np.float32)
-        _clim_logit_np = _clim_logit_np - _clim_logit_np.mean()
-        _clim_logit_buf = torch.from_numpy(_clim_logit_np)
-        _base_for_gate = model
-        _gating_mode = args.gating
-        _dec_days = decoder_days
-        _patch_dim_out = patch_dim_out
-
-        class _GatedClimBlendModel(nn.Module):
-            """Learnable mixing between base logits and log(clim) bias.
-
-            Forward:
-                base_logits = base(...)
-                gated_out   = base_logits + alpha * clim_logit
-            where alpha ∈ (0, 1) via sigmoid:
-                global    → 1 scalar
-                per_lead  → (decoder_days,) vector
-                per_pixel → predicted from base logits: Linear(P², P²)
-            """
-            def __init__(self):
-                super().__init__()
-                self.base = _base_for_gate
-                self.register_buffer("clim_logit", _clim_logit_buf)
-                self.gating_mode = _gating_mode
-                if _gating_mode == "global":
-                    # init logit=0 → sigmoid(0)=0.5
-                    self.gate_logit = nn.Parameter(torch.zeros(1))
-                elif _gating_mode == "per_lead":
-                    self.gate_logit = nn.Parameter(torch.zeros(_dec_days))
-                elif _gating_mode == "per_pixel":
-                    # Predict per-pixel gate from base logits. Init to all-zeros
-                    # so initial gate = sigmoid(0) = 0.5 uniformly.
-                    self.gate_head = nn.Linear(_patch_dim_out, _patch_dim_out)
-                    nn.init.zeros_(self.gate_head.weight)
-                    nn.init.zeros_(self.gate_head.bias)
-
-            def forward(self, encoder_input, decoder_input, patch_ids=None):
-                out = self.base(encoder_input, decoder_input, patch_ids)
-                if patch_ids is None:
-                    return out
-                bias = self.clim_logit[patch_ids].unsqueeze(1)   # (B, 1, P²)
-                if self.gating_mode == "global":
-                    alpha = torch.sigmoid(self.gate_logit)        # (1,)
-                elif self.gating_mode == "per_lead":
-                    alpha = torch.sigmoid(self.gate_logit).view(1, -1, 1)
-                else:  # per_pixel
-                    alpha = torch.sigmoid(self.gate_head(out))    # (B, dec, P²)
-                return out + alpha * bias
-
-        model = _GatedClimBlendModel().to(device)
-        _gate_params = sum(p.numel() for n, p in model.named_parameters()
-                           if "gate" in n and p.requires_grad)
-        print(f"  [gating] mode={_gating_mode}  added_params={_gate_params}  "
-              f"clim_logit shape={_clim_logit_np.shape}")
+    model = build_model(
+        args=args,
+        N_CHANNELS=N_CHANNELS,
+        P=P,
+        Hc=Hc,
+        Wc=Wc,
+        patch_dim_enc=patch_dim_enc,
+        patch_dim_dec=patch_dim_dec,
+        patch_dim_out=patch_dim_out,
+        ctx_extra_dim=ctx_extra_dim,
+        decoder_days=decoder_days,
+        in_days=in_days,
+        n_patches=n_patches,
+        device=device,
+        static_arrays=static_arrays,
+    )
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Parameters: {n_params:,}")
