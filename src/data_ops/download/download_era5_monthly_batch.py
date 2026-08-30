@@ -14,6 +14,16 @@ Usage:
     python -m src.data_ops.download.download_era5_monthly_batch 2009 2017 --workers 4 --variant main
     python -m src.data_ops.download.download_era5_monthly_batch 2000 2017 --workers 4 --variant deep_soil
 
+Prerequisites:
+  - CDS_API_KEY (see README / docs/DATA_SOURCES.md), same as the other ERA5 scripts.
+  - The eccodes command-line tools, specifically ``grib_copy``, on PATH: this
+    script splits each monthly GRIB into daily files by shelling out to it.
+    ``grib_copy`` ships with the eccodes system package, NOT with pip/conda's
+    Python bindings — install it via the OS package manager (e.g.
+    ``apt install libeccodes-tools`` / ``brew install eccodes``) or a
+    ``conda install -c conda-forge eccodes`` that provides the binaries, or
+    ``module load eccodes`` on an HPC cluster. Verify with ``grib_copy -V``.
+
 Maintenance (if this breaks, the CDS dataset id/variable names likely changed):
     Source of truth : https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels
                       (open the Download tab, "Show API request code" = ground truth)
@@ -131,6 +141,13 @@ def split_monthly_grib_to_daily(monthly_grib, daily_dir, variant):
             ["grib_copy", str(monthly_grib), tmp_pattern],
             check=True, capture_output=True,
         )
+    except FileNotFoundError:
+        # grib_copy is the eccodes CLI binary, not a pip/conda Python package.
+        # Fail loudly with the fix instead of a cryptic "No such file" (lesson #1).
+        return ("grib_copy not found on PATH: install the eccodes command-line "
+                "tools (apt install libeccodes-tools / brew install eccodes / "
+                "conda install -c conda-forge eccodes / module load eccodes), "
+                "then verify with 'grib_copy -V'. See this script's docstring.")
     except subprocess.CalledProcessError as e:
         return f"grib_copy failed: {e.stderr.decode()[:200]}"
 
