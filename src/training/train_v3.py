@@ -1319,6 +1319,180 @@ def _build_arg_parser():
     return ap
 
 
+def run_eval_mode(
+        args,
+        P,
+        _dec_ctx_np,
+        _lead_time_enc,
+        date_to_s2s_idx,
+        date_to_s2s_lag,
+        dec_dim,
+        device,
+        fire_patched,
+        grid,
+        hw,
+        meteo_patched,
+        model,
+        n_patches,
+        s2s_cache,
+        s2s_full_cache,
+        s2s_means,
+        s2s_stds,
+        tele_cols,
+        tele_table,
+        val_wins_lift,
+        val_wins_lift_dates):
+    """Evaluate a checkpoint and return (train_v3 --eval_checkpoint mode).
+
+    Extracted verbatim from main(); every parameter is a setup-local
+    object the original inline branch read. Logic unchanged.
+    """
+    print(f"\n=== EVAL-ONLY MODE ===")
+    print(f"  Checkpoint: {args.eval_checkpoint}")
+    if not os.path.exists(args.eval_checkpoint):
+        print(f"  ERROR: checkpoint not found")
+        return
+    ckpt = torch.load(args.eval_checkpoint, map_location=device, weights_only=False)
+    # Reproduce training-time teleconnection z-scoring from the checkpoint
+    # so eval matches training exactly, independent of --pred_start. Only
+    # applies when --teleconnection_csv is also passed at eval time.
+    if (tele_table is not None and isinstance(ckpt, dict)
+            and "teleconnection_mean" in ckpt):
+        tele_norm = {
+            "mean": np.asarray(ckpt["teleconnection_mean"], dtype=np.float32),
+            "std": np.asarray(ckpt["teleconnection_std"], dtype=np.float32),
+            "cols": ckpt.get("teleconnection_cols", tele_cols),
+        }
+        print(f"  [teleconnection] loaded norm stats from checkpoint "
+              f"(mean={tele_norm['mean'].tolist()} "
+              f"std={tele_norm['std'].tolist()})")
+    # Support both naming conventions: train_v3 saves "model_state", V2 saves "model_state_dict"
+    if isinstance(ckpt, dict):
+        if "model_state_dict" in ckpt:
+            state = ckpt["model_state_dict"]
+        elif "model_state" in ckpt:
+            state = ckpt["model_state"]
+        else:
+            state = ckpt
+    else:
+        state = ckpt
+
+    # Auto-detect clim_blend wrapper: if ≥half of keys start with
+    # 'base.', the ckpt was saved from _ClimBlendModel and must be
+    # loaded back into the wrapper (otherwise raw transformer has
+    # NO matching keys → random weights → garbage eval).
+    n_base = sum(1 for k in state if k.startswith("base."))
+    is_clim_blend = (n_base >= len(state) / 2) and (n_base > 0)
+    if is_clim_blend and args.clim_blend_alpha == 0:
+        print("[WARN] ckpt has 'base.' prefix on >=half of keys → "
+              "this is a clim_blend ckpt but --clim_blend_alpha is 0. "
+              "Loading raw transformer = garbage eval.")
+        print("[FIX] Either pass --clim_blend_alpha matching the trained "
+              "value, or strip the prefix below.")
+
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    # Sanity: abort if the load is meaningless (too many key mismatches).
+    # This catches the clim_blend case + any other arch drift.
+    n_total = len(state)
+    if n_total > 0 and len(unexpected) > n_total / 2:
+        print(f"\n[ERROR] {len(unexpected)}/{n_total} unexpected keys — "
+              f"checkpoint architecture does not match this model.")
+        print(f"  First 5 unexpected: {unexpected[:5]}")
+        print(f"  First 5 missing:    {missing[:5]}")
+        print(f"  → likely cause: ckpt was saved with --clim_blend_alpha > 0 "
+              f"but eval is run without it (or vice versa). Aborting eval.")
+        return
+    if missing:
+        print(f"  [warn] {len(missing)} missing keys (first: {missing[:3]})")
+    if unexpected:
+        print(f"  [warn] {len(unexpected)} unexpected keys (first: {unexpected[:3]})")
+    _ep = ckpt.get("epoch", "?") if isinstance(ckpt, dict) else "?"
+    print(f"  Loaded from epoch {_ep}")
+
+    # Build decoder_ctx callback (same as training-time val)
+    _eval_ctx_fn = None
+    if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
+        def _eval_ctx_fn(xb_dec, cs, ce):
+            _ctx_batch = torch.from_numpy(
+                _dec_ctx_np[cs:ce].astype(np.float32)
+            ).to(xb_dec.device)
+            return _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
+
+    print(f"\n[eval-only] Running validation on {len(val_wins_lift)} windows...")
+    _m = _compute_val_lift_k_v3(
+        model, meteo_patched, fire_patched, val_wins_lift,
+        n_patches, k=args.val_lift_k,
+        n_sample_wins=args.val_lift_sample_wins,
+        chunk=256, device=device,
+        decoder_mode=args.decoder, dec_dim=dec_dim,
+        val_win_dates=val_wins_lift_dates, patch_size=P,
+        s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+        s2s_means=s2s_means, s2s_stds=s2s_stds,
+        date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+        s2s_full_cache=s2s_full_cache,
+        use_patch_embed=args.use_patch_embed,
+        random_encoder=args.random_encoder,
+        cluster_eval=args.cluster_eval,
+        cluster_min_size=args.cluster_min_size,
+        hw=hw, grid=grid, full_val=args.full_val,
+        per_lead_eval=args.per_lead_eval,
+        decoder_ctx_fn=_eval_ctx_fn,
+        save_per_window_json=args.save_per_window_json,
+        save_window_scores_dir=args.save_window_scores_dir,
+        per_lead_metrics_json=args.per_lead_metrics_json,
+    )
+    # ═════════════════════════════════════════════════════════════════
+    # BUSINESS SUMMARY CARD — what matters for financial risk ranking.
+    # Lift is the primary decision metric: "top-K predicted locations
+    # have N× higher fire density than random", directly maps to
+    # insurance pricing / resource allocation ROI.
+    # ═════════════════════════════════════════════════════════════════
+    k = args.val_lift_k
+    n_wins = _m.get('n_windows', 0)
+
+    print(f"\n╔══════════════════════════════════════════════════════════╗")
+    print(f"║  BUSINESS SUMMARY — Fire Risk Ranking Quality             ║")
+    print(f"║  ({n_wins} val windows, K={k})                            ║")
+    print(f"╚══════════════════════════════════════════════════════════╝")
+
+    def _fmt_ci(mean_v, lo, hi, suffix='x'):
+        return f"{mean_v:.3f}{suffix}  [95% CI: {lo:.3f}–{hi:.3f}]"
+
+    print(f"\n  🎯 LIFT FAMILY (decision metric, higher=better)")
+    print(f"  ─────────────────────────────────────────────────────────")
+    print(f"  Lift@{k} (2km pixel)  : "
+          f"{_fmt_ci(_m['lift_k'], _m.get('lift_k_ci_low', 0), _m.get('lift_k_ci_high', 0))}")
+    print(f"  Lift@30km (coarsened) : "
+          f"{_fmt_ci(_m.get('lift_coarse', 0), _m.get('lift_coarse_ci_low', 0), _m.get('lift_coarse_ci_high', 0))}")
+    print(f"                          ↑ event-level (removes spatial autocor)")
+    if "cluster_lift_k" in _m:
+        print(f"  Cluster Lift@{k}     : {_m['cluster_lift_k']:.3f}±"
+              f"{_m.get('cluster_lift_k_std', 0):.3f}x  "
+              f"({_m.get('cluster_n_windows', 0)} wins)")
+
+    print(f"\n  📊 SUPPORTING HEALTH CHECKS")
+    print(f"  ─────────────────────────────────────────────────────────")
+    print(f"  BSS                  : "
+          f"{_fmt_ci(_m.get('bss', 0), _m.get('bss_ci_low', 0), _m.get('bss_ci_high', 0), suffix='')}"
+          f"   ← >0 means beats climatology")
+    print(f"  Recall@{k}           : "
+          f"{_fmt_ci(_m.get('recall_k', 0), _m.get('recall_k_ci_low', 0), _m.get('recall_k_ci_high', 0), suffix='')}"
+          f"   ← fraction of fires captured in top-K")
+    print(f"  Prec@{k}             : {_m['precision_k']:.4f}")
+    print(f"  ETS@{k}              : {_m.get('ets_k', 0):.4f}  ← chance-corrected CSI")
+    print(f"  n_fire               : {_m.get('n_fire', 0):,}")
+
+    print(f"\n  ── Secondary metrics (context only) ──────────────────")
+    print(f"  PR-AUC    : {_m.get('pr_auc', 0):.4f}")
+    print(f"  CSI@{k}   : {_m.get('csi_k', 0):.4f}")
+    print(f"  F2        : {_m.get('f2', 0):.4f}  |  MCC: {_m.get('mcc', 0):.4f}")
+    print(f"  Brier     : {_m.get('brier', 0):.5f}  "
+          f"(Reliability={_m.get('reliability', 0):.5f}  Resolution={_m.get('resolution', 0):.5f})")
+    print(f"  ROC-AUC   : {_m.get('roc_auc', 0):.4f}  (unreliable at 0.03% imbalance)")
+    print()
+    return
+
+
 def main():
     run_started_at = time.time()
     run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
@@ -3283,149 +3457,30 @@ def main():
     # Use with --eval_checkpoint <path> --epochs 0 to skip training.
     # ----------------------------------------------------------------
     if args.eval_checkpoint:
-        print(f"\n=== EVAL-ONLY MODE ===")
-        print(f"  Checkpoint: {args.eval_checkpoint}")
-        if not os.path.exists(args.eval_checkpoint):
-            print(f"  ERROR: checkpoint not found")
-            return
-        ckpt = torch.load(args.eval_checkpoint, map_location=device, weights_only=False)
-        # Reproduce training-time teleconnection z-scoring from the checkpoint
-        # so eval matches training exactly, independent of --pred_start. Only
-        # applies when --teleconnection_csv is also passed at eval time.
-        if (tele_table is not None and isinstance(ckpt, dict)
-                and "teleconnection_mean" in ckpt):
-            tele_norm = {
-                "mean": np.asarray(ckpt["teleconnection_mean"], dtype=np.float32),
-                "std": np.asarray(ckpt["teleconnection_std"], dtype=np.float32),
-                "cols": ckpt.get("teleconnection_cols", tele_cols),
-            }
-            print(f"  [teleconnection] loaded norm stats from checkpoint "
-                  f"(mean={tele_norm['mean'].tolist()} "
-                  f"std={tele_norm['std'].tolist()})")
-        # Support both naming conventions: train_v3 saves "model_state", V2 saves "model_state_dict"
-        if isinstance(ckpt, dict):
-            if "model_state_dict" in ckpt:
-                state = ckpt["model_state_dict"]
-            elif "model_state" in ckpt:
-                state = ckpt["model_state"]
-            else:
-                state = ckpt
-        else:
-            state = ckpt
-
-        # Auto-detect clim_blend wrapper: if ≥half of keys start with
-        # 'base.', the ckpt was saved from _ClimBlendModel and must be
-        # loaded back into the wrapper (otherwise raw transformer has
-        # NO matching keys → random weights → garbage eval).
-        n_base = sum(1 for k in state if k.startswith("base."))
-        is_clim_blend = (n_base >= len(state) / 2) and (n_base > 0)
-        if is_clim_blend and args.clim_blend_alpha == 0:
-            print("[WARN] ckpt has 'base.' prefix on >=half of keys → "
-                  "this is a clim_blend ckpt but --clim_blend_alpha is 0. "
-                  "Loading raw transformer = garbage eval.")
-            print("[FIX] Either pass --clim_blend_alpha matching the trained "
-                  "value, or strip the prefix below.")
-
-        missing, unexpected = model.load_state_dict(state, strict=False)
-        # Sanity: abort if the load is meaningless (too many key mismatches).
-        # This catches the clim_blend case + any other arch drift.
-        n_total = len(state)
-        if n_total > 0 and len(unexpected) > n_total / 2:
-            print(f"\n[ERROR] {len(unexpected)}/{n_total} unexpected keys — "
-                  f"checkpoint architecture does not match this model.")
-            print(f"  First 5 unexpected: {unexpected[:5]}")
-            print(f"  First 5 missing:    {missing[:5]}")
-            print(f"  → likely cause: ckpt was saved with --clim_blend_alpha > 0 "
-                  f"but eval is run without it (or vice versa). Aborting eval.")
-            return
-        if missing:
-            print(f"  [warn] {len(missing)} missing keys (first: {missing[:3]})")
-        if unexpected:
-            print(f"  [warn] {len(unexpected)} unexpected keys (first: {unexpected[:3]})")
-        _ep = ckpt.get("epoch", "?") if isinstance(ckpt, dict) else "?"
-        print(f"  Loaded from epoch {_ep}")
-
-        # Build decoder_ctx callback (same as training-time val)
-        _eval_ctx_fn = None
-        if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
-            def _eval_ctx_fn(xb_dec, cs, ce):
-                _ctx_batch = torch.from_numpy(
-                    _dec_ctx_np[cs:ce].astype(np.float32)
-                ).to(xb_dec.device)
-                return _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc)
-
-        print(f"\n[eval-only] Running validation on {len(val_wins_lift)} windows...")
-        _m = _compute_val_lift_k_v3(
-            model, meteo_patched, fire_patched, val_wins_lift,
-            n_patches, k=args.val_lift_k,
-            n_sample_wins=args.val_lift_sample_wins,
-            chunk=256, device=device,
-            decoder_mode=args.decoder, dec_dim=dec_dim,
-            val_win_dates=val_wins_lift_dates, patch_size=P,
-            s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
-            s2s_means=s2s_means, s2s_stds=s2s_stds,
-            date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+        run_eval_mode(
+            args=args,
+            P=P,
+            _dec_ctx_np=_dec_ctx_np,
+            _lead_time_enc=_lead_time_enc,
+            date_to_s2s_idx=date_to_s2s_idx,
+            date_to_s2s_lag=date_to_s2s_lag,
+            dec_dim=dec_dim,
+            device=device,
+            fire_patched=fire_patched,
+            grid=grid,
+            hw=hw,
+            meteo_patched=meteo_patched,
+            model=model,
+            n_patches=n_patches,
+            s2s_cache=s2s_cache,
             s2s_full_cache=s2s_full_cache,
-            use_patch_embed=args.use_patch_embed,
-            random_encoder=args.random_encoder,
-            cluster_eval=args.cluster_eval,
-            cluster_min_size=args.cluster_min_size,
-            hw=hw, grid=grid, full_val=args.full_val,
-            per_lead_eval=args.per_lead_eval,
-            decoder_ctx_fn=_eval_ctx_fn,
-            save_per_window_json=args.save_per_window_json,
-            save_window_scores_dir=args.save_window_scores_dir,
-            per_lead_metrics_json=args.per_lead_metrics_json,
+            s2s_means=s2s_means,
+            s2s_stds=s2s_stds,
+            tele_cols=tele_cols,
+            tele_table=tele_table,
+            val_wins_lift=val_wins_lift,
+            val_wins_lift_dates=val_wins_lift_dates,
         )
-        # ═════════════════════════════════════════════════════════════════
-        # BUSINESS SUMMARY CARD — what matters for financial risk ranking.
-        # Lift is the primary decision metric: "top-K predicted locations
-        # have N× higher fire density than random", directly maps to
-        # insurance pricing / resource allocation ROI.
-        # ═════════════════════════════════════════════════════════════════
-        k = args.val_lift_k
-        n_wins = _m.get('n_windows', 0)
-
-        print(f"\n╔══════════════════════════════════════════════════════════╗")
-        print(f"║  BUSINESS SUMMARY — Fire Risk Ranking Quality             ║")
-        print(f"║  ({n_wins} val windows, K={k})                            ║")
-        print(f"╚══════════════════════════════════════════════════════════╝")
-
-        def _fmt_ci(mean_v, lo, hi, suffix='x'):
-            return f"{mean_v:.3f}{suffix}  [95% CI: {lo:.3f}–{hi:.3f}]"
-
-        print(f"\n  🎯 LIFT FAMILY (decision metric, higher=better)")
-        print(f"  ─────────────────────────────────────────────────────────")
-        print(f"  Lift@{k} (2km pixel)  : "
-              f"{_fmt_ci(_m['lift_k'], _m.get('lift_k_ci_low', 0), _m.get('lift_k_ci_high', 0))}")
-        print(f"  Lift@30km (coarsened) : "
-              f"{_fmt_ci(_m.get('lift_coarse', 0), _m.get('lift_coarse_ci_low', 0), _m.get('lift_coarse_ci_high', 0))}")
-        print(f"                          ↑ event-level (removes spatial autocor)")
-        if "cluster_lift_k" in _m:
-            print(f"  Cluster Lift@{k}     : {_m['cluster_lift_k']:.3f}±"
-                  f"{_m.get('cluster_lift_k_std', 0):.3f}x  "
-                  f"({_m.get('cluster_n_windows', 0)} wins)")
-
-        print(f"\n  📊 SUPPORTING HEALTH CHECKS")
-        print(f"  ─────────────────────────────────────────────────────────")
-        print(f"  BSS                  : "
-              f"{_fmt_ci(_m.get('bss', 0), _m.get('bss_ci_low', 0), _m.get('bss_ci_high', 0), suffix='')}"
-              f"   ← >0 means beats climatology")
-        print(f"  Recall@{k}           : "
-              f"{_fmt_ci(_m.get('recall_k', 0), _m.get('recall_k_ci_low', 0), _m.get('recall_k_ci_high', 0), suffix='')}"
-              f"   ← fraction of fires captured in top-K")
-        print(f"  Prec@{k}             : {_m['precision_k']:.4f}")
-        print(f"  ETS@{k}              : {_m.get('ets_k', 0):.4f}  ← chance-corrected CSI")
-        print(f"  n_fire               : {_m.get('n_fire', 0):,}")
-
-        print(f"\n  ── Secondary metrics (context only) ──────────────────")
-        print(f"  PR-AUC    : {_m.get('pr_auc', 0):.4f}")
-        print(f"  CSI@{k}   : {_m.get('csi_k', 0):.4f}")
-        print(f"  F2        : {_m.get('f2', 0):.4f}  |  MCC: {_m.get('mcc', 0):.4f}")
-        print(f"  Brier     : {_m.get('brier', 0):.5f}  "
-              f"(Reliability={_m.get('reliability', 0):.5f}  Resolution={_m.get('resolution', 0):.5f})")
-        print(f"  ROC-AUC   : {_m.get('roc_auc', 0):.4f}  (unreliable at 0.03% imbalance)")
-        print()
         return
 
     for epoch in range(start_epoch, args.epochs + 1):
