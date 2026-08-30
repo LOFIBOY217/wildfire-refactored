@@ -1527,6 +1527,434 @@ def build_model(
     return model
 
 
+def run_training(
+        CHANNEL_NAMES,
+        N_CHANNELS,
+        P,
+        _dec_ctx_np,
+        _lead_time_enc,
+        _tele_ckpt_meta,
+        _tele_norm_vec,
+        _wandb,
+        amp_enabled,
+        args,
+        best_ckpt,
+        best_val_lift_k,
+        ckpt_dir,
+        criterion,
+        date_to_s2s_idx,
+        date_to_s2s_lag,
+        dec_dim,
+        device,
+        fire_patched,
+        grid,
+        hw,
+        mem_guard,
+        meteo_means,
+        meteo_patched,
+        meteo_stds,
+        model,
+        n_batches,
+        n_patches,
+        optimizer,
+        patch_dim_dec,
+        patch_dim_enc,
+        patch_dim_out,
+        paths_cfg,
+        s2s_cache,
+        s2s_full_cache,
+        s2s_means,
+        s2s_stds,
+        sample_weights_arr,
+        scaler,
+        scheduler,
+        start_epoch,
+        tele_per_sample,
+        tele_table,
+        train_dl,
+        val_wins_lift,
+        val_wins_lift_dates):
+    """Run the full training loop: per-epoch train + validation +
+    checkpointing. Extracted verbatim from main() (loop body unchanged,
+    same 4-space indent — no re-indentation). Every parameter is a value
+    the loop read from main's scope, audited via AST free-variable
+    analysis (46 inputs incl. best_val_lift_k, read-before-write). Returns
+    nothing: the loop was main's final block.
+    """
+    for epoch in range(start_epoch, args.epochs + 1):
+        if mem_guard.triggered:
+            print(f"  MemoryGuard triggered — stopping.")
+            break
+
+        model.train()
+        t0_ep = time.time()
+        train_loss = 0.0
+        train_samples = 0
+
+        # Per-sample weighting active if any of: recency, climate-similarity,
+        # or anomaly-aware (per-patch) loss weighting (all produce 5-tuple
+        # batches via the same _PerYearWeightedDS wrapper).
+        # 2026-07: track the ACTUAL dataset arity. _PerYearWeightedDS appends a
+        # 5th element whenever sample_weights_arr is set (recency / climate-sim /
+        # anomaly / region_loss / region_balance / novel-perpix), so key off that
+        # directly. _has_tele is independent (teleconnection wrapper appends tele).
+        _has_sample_weight = sample_weights_arr is not None
+        _has_tele = tele_per_sample is not None
+        for batch_idx, batch in enumerate(train_dl):
+            # Element layout (tele appended at index 4 by _TeleconnectionDS,
+            # sample weight always LAST by _PerYearWeightedDS):
+            #   base       : (enc, dec, y, pid)
+            #   +tele      : (enc, dec, y, pid, tele)
+            #   +sw        : (enc, dec, y, pid, sw)
+            #   +tele +sw  : (enc, dec, y, pid, tele, sw)
+            xb_enc, xb_dec, yb, patch_ids = batch[0], batch[1], batch[2], batch[3]
+            _extra = list(batch[4:])
+            sw = None
+            if _has_sample_weight:
+                sw = _extra.pop()   # sample weight is the last element
+                sw = sw.to(device, dtype=torch.float32, non_blocking=True)
+            tele_b = None
+            if _has_tele:
+                tele_b = _extra.pop(0).to(device, dtype=torch.float32,
+                                          non_blocking=True)
+
+            xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
+            xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
+            if args.random_encoder:
+                xb_enc = torch.randn_like(xb_enc)
+            yb = yb.to(device, non_blocking=True)
+            if args.label_smoothing > 0:
+                yb = yb * (1 - args.label_smoothing) + 0.5 * args.label_smoothing
+            if args.spatial_aug > 0:
+                xb_enc, yb = _spatial_augment(xb_enc, yb, P, args.spatial_aug)
+
+            # Augment decoder with static context + lead time (+ teleconnection)
+            if args.decoder_ctx and _dec_ctx_np is not None:
+                _batch_pids = patch_ids.numpy()
+                _ctx_batch = torch.from_numpy(
+                    _dec_ctx_np[_batch_pids].astype(np.float32)
+                ).to(device)
+                xb_dec = _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc,
+                                          tele_vec=tele_b)
+
+            _pids = patch_ids.to(device) if args.use_patch_embed else None
+            with torch.autocast(device_type=device.type, dtype=torch.float16,
+                                enabled=amp_enabled):
+                logits = model(xb_enc, xb_dec, _pids)
+                if sw is not None and args.loss_fn == "focal":
+                    if sw.dim() == 2:
+                        # PER-PIXEL novel weighting: sw = [w_patch, novel_frac].
+                        # Boost only fire pixels: w_pix = 1 + (W-1)*novel_frac*fire.
+                        _w_patch = sw[:, 0]
+                        _nf_b = sw[:, 1]
+                        _orig_red = criterion.reduction
+                        criterion.reduction = "none"
+                        _elem = criterion(logits, yb)               # (B, L, P^2)
+                        criterion.reduction = _orig_red
+                        _fire_pix = (yb > 0.5).any(dim=1, keepdim=True).float()  # (B,1,P^2)
+                        _Wn = float(args.novel_pos_weight)
+                        _w_pix = 1.0 + (_Wn - 1.0) * _nf_b.view(-1, 1, 1) * _fire_pix
+                        _w_full = _w_patch.view(-1, 1, 1) * _w_pix    # (B,1,P^2)
+                        loss = ((_elem * _w_full).sum()
+                                / _w_full.expand_as(_elem).sum().clamp_min(1e-6))
+                    else:
+                        # Per-sample scalar loss, then weighted mean
+                        # FocalBCELoss with reduction='sample_mean' returns (B,)
+                        _orig_red = criterion.reduction
+                        criterion.reduction = "sample_mean"
+                        per_sample_loss = criterion(logits, yb)
+                        criterion.reduction = _orig_red
+                        loss = (per_sample_loss * sw).mean()
+                else:
+                    loss = criterion(logits, yb)
+
+            if not torch.isfinite(loss):
+                optimizer.zero_grad()
+                continue
+
+            optimizer.zero_grad()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if not torch.isfinite(gnorm):
+                optimizer.zero_grad()
+                scaler.update()
+                continue
+            scaler.step(optimizer)
+            scaler.update()
+
+            train_loss += loss.item() * xb_enc.size(0)
+            train_samples += xb_enc.size(0)
+
+            if args.log_interval > 0 and (batch_idx + 1) % args.log_interval == 0:
+                pct = (batch_idx + 1) / n_batches
+                elapsed = time.time() - t0_ep
+                print(f"    ep{epoch} [{batch_idx+1:5d}/{n_batches} {pct*100:4.1f}%]  "
+                      f"loss={train_loss/max(train_samples,1):.4f}  "
+                      f"{(batch_idx+1)/elapsed:.1f}b/s")
+
+            # ── Mid-epoch validation (2026-05-01 calibration-vs-rank hypothesis test) ─
+            if (args.mid_epoch_val_every > 0
+                    and (batch_idx + 1) % args.mid_epoch_val_every == 0
+                    and (batch_idx + 1) < n_batches
+                    and not args.skip_val
+                    and val_wins_lift):
+                global_step = (epoch - 1) * n_batches + batch_idx + 1
+                _t_meval = time.time()
+                _mid_ctx_fn = None
+                if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
+                    def _mid_ctx_fn(xb_dec, cs, ce, win_date=None):
+                        _ctx_batch = torch.from_numpy(
+                            _dec_ctx_np[cs:ce].astype(np.float32)
+                        ).to(xb_dec.device)
+                        _tv = None
+                        if tele_table is not None:
+                            _tv = torch.from_numpy(
+                                _tele_norm_vec(win_date)).to(xb_dec.device)
+                        return _augment_decoder(xb_dec, _ctx_batch,
+                                                _lead_time_enc, tele_vec=_tv)
+                model.eval()
+                with torch.no_grad():
+                    _m_mid = _compute_val_lift_k_v3(
+                        model, meteo_patched, fire_patched, val_wins_lift,
+                        n_patches, args.val_lift_k, args.val_lift_sample_wins, args.chunk_patches,
+                        device, decoder_mode=args.decoder, dec_dim=dec_dim,
+                        s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+                        val_win_dates=val_wins_lift_dates, patch_size=P,
+                        s2s_means=s2s_means, s2s_stds=s2s_stds,
+                        date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
+                        decoder_ctx_fn=_mid_ctx_fn, use_patch_embed=args.use_patch_embed,
+                        cluster_min_size=1, s2s_full_cache=s2s_full_cache,
+                        skip_cluster=True,
+                    )
+                model.train()
+                _t_meval = time.time() - _t_meval
+                _vlift = _m_mid.get("lift_k", 0.0)
+                _vroc = _m_mid.get("roc_auc", 0.0)
+                _vbri = _m_mid.get("brier", 0.0)
+                # Append to CSV
+                _csv_path = os.path.join(
+                    paths_cfg.get("outputs_dir", "outputs"),
+                    f"{args.run_name}_lift_trajectory.csv")
+                _new_file = not os.path.exists(_csv_path)
+                os.makedirs(os.path.dirname(_csv_path) or ".", exist_ok=True)
+                with open(_csv_path, "a") as _f:
+                    if _new_file:
+                        _f.write("epoch,batch,global_step,train_loss,val_lift_k,val_roc_auc,val_brier,eval_sec\n")
+                    _f.write(f"{epoch},{batch_idx+1},{global_step},"
+                             f"{train_loss/max(train_samples,1):.6f},"
+                             f"{_vlift:.4f},{_vroc:.4f},{_vbri:.6f},{_t_meval:.1f}\n")
+                print(f"    [mid-val] step {global_step}  "
+                      f"Lift@{args.val_lift_k}={_vlift:.2f}x  "
+                      f"ROC-AUC={_vroc:.4f}  Brier={_vbri:.4f}  ({_t_meval:.0f}s)")
+                # Save snapshot if new best (by val_lift)
+                if _vlift > best_val_lift_k:
+                    best_val_lift_k = _vlift
+                    _mid_best_path = os.path.join(ckpt_dir, "best_model.pt")
+                    _payload = {
+                        **_tele_ckpt_meta,
+                        "epoch": epoch, "batch_idx": batch_idx + 1,
+                        "global_step": global_step,
+                        "model_state": model.state_dict(),
+                        "best_val_lift_k_global": best_val_lift_k,
+                        "meteo_means": meteo_means, "meteo_stds": meteo_stds,
+                        "patch_dim_enc": patch_dim_enc, "patch_dim_dec": patch_dim_dec,
+                        "patch_dim_out": patch_dim_out, "hw": hw, "grid": grid,
+                        "args": vars(args), "channel_names": CHANNEL_NAMES,
+                        "n_channels": N_CHANNELS,
+                        "s2s_means": s2s_means, "s2s_stds": s2s_stds,
+                    }
+                    torch.save(_payload, _mid_best_path)
+                    print(f"    [mid-val] ★ new best Lift={_vlift:.2f}x at step {global_step}")
+
+            # Mid-epoch checkpoint (no val, lightweight snapshot for crash recovery)
+            # Saves every `ckpt_interval` batches, atomic rename to prevent partial writes.
+            if (args.ckpt_interval > 0
+                    and (batch_idx + 1) % args.ckpt_interval == 0
+                    and (batch_idx + 1) < n_batches):
+                _mid_path = os.path.join(ckpt_dir, f"epoch_{epoch:02d}_mid.pt")
+                _mid_tmp = _mid_path + ".tmp"
+                _mid_payload = {
+                    **_tele_ckpt_meta,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": (scheduler.state_dict()
+                                             if scheduler is not None else None),
+                    "epoch": epoch,
+                    "batch_idx": batch_idx + 1,
+                    "args": vars(args),
+                }
+                try:
+                    torch.save(_mid_payload, _mid_tmp)
+                    os.replace(_mid_tmp, _mid_path)  # atomic rename
+                    print(f"    [mid-ckpt] saved batch {batch_idx+1} → {_mid_path}")
+                except Exception as _e:
+                    print(f"    [mid-ckpt] save failed: {_e}")
+                    if os.path.exists(_mid_tmp):
+                        try:
+                            os.remove(_mid_tmp)
+                        except Exception:
+                            pass
+
+        if train_samples == 0:
+            print(f"  Epoch {epoch}: all NaN — stopping.")
+            break
+        train_loss /= train_samples
+
+        # Validation
+        val_lift_k = 0.0
+        val_prec_k = 0.0
+        if not args.skip_val and val_wins_lift:
+            # Build decoder_ctx callback if decoder_ctx is enabled
+            _val_ctx_fn = None
+            if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
+                def _val_ctx_fn(xb_dec, cs, ce, win_date=None):
+                    """Augment decoder input with static context + lead time
+                    encoding (+ optional per-issue-date teleconnection)."""
+                    _ctx_batch = torch.from_numpy(
+                        _dec_ctx_np[cs:ce].astype(np.float32)
+                    ).to(xb_dec.device)
+                    _tv = None
+                    if tele_table is not None:
+                        _tv = torch.from_numpy(
+                            _tele_norm_vec(win_date)).to(xb_dec.device)
+                    return _augment_decoder(xb_dec, _ctx_batch,
+                                            _lead_time_enc, tele_vec=_tv)
+
+            _m = _compute_val_lift_k_v3(
+                model, meteo_patched, fire_patched, val_wins_lift,
+                n_patches, k=args.val_lift_k,
+                n_sample_wins=args.val_lift_sample_wins,
+                chunk=256, device=device,
+                decoder_mode=args.decoder, dec_dim=dec_dim,
+                val_win_dates=val_wins_lift_dates, patch_size=P,
+                # S2S plumbing — MUST be passed so val uses correct forecast
+                # dimensionality. Without these, --decoder s2s with
+                # --s2s_full_cache (e.g. sub4x4 128-dim) falls back to
+                # 9-dim _make_dec_s2s → decoder shape mismatch at val.
+                s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
+                s2s_means=s2s_means, s2s_stds=s2s_stds,
+                date_to_s2s_lag=date_to_s2s_lag,
+                s2s_max_lag=args.s2s_max_issue_lag,
+                s2s_full_cache=s2s_full_cache,
+                use_patch_embed=args.use_patch_embed,
+                random_encoder=args.random_encoder,
+                cluster_eval=args.cluster_eval,
+                cluster_min_size=args.cluster_min_size,
+                hw=hw, grid=grid, full_val=args.full_val,
+                per_lead_eval=args.per_lead_eval,
+                decoder_ctx_fn=_val_ctx_fn,
+                # 2026-04-21: per-window JSON is only dumped at final
+                # epoch (mid-training val would overwrite useful dumps).
+                save_per_window_json=(
+                    args.save_per_window_json
+                    if args.save_per_window_json
+                    and epoch == args.epochs else None
+                ),
+            )
+            val_lift_k = _m["lift_k"]
+            val_prec_k = _m["precision_k"]
+            val_roc_auc = _m.get("roc_auc", 0.0)
+            val_brier = _m.get("brier", 0.0)
+            cluster_str = ""
+            if args.cluster_eval and "cluster_lift_k" in _m:
+                _cl_std = _m.get('cluster_lift_k_std', 0.0)
+                _cl_nw = _m.get('cluster_n_windows', 0)
+                cluster_str = (
+                    f"cluster: Lift={_m['cluster_lift_k']:.2f}±{_cl_std:.2f}x  "
+                    f"Recall={_m.get('cluster_recall_k', 0):.3f}  "
+                    f"avg_clusters={_m.get('n_clusters', 0):.0f}  "
+                    f"({_cl_nw} wins)"
+                )
+            if args.per_lead_eval and "per_lead_lift" in _m:
+                _pl = _m["per_lead_lift"]
+                _pp = _m["per_lead_precision"]
+                print(f"  per-lead Lift@{args.val_lift_k}: "
+                      + "  ".join(f"d{i}={v:.1f}x" for i, v in enumerate(_pl)))
+                print(f"  per-lead Prec@{args.val_lift_k}: "
+                      + "  ".join(f"d{i}={v:.3f}" for i, v in enumerate(_pp)))
+
+        epoch_time = time.time() - t0_ep
+        print(f"\n  Epoch {epoch:3d}/{args.epochs}  "
+              f"loss={train_loss:.6f}  "
+              f"Lift@{args.val_lift_k}={val_lift_k:.2f}x  "
+              f"prec={val_prec_k:.4f}  "
+              f"ROC-AUC={val_roc_auc:.4f}  "
+              f"Brier={val_brier:.6f}  "
+              f"({epoch_time/60:.1f}m)")
+        if cluster_str:
+            print(f"  {cluster_str}")
+
+        # ── W&B per-epoch log ──────────────────────────────────────────
+        if _wandb is not None:
+            log_dict = {
+                "epoch": epoch,
+                "train/loss": float(train_loss),
+                "val/lift_k": float(val_lift_k),
+                "val/prec_k": float(val_prec_k),
+                "val/roc_auc": float(val_roc_auc),
+                "val/brier": float(val_brier),
+                "epoch_time_min": float(epoch_time / 60),
+                "lr": float(optimizer.param_groups[0]['lr']),
+            }
+            if args.cluster_eval and "cluster_lift_k" in _m:
+                log_dict["val/cluster_lift_k"] = float(_m["cluster_lift_k"])
+                log_dict["val/cluster_recall_k"] = float(_m.get("cluster_recall_k", 0))
+                log_dict["val/n_clusters"] = float(_m.get("n_clusters", 0))
+            try:
+                _wandb.log(log_dict, step=epoch)
+            except Exception as e:
+                print(f"  [wandb] log failed: {e}")
+
+        scheduler.step()
+
+        is_new_best = (not args.skip_val) and (val_lift_k > best_val_lift_k)
+        if is_new_best:
+            best_val_lift_k = val_lift_k
+
+        ckpt_payload = {
+            **_tele_ckpt_meta,
+            "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict(),
+            "scaler_state": scaler.state_dict(),
+            "best_val_lift_k_global": best_val_lift_k,
+            "meteo_means": meteo_means,
+            "meteo_stds": meteo_stds,
+            "patch_dim_enc": patch_dim_enc,
+            "patch_dim_dec": patch_dim_dec,
+            "patch_dim_out": patch_dim_out,
+            "hw": hw,
+            "grid": grid,
+            "args": vars(args),
+            "channel_names": CHANNEL_NAMES,
+            "n_channels": N_CHANNELS,
+            "s2s_means": s2s_means,
+            "s2s_stds": s2s_stds,
+        }
+        epoch_ckpt = os.path.join(ckpt_dir, f"epoch_{epoch:02d}.pt")
+        torch.save(ckpt_payload, epoch_ckpt)
+        if is_new_best:
+            torch.save(ckpt_payload, best_ckpt)
+            print(f"  ★ New best Lift@{args.val_lift_k}={val_lift_k:.2f}x → best_model.pt")
+
+    print(f"\n{'='*70}")
+    print(f"TRAINING COMPLETE  [V3, {N_CHANNELS} channels, {args.loss_fn} loss]")
+    print(f"  Best Lift@{args.val_lift_k}: {best_val_lift_k:.2f}x")
+    print(f"  Checkpoint: {best_ckpt}")
+    print(f"{'='*70}")
+
+    if _wandb is not None:
+        try:
+            _wandb.summary["best_val_lift_k"] = float(best_val_lift_k)
+            _wandb.finish()
+        except Exception:
+            pass
+
+    mem_guard.shutdown()
+
+
 def main():
     run_started_at = time.time()
     run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
@@ -2542,378 +2970,54 @@ def main():
         )
         return
 
-    for epoch in range(start_epoch, args.epochs + 1):
-        if mem_guard.triggered:
-            print(f"  MemoryGuard triggered — stopping.")
-            break
-
-        model.train()
-        t0_ep = time.time()
-        train_loss = 0.0
-        train_samples = 0
-
-        # Per-sample weighting active if any of: recency, climate-similarity,
-        # or anomaly-aware (per-patch) loss weighting (all produce 5-tuple
-        # batches via the same _PerYearWeightedDS wrapper).
-        # 2026-07: track the ACTUAL dataset arity. _PerYearWeightedDS appends a
-        # 5th element whenever sample_weights_arr is set (recency / climate-sim /
-        # anomaly / region_loss / region_balance / novel-perpix), so key off that
-        # directly. _has_tele is independent (teleconnection wrapper appends tele).
-        _has_sample_weight = sample_weights_arr is not None
-        _has_tele = tele_per_sample is not None
-        for batch_idx, batch in enumerate(train_dl):
-            # Element layout (tele appended at index 4 by _TeleconnectionDS,
-            # sample weight always LAST by _PerYearWeightedDS):
-            #   base       : (enc, dec, y, pid)
-            #   +tele      : (enc, dec, y, pid, tele)
-            #   +sw        : (enc, dec, y, pid, sw)
-            #   +tele +sw  : (enc, dec, y, pid, tele, sw)
-            xb_enc, xb_dec, yb, patch_ids = batch[0], batch[1], batch[2], batch[3]
-            _extra = list(batch[4:])
-            sw = None
-            if _has_sample_weight:
-                sw = _extra.pop()   # sample weight is the last element
-                sw = sw.to(device, dtype=torch.float32, non_blocking=True)
-            tele_b = None
-            if _has_tele:
-                tele_b = _extra.pop(0).to(device, dtype=torch.float32,
-                                          non_blocking=True)
-
-            xb_enc = xb_enc.to(device, dtype=torch.float32, non_blocking=True)
-            xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
-            if args.random_encoder:
-                xb_enc = torch.randn_like(xb_enc)
-            yb = yb.to(device, non_blocking=True)
-            if args.label_smoothing > 0:
-                yb = yb * (1 - args.label_smoothing) + 0.5 * args.label_smoothing
-            if args.spatial_aug > 0:
-                xb_enc, yb = _spatial_augment(xb_enc, yb, P, args.spatial_aug)
-
-            # Augment decoder with static context + lead time (+ teleconnection)
-            if args.decoder_ctx and _dec_ctx_np is not None:
-                _batch_pids = patch_ids.numpy()
-                _ctx_batch = torch.from_numpy(
-                    _dec_ctx_np[_batch_pids].astype(np.float32)
-                ).to(device)
-                xb_dec = _augment_decoder(xb_dec, _ctx_batch, _lead_time_enc,
-                                          tele_vec=tele_b)
-
-            _pids = patch_ids.to(device) if args.use_patch_embed else None
-            with torch.autocast(device_type=device.type, dtype=torch.float16,
-                                enabled=amp_enabled):
-                logits = model(xb_enc, xb_dec, _pids)
-                if sw is not None and args.loss_fn == "focal":
-                    if sw.dim() == 2:
-                        # PER-PIXEL novel weighting: sw = [w_patch, novel_frac].
-                        # Boost only fire pixels: w_pix = 1 + (W-1)*novel_frac*fire.
-                        _w_patch = sw[:, 0]
-                        _nf_b = sw[:, 1]
-                        _orig_red = criterion.reduction
-                        criterion.reduction = "none"
-                        _elem = criterion(logits, yb)               # (B, L, P^2)
-                        criterion.reduction = _orig_red
-                        _fire_pix = (yb > 0.5).any(dim=1, keepdim=True).float()  # (B,1,P^2)
-                        _Wn = float(args.novel_pos_weight)
-                        _w_pix = 1.0 + (_Wn - 1.0) * _nf_b.view(-1, 1, 1) * _fire_pix
-                        _w_full = _w_patch.view(-1, 1, 1) * _w_pix    # (B,1,P^2)
-                        loss = ((_elem * _w_full).sum()
-                                / _w_full.expand_as(_elem).sum().clamp_min(1e-6))
-                    else:
-                        # Per-sample scalar loss, then weighted mean
-                        # FocalBCELoss with reduction='sample_mean' returns (B,)
-                        _orig_red = criterion.reduction
-                        criterion.reduction = "sample_mean"
-                        per_sample_loss = criterion(logits, yb)
-                        criterion.reduction = _orig_red
-                        loss = (per_sample_loss * sw).mean()
-                else:
-                    loss = criterion(logits, yb)
-
-            if not torch.isfinite(loss):
-                optimizer.zero_grad()
-                continue
-
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            if not torch.isfinite(gnorm):
-                optimizer.zero_grad()
-                scaler.update()
-                continue
-            scaler.step(optimizer)
-            scaler.update()
-
-            train_loss += loss.item() * xb_enc.size(0)
-            train_samples += xb_enc.size(0)
-
-            if args.log_interval > 0 and (batch_idx + 1) % args.log_interval == 0:
-                pct = (batch_idx + 1) / n_batches
-                elapsed = time.time() - t0_ep
-                print(f"    ep{epoch} [{batch_idx+1:5d}/{n_batches} {pct*100:4.1f}%]  "
-                      f"loss={train_loss/max(train_samples,1):.4f}  "
-                      f"{(batch_idx+1)/elapsed:.1f}b/s")
-
-            # ── Mid-epoch validation (2026-05-01 calibration-vs-rank hypothesis test) ─
-            if (args.mid_epoch_val_every > 0
-                    and (batch_idx + 1) % args.mid_epoch_val_every == 0
-                    and (batch_idx + 1) < n_batches
-                    and not args.skip_val
-                    and val_wins_lift):
-                global_step = (epoch - 1) * n_batches + batch_idx + 1
-                _t_meval = time.time()
-                _mid_ctx_fn = None
-                if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
-                    def _mid_ctx_fn(xb_dec, cs, ce, win_date=None):
-                        _ctx_batch = torch.from_numpy(
-                            _dec_ctx_np[cs:ce].astype(np.float32)
-                        ).to(xb_dec.device)
-                        _tv = None
-                        if tele_table is not None:
-                            _tv = torch.from_numpy(
-                                _tele_norm_vec(win_date)).to(xb_dec.device)
-                        return _augment_decoder(xb_dec, _ctx_batch,
-                                                _lead_time_enc, tele_vec=_tv)
-                model.eval()
-                with torch.no_grad():
-                    _m_mid = _compute_val_lift_k_v3(
-                        model, meteo_patched, fire_patched, val_wins_lift,
-                        n_patches, args.val_lift_k, args.val_lift_sample_wins, args.chunk_patches,
-                        device, decoder_mode=args.decoder, dec_dim=dec_dim,
-                        s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
-                        val_win_dates=val_wins_lift_dates, patch_size=P,
-                        s2s_means=s2s_means, s2s_stds=s2s_stds,
-                        date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=args.s2s_max_issue_lag,
-                        decoder_ctx_fn=_mid_ctx_fn, use_patch_embed=args.use_patch_embed,
-                        cluster_min_size=1, s2s_full_cache=s2s_full_cache,
-                        skip_cluster=True,
-                    )
-                model.train()
-                _t_meval = time.time() - _t_meval
-                _vlift = _m_mid.get("lift_k", 0.0)
-                _vroc = _m_mid.get("roc_auc", 0.0)
-                _vbri = _m_mid.get("brier", 0.0)
-                # Append to CSV
-                _csv_path = os.path.join(
-                    paths_cfg.get("outputs_dir", "outputs"),
-                    f"{args.run_name}_lift_trajectory.csv")
-                _new_file = not os.path.exists(_csv_path)
-                os.makedirs(os.path.dirname(_csv_path) or ".", exist_ok=True)
-                with open(_csv_path, "a") as _f:
-                    if _new_file:
-                        _f.write("epoch,batch,global_step,train_loss,val_lift_k,val_roc_auc,val_brier,eval_sec\n")
-                    _f.write(f"{epoch},{batch_idx+1},{global_step},"
-                             f"{train_loss/max(train_samples,1):.6f},"
-                             f"{_vlift:.4f},{_vroc:.4f},{_vbri:.6f},{_t_meval:.1f}\n")
-                print(f"    [mid-val] step {global_step}  "
-                      f"Lift@{args.val_lift_k}={_vlift:.2f}x  "
-                      f"ROC-AUC={_vroc:.4f}  Brier={_vbri:.4f}  ({_t_meval:.0f}s)")
-                # Save snapshot if new best (by val_lift)
-                if _vlift > best_val_lift_k:
-                    best_val_lift_k = _vlift
-                    _mid_best_path = os.path.join(ckpt_dir, "best_model.pt")
-                    _payload = {
-                        **_tele_ckpt_meta,
-                        "epoch": epoch, "batch_idx": batch_idx + 1,
-                        "global_step": global_step,
-                        "model_state": model.state_dict(),
-                        "best_val_lift_k_global": best_val_lift_k,
-                        "meteo_means": meteo_means, "meteo_stds": meteo_stds,
-                        "patch_dim_enc": patch_dim_enc, "patch_dim_dec": patch_dim_dec,
-                        "patch_dim_out": patch_dim_out, "hw": hw, "grid": grid,
-                        "args": vars(args), "channel_names": CHANNEL_NAMES,
-                        "n_channels": N_CHANNELS,
-                        "s2s_means": s2s_means, "s2s_stds": s2s_stds,
-                    }
-                    torch.save(_payload, _mid_best_path)
-                    print(f"    [mid-val] ★ new best Lift={_vlift:.2f}x at step {global_step}")
-
-            # Mid-epoch checkpoint (no val, lightweight snapshot for crash recovery)
-            # Saves every `ckpt_interval` batches, atomic rename to prevent partial writes.
-            if (args.ckpt_interval > 0
-                    and (batch_idx + 1) % args.ckpt_interval == 0
-                    and (batch_idx + 1) < n_batches):
-                _mid_path = os.path.join(ckpt_dir, f"epoch_{epoch:02d}_mid.pt")
-                _mid_tmp = _mid_path + ".tmp"
-                _mid_payload = {
-                    **_tele_ckpt_meta,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "scheduler_state_dict": (scheduler.state_dict()
-                                             if scheduler is not None else None),
-                    "epoch": epoch,
-                    "batch_idx": batch_idx + 1,
-                    "args": vars(args),
-                }
-                try:
-                    torch.save(_mid_payload, _mid_tmp)
-                    os.replace(_mid_tmp, _mid_path)  # atomic rename
-                    print(f"    [mid-ckpt] saved batch {batch_idx+1} → {_mid_path}")
-                except Exception as _e:
-                    print(f"    [mid-ckpt] save failed: {_e}")
-                    if os.path.exists(_mid_tmp):
-                        try:
-                            os.remove(_mid_tmp)
-                        except Exception:
-                            pass
-
-        if train_samples == 0:
-            print(f"  Epoch {epoch}: all NaN — stopping.")
-            break
-        train_loss /= train_samples
-
-        # Validation
-        val_lift_k = 0.0
-        val_prec_k = 0.0
-        if not args.skip_val and val_wins_lift:
-            # Build decoder_ctx callback if decoder_ctx is enabled
-            _val_ctx_fn = None
-            if args.decoder_ctx and _dec_ctx_np is not None and _lead_time_enc is not None:
-                def _val_ctx_fn(xb_dec, cs, ce, win_date=None):
-                    """Augment decoder input with static context + lead time
-                    encoding (+ optional per-issue-date teleconnection)."""
-                    _ctx_batch = torch.from_numpy(
-                        _dec_ctx_np[cs:ce].astype(np.float32)
-                    ).to(xb_dec.device)
-                    _tv = None
-                    if tele_table is not None:
-                        _tv = torch.from_numpy(
-                            _tele_norm_vec(win_date)).to(xb_dec.device)
-                    return _augment_decoder(xb_dec, _ctx_batch,
-                                            _lead_time_enc, tele_vec=_tv)
-
-            _m = _compute_val_lift_k_v3(
-                model, meteo_patched, fire_patched, val_wins_lift,
-                n_patches, k=args.val_lift_k,
-                n_sample_wins=args.val_lift_sample_wins,
-                chunk=256, device=device,
-                decoder_mode=args.decoder, dec_dim=dec_dim,
-                val_win_dates=val_wins_lift_dates, patch_size=P,
-                # S2S plumbing — MUST be passed so val uses correct forecast
-                # dimensionality. Without these, --decoder s2s with
-                # --s2s_full_cache (e.g. sub4x4 128-dim) falls back to
-                # 9-dim _make_dec_s2s → decoder shape mismatch at val.
-                s2s_cache=s2s_cache, date_to_s2s_idx=date_to_s2s_idx,
-                s2s_means=s2s_means, s2s_stds=s2s_stds,
-                date_to_s2s_lag=date_to_s2s_lag,
-                s2s_max_lag=args.s2s_max_issue_lag,
-                s2s_full_cache=s2s_full_cache,
-                use_patch_embed=args.use_patch_embed,
-                random_encoder=args.random_encoder,
-                cluster_eval=args.cluster_eval,
-                cluster_min_size=args.cluster_min_size,
-                hw=hw, grid=grid, full_val=args.full_val,
-                per_lead_eval=args.per_lead_eval,
-                decoder_ctx_fn=_val_ctx_fn,
-                # 2026-04-21: per-window JSON is only dumped at final
-                # epoch (mid-training val would overwrite useful dumps).
-                save_per_window_json=(
-                    args.save_per_window_json
-                    if args.save_per_window_json
-                    and epoch == args.epochs else None
-                ),
-            )
-            val_lift_k = _m["lift_k"]
-            val_prec_k = _m["precision_k"]
-            val_roc_auc = _m.get("roc_auc", 0.0)
-            val_brier = _m.get("brier", 0.0)
-            cluster_str = ""
-            if args.cluster_eval and "cluster_lift_k" in _m:
-                _cl_std = _m.get('cluster_lift_k_std', 0.0)
-                _cl_nw = _m.get('cluster_n_windows', 0)
-                cluster_str = (
-                    f"cluster: Lift={_m['cluster_lift_k']:.2f}±{_cl_std:.2f}x  "
-                    f"Recall={_m.get('cluster_recall_k', 0):.3f}  "
-                    f"avg_clusters={_m.get('n_clusters', 0):.0f}  "
-                    f"({_cl_nw} wins)"
-                )
-            if args.per_lead_eval and "per_lead_lift" in _m:
-                _pl = _m["per_lead_lift"]
-                _pp = _m["per_lead_precision"]
-                print(f"  per-lead Lift@{args.val_lift_k}: "
-                      + "  ".join(f"d{i}={v:.1f}x" for i, v in enumerate(_pl)))
-                print(f"  per-lead Prec@{args.val_lift_k}: "
-                      + "  ".join(f"d{i}={v:.3f}" for i, v in enumerate(_pp)))
-
-        epoch_time = time.time() - t0_ep
-        print(f"\n  Epoch {epoch:3d}/{args.epochs}  "
-              f"loss={train_loss:.6f}  "
-              f"Lift@{args.val_lift_k}={val_lift_k:.2f}x  "
-              f"prec={val_prec_k:.4f}  "
-              f"ROC-AUC={val_roc_auc:.4f}  "
-              f"Brier={val_brier:.6f}  "
-              f"({epoch_time/60:.1f}m)")
-        if cluster_str:
-            print(f"  {cluster_str}")
-
-        # ── W&B per-epoch log ──────────────────────────────────────────
-        if _wandb is not None:
-            log_dict = {
-                "epoch": epoch,
-                "train/loss": float(train_loss),
-                "val/lift_k": float(val_lift_k),
-                "val/prec_k": float(val_prec_k),
-                "val/roc_auc": float(val_roc_auc),
-                "val/brier": float(val_brier),
-                "epoch_time_min": float(epoch_time / 60),
-                "lr": float(optimizer.param_groups[0]['lr']),
-            }
-            if args.cluster_eval and "cluster_lift_k" in _m:
-                log_dict["val/cluster_lift_k"] = float(_m["cluster_lift_k"])
-                log_dict["val/cluster_recall_k"] = float(_m.get("cluster_recall_k", 0))
-                log_dict["val/n_clusters"] = float(_m.get("n_clusters", 0))
-            try:
-                _wandb.log(log_dict, step=epoch)
-            except Exception as e:
-                print(f"  [wandb] log failed: {e}")
-
-        scheduler.step()
-
-        is_new_best = (not args.skip_val) and (val_lift_k > best_val_lift_k)
-        if is_new_best:
-            best_val_lift_k = val_lift_k
-
-        ckpt_payload = {
-            **_tele_ckpt_meta,
-            "epoch": epoch,
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "scheduler_state": scheduler.state_dict(),
-            "scaler_state": scaler.state_dict(),
-            "best_val_lift_k_global": best_val_lift_k,
-            "meteo_means": meteo_means,
-            "meteo_stds": meteo_stds,
-            "patch_dim_enc": patch_dim_enc,
-            "patch_dim_dec": patch_dim_dec,
-            "patch_dim_out": patch_dim_out,
-            "hw": hw,
-            "grid": grid,
-            "args": vars(args),
-            "channel_names": CHANNEL_NAMES,
-            "n_channels": N_CHANNELS,
-            "s2s_means": s2s_means,
-            "s2s_stds": s2s_stds,
-        }
-        epoch_ckpt = os.path.join(ckpt_dir, f"epoch_{epoch:02d}.pt")
-        torch.save(ckpt_payload, epoch_ckpt)
-        if is_new_best:
-            torch.save(ckpt_payload, best_ckpt)
-            print(f"  ★ New best Lift@{args.val_lift_k}={val_lift_k:.2f}x → best_model.pt")
-
-    print(f"\n{'='*70}")
-    print(f"TRAINING COMPLETE  [V3, {N_CHANNELS} channels, {args.loss_fn} loss]")
-    print(f"  Best Lift@{args.val_lift_k}: {best_val_lift_k:.2f}x")
-    print(f"  Checkpoint: {best_ckpt}")
-    print(f"{'='*70}")
-
-    if _wandb is not None:
-        try:
-            _wandb.summary["best_val_lift_k"] = float(best_val_lift_k)
-            _wandb.finish()
-        except Exception:
-            pass
-
-    mem_guard.shutdown()
+    run_training(
+        CHANNEL_NAMES=CHANNEL_NAMES,
+        N_CHANNELS=N_CHANNELS,
+        P=P,
+        _dec_ctx_np=_dec_ctx_np,
+        _lead_time_enc=_lead_time_enc,
+        _tele_ckpt_meta=_tele_ckpt_meta,
+        _tele_norm_vec=_tele_norm_vec,
+        _wandb=_wandb,
+        amp_enabled=amp_enabled,
+        args=args,
+        best_ckpt=best_ckpt,
+        best_val_lift_k=best_val_lift_k,
+        ckpt_dir=ckpt_dir,
+        criterion=criterion,
+        date_to_s2s_idx=date_to_s2s_idx,
+        date_to_s2s_lag=date_to_s2s_lag,
+        dec_dim=dec_dim,
+        device=device,
+        fire_patched=fire_patched,
+        grid=grid,
+        hw=hw,
+        mem_guard=mem_guard,
+        meteo_means=meteo_means,
+        meteo_patched=meteo_patched,
+        meteo_stds=meteo_stds,
+        model=model,
+        n_batches=n_batches,
+        n_patches=n_patches,
+        optimizer=optimizer,
+        patch_dim_dec=patch_dim_dec,
+        patch_dim_enc=patch_dim_enc,
+        patch_dim_out=patch_dim_out,
+        paths_cfg=paths_cfg,
+        s2s_cache=s2s_cache,
+        s2s_full_cache=s2s_full_cache,
+        s2s_means=s2s_means,
+        s2s_stds=s2s_stds,
+        sample_weights_arr=sample_weights_arr,
+        scaler=scaler,
+        scheduler=scheduler,
+        start_epoch=start_epoch,
+        tele_per_sample=tele_per_sample,
+        tele_table=tele_table,
+        train_dl=train_dl,
+        val_wins_lift=val_wins_lift,
+        val_wins_lift_dates=val_wins_lift_dates,
+    )
 
 
 if __name__ == "__main__":
