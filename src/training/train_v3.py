@@ -995,10 +995,12 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
 # Main
 # ------------------------------------------------------------------ #
 
-def main():
-    run_started_at = time.time()
-    run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
+def _build_arg_parser():
+    """Build the CLI argument parser for train_v3.
 
+    Extracted verbatim from main() so main() reads as orchestration.
+    The argument set (names, defaults, help) is unchanged.
+    """
     ap = argparse.ArgumentParser(
         description="Train S2S Hotspot Transformer V3 [10 channels, Focal Loss, Hard Negatives]"
     )
@@ -1314,8 +1316,14 @@ def main():
                          "On HPC compute nodes, set WANDB_MODE=offline in env.")
     ap.add_argument("--wandb_tags", type=str, default="",
                     help="Comma-separated W&B tags (e.g. '9ch,enc14,4y_2018').")
+    return ap
 
-    args = ap.parse_args()
+
+def main():
+    run_started_at = time.time()
+    run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
+
+    args = _build_arg_parser().parse_args()
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
