@@ -347,10 +347,18 @@ def run_inference(args) -> None:
                 win_end = target + timedelta(days=args.eval_window)
                 title_obs = (f"Observed fire {target.isoformat()} to "
                              f"{win_end.isoformat()} ({args.truth_source})")
-            render_map(prob, bounds, crs, out_png, title_pred=title_pred,
-                       provinces_shp=args.provinces_shp,
-                       observed=observed, obs_bounds=obs_bounds,
-                       title_obs=title_obs)
+            # The PNG is a convenience layer; the GeoTIFF is the real
+            # deliverable. Never let a plotting failure (matplotlib absent in
+            # a compute venv, geopandas/shapefile issues) discard the forecast
+            # and metrics already written -- best-effort, warn on failure.
+            try:
+                render_map(prob, bounds, crs, out_png, title_pred=title_pred,
+                           provinces_shp=args.provinces_shp,
+                           observed=observed, obs_bounds=obs_bounds,
+                           title_obs=title_obs)
+            except Exception as e:
+                print(f"  [map] skipped ({type(e).__name__}: {e}); "
+                      f"probability tif and metrics are unaffected")
 
     print(f"\n[run_inference] DONE. Output dir: {args.out_dir}")
 
