@@ -1955,6 +1955,242 @@ def run_training(
     mem_guard.shutdown()
 
 
+def patchify_fire_labels(
+        args,
+        P,
+        T,
+        Hc,
+        Wc,
+        n_patches,
+        out_dim,
+        aligned_dates,
+        fire_stack,
+        fusion_tag,
+        master_info):
+    """STEP 7: patchify fire-label frames into a (T, n_patches, out_dim)
+    uint8 array, reusing the master/per-run .dat cache when present. Extracted
+    verbatim from main() (body byte-identical). Returns (fire_patched, fire_gb).
+
+    The caller must `del fire_stack` after this returns: an in-function del
+    would only drop the local parameter binding, not free main's array.
+    """
+    print(f"\n[STEP 7] Pre-computing fire patches...")
+    fire_gb = T * n_patches * out_dim / 1e9
+    fire_cache_path = None
+    fire_master_patched_path = None
+    if master_info is not None:
+        T_master = master_info["T_master"]
+        fire_master_patched_path = os.path.join(
+            master_info["cache_dir"],
+            f"fire_patched_v3_r{args.dilate_radius}{fusion_tag}"
+            f"_{master_info['data_start']}_{master_info['data_end']}"
+            f"_{T_master}x{n_patches}x{out_dim}.dat")
+    elif args.cache_dir:
+        fire_cache_path = os.path.join(args.cache_dir,
+                                       f"fire_patched_v3_r{args.dilate_radius}{fusion_tag}"
+                                       f"_{aligned_dates[0]}_{aligned_dates[-1]}"
+                                       f"_{T}x{n_patches}x{out_dim}.dat")
+
+    if fire_master_patched_path and os.path.exists(fire_master_patched_path) and not args.overwrite:
+        T_master = master_info["T_master"]
+        t0 = master_info["t_offset"]
+        master_fp = np.memmap(fire_master_patched_path, dtype='uint8', mode='r',
+                              shape=(T_master, n_patches, out_dim))
+        # Time-first layout: slice on dim 0.
+        fire_patched = master_fp[t0:t0 + T]
+        print(f"  Loaded MASTER fire_patched + sliced: {fire_master_patched_path}")
+    elif fire_cache_path and os.path.exists(fire_cache_path) and not args.overwrite:
+        _fp_T = os.path.getsize(fire_cache_path) // (n_patches * out_dim)
+        fire_patched = np.memmap(fire_cache_path, dtype='uint8', mode='r',
+                                 shape=(_fp_T, n_patches, out_dim))
+        if _fp_T > T:
+            fire_patched = fire_patched[:T]
+        print(f"  Loaded cached fire_patched: {fire_cache_path}")
+    else:
+        if fire_cache_path:
+            fire_patched = np.memmap(fire_cache_path, dtype='uint8', mode='w+',
+                                     shape=(T, n_patches, out_dim))
+        else:
+            fire_patched = np.empty((T, n_patches, out_dim), dtype=np.uint8)
+        for t_idx in range(min(T, fire_stack.shape[0])):
+            frame_f = fire_stack[t_idx, :Hc, :Wc, np.newaxis].astype(np.float32)
+            fire_patched[t_idx] = _patchify_frame(frame_f, P).astype(np.uint8)
+        if fire_cache_path:
+            fire_patched.flush()
+        print(f"  fire_patched: {fire_patched.shape}  ~{fire_gb:.1f} GB")
+    return fire_patched, fire_gb
+
+
+def setup_s2s_cache(
+        args,
+        aligned_dates,
+        dec_dim_base,
+        n_patches):
+    """S2S decoder cache setup (only active for --decoder s2s_legacy or
+    --decoder s2s with --s2s_full_cache; otherwise every value stays None).
+    Loads the memmap cache, builds the date->row mapping, and computes
+    train-period per-channel normalization stats. Extracted verbatim from
+    main() (body byte-identical). Returns (s2s_cache, s2s_full_cache,
+    date_to_s2s_idx, date_to_s2s_lag, s2s_means, s2s_stds).
+    """
+    s2s_cache = None
+    s2s_full_cache = None
+    date_to_s2s_idx = None
+    date_to_s2s_exact = None
+    date_to_s2s_lag = None
+    s2s_means = None
+    s2s_stds = None
+
+    if args.decoder == "s2s_legacy":
+        print(f"\n[S2S decoder — legacy patch-mean] dec_dim={dec_dim_base}")
+        s2s_cache_path = args.s2s_cache
+        if not s2s_cache_path:
+            raise ValueError("--decoder s2s_legacy requires --s2s_cache <path>")
+        if not os.path.exists(s2s_cache_path):
+            raise FileNotFoundError(f"S2S cache not found: {s2s_cache_path}")
+        dates_file = s2s_cache_path + ".dates.npy"
+        if not os.path.exists(dates_file):
+            raise FileNotFoundError(f"S2S dates file not found: {dates_file}")
+        s2s_dates = np.load(dates_file, allow_pickle=True)
+        s2s_n_dates = len(s2s_dates)
+        print(f"  S2S cache dates: {s2s_n_dates}  ({s2s_dates[0]} .. {s2s_dates[-1]})")
+        s2s_cache = np.memmap(s2s_cache_path, dtype="float16", mode="r",
+                              shape=(s2s_n_dates, n_patches, 32, S2S_DEC_DIM - 3))
+        print(f"  S2S cache shape: {s2s_cache.shape}  "
+              f"({os.path.getsize(s2s_cache_path)/1e9:.2f} GB)")
+        date_to_s2s_idx, date_to_s2s_exact, date_to_s2s_lag = _expand_s2s_date_mapping(
+            s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
+        )
+        _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
+        _n_fallback = sum(
+            1 for d in aligned_dates
+            if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
+        )
+        _n_miss = len(aligned_dates) - _n_exact - _n_fallback
+        print(f"  S2S date mapping: exact={_n_exact}  fallback={_n_fallback}  "
+              f"miss={_n_miss}  (max_lag={args.s2s_max_issue_lag}d)")
+
+        # Per-channel normalization stats (train period only)
+        from datetime import date as _date_cls
+        _pred_start = _date_cls.fromisoformat(str(args.pred_start))
+        _s2s_train_rows = [
+            i for i, d in enumerate(s2s_dates)
+            if _date_cls.fromisoformat(str(d)) < _pred_start
+        ]
+        _S2S_N_CH = S2S_DEC_DIM - 3   # 6 weather channels (excl. issue_age/is_fallback/is_missing)
+        _S2S_CH_NAMES = ["2t", "2d", "tcw", "sm20", "st20", "VPD"]
+        if _s2s_train_rows:
+            _rng_s2s = np.random.default_rng(42)
+            _sample_patches = _rng_s2s.choice(n_patches, size=min(2000, n_patches), replace=False)
+            _ch_sums   = np.zeros(_S2S_N_CH, dtype=np.float64)
+            _ch_sqsums = np.zeros(_S2S_N_CH, dtype=np.float64)
+            _ch_counts = np.zeros(_S2S_N_CH, dtype=np.int64)
+            for _row_i in _s2s_train_rows:
+                _block = np.array(s2s_cache[_row_i, _sample_patches, :, :], dtype=np.float32)
+                _flat  = _block.reshape(-1, _S2S_N_CH)
+                _nz    = np.any(_flat != 0, axis=1)
+                _valid = _flat[_nz]
+                if len(_valid) > 0:
+                    _ch_sums   += _valid.sum(axis=0)
+                    _ch_sqsums += (_valid ** 2).sum(axis=0)
+                    _ch_counts += len(_valid)
+            s2s_means = np.zeros(_S2S_N_CH, dtype=np.float32)
+            s2s_stds  = np.ones(_S2S_N_CH, dtype=np.float32)
+            for _ch in range(_S2S_N_CH):
+                if _ch_counts[_ch] > 0:
+                    s2s_means[_ch] = _ch_sums[_ch] / _ch_counts[_ch]
+                    _var = _ch_sqsums[_ch] / _ch_counts[_ch] - s2s_means[_ch] ** 2
+                    s2s_stds[_ch]  = max(float(np.sqrt(max(_var, 0))), 1e-6)
+            print(f"\n  S2S norm stats ({len(_s2s_train_rows)} train rows):")
+            for _ch in range(_S2S_N_CH):
+                print(f"    {_S2S_CH_NAMES[_ch]:>4s}:  "
+                      f"mean={s2s_means[_ch]:10.4f}  std={s2s_stds[_ch]:10.4f}")
+        else:
+            print("  WARNING: no S2S training-period rows — skipping normalization")
+            s2s_means = None
+            s2s_stds  = None
+
+    elif args.decoder == "s2s" and args.s2s_full_cache:
+        print(f"\n[S2S decoder — full-patch] dec_dim={dec_dim_base}")
+        s2s_fc_path = args.s2s_full_cache
+        if not os.path.exists(s2s_fc_path):
+            raise FileNotFoundError(f"S2S full-patch cache not found: {s2s_fc_path}")
+        dates_file = s2s_fc_path + ".dates.npy"
+        if not os.path.exists(dates_file):
+            raise FileNotFoundError(f"S2S full-patch dates file not found: {dates_file}")
+        s2s_dates = np.load(dates_file, allow_pickle=True)
+        s2s_n_dates = len(s2s_dates)
+        # Full-patch cache shape: (n_dates, n_patches, 32, 2048)
+        s2s_full_cache = np.memmap(s2s_fc_path, dtype="float16", mode="r",
+                                    shape=(s2s_n_dates, n_patches, 32, dec_dim_base))
+        print(f"  S2S full-patch cache: {s2s_full_cache.shape}  "
+              f"({os.path.getsize(s2s_fc_path)/1e12:.2f} TB)")
+        date_to_s2s_idx, date_to_s2s_exact, date_to_s2s_lag = _expand_s2s_date_mapping(
+            s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
+        )
+        _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
+        _n_fallback = sum(
+            1 for d in aligned_dates
+            if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
+        )
+        _n_miss = len(aligned_dates) - _n_exact - _n_fallback
+        print(f"  S2S date mapping: exact={_n_exact}  fallback={_n_fallback}  "
+              f"miss={_n_miss}  (max_lag={args.s2s_max_issue_lag}d)")
+    return (s2s_cache, s2s_full_cache, date_to_s2s_idx,
+            date_to_s2s_lag, s2s_means, s2s_stds)
+
+
+def build_loss_criterion(
+        args,
+        pos_pairs,
+        train_wins,
+        fire_patched,
+        chosen,
+        out_dim,
+        decoder_days,
+        device):
+    """STEP 8: compute the class-imbalance pos_weight from the sampled
+    positive/negative pairs and construct the loss criterion selected by
+    --loss_fn (bce/focal/ranking/hybrid). Extracted from main(); the only
+    change vs. the inline block is that `device` is now a parameter (hoisted
+    to main as a top-level runtime concern) instead of computed here.
+    Returns the criterion.
+    """
+    print(f"\n[STEP 8] Building loss: {args.loss_fn}")
+    # Compute pos_weight
+    pos_pixels = 0
+    neg_pixels_in_pos = 0
+    for win_i, patch_i in pos_pairs:
+        hs, he, ts, te = train_wins[win_i]
+        pf = fire_patched[ts:te, patch_i, :]
+        pos_pixels += int(pf.sum())
+        neg_pixels_in_pos += pf.size - int(pf.sum())
+    neg_pixels_total = neg_pixels_in_pos + len(chosen) * out_dim * decoder_days
+    raw_ratio = neg_pixels_total / max(pos_pixels, 1)
+    pos_weight_val = min(raw_ratio, args.pos_weight_cap)
+    print(f"  pos_weight={pos_weight_val:.2f} (raw={raw_ratio:.1f}, cap={args.pos_weight_cap})")
+
+    pw_tensor = torch.tensor([pos_weight_val], dtype=torch.float32).to(device)
+
+    if args.loss_fn == "bce":
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pw_tensor)
+    elif args.loss_fn == "focal":
+        criterion = FocalBCELoss(alpha=args.focal_alpha, gamma=args.focal_gamma,
+                                 pos_weight=pw_tensor)
+    elif args.loss_fn == "ranking":
+        criterion = ApproxNDCGLoss(temperature=args.rank_temperature,
+                                   subsample=args.rank_subsample)
+    elif args.loss_fn == "hybrid":
+        criterion = HybridLoss(rank_weight=args.rank_weight,
+                               focal_alpha=args.focal_alpha,
+                               focal_gamma=args.focal_gamma,
+                               pos_weight=pw_tensor,
+                               rank_temperature=args.rank_temperature,
+                               rank_subsample=args.rank_subsample)
+    print(f"  Loss: {criterion.__class__.__name__}")
+    return criterion
+
+
 def main():
     run_started_at = time.time()
     run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
@@ -2185,50 +2421,11 @@ def main():
     # 22y was unaffected because no .dat file pre-existed.
     # Fix: include fusion_tag in fire_patched cache filename, matching
     # the fire_dilated cache name convention.
-    print(f"\n[STEP 7] Pre-computing fire patches...")
-    fire_gb = T * n_patches * out_dim / 1e9
-    fire_cache_path = None
-    fire_master_patched_path = None
-    if master_info is not None:
-        T_master = master_info["T_master"]
-        fire_master_patched_path = os.path.join(
-            master_info["cache_dir"],
-            f"fire_patched_v3_r{args.dilate_radius}{fusion_tag}"
-            f"_{master_info['data_start']}_{master_info['data_end']}"
-            f"_{T_master}x{n_patches}x{out_dim}.dat")
-    elif args.cache_dir:
-        fire_cache_path = os.path.join(args.cache_dir,
-                                       f"fire_patched_v3_r{args.dilate_radius}{fusion_tag}"
-                                       f"_{aligned_dates[0]}_{aligned_dates[-1]}"
-                                       f"_{T}x{n_patches}x{out_dim}.dat")
-
-    if fire_master_patched_path and os.path.exists(fire_master_patched_path) and not args.overwrite:
-        T_master = master_info["T_master"]
-        t0 = master_info["t_offset"]
-        master_fp = np.memmap(fire_master_patched_path, dtype='uint8', mode='r',
-                              shape=(T_master, n_patches, out_dim))
-        # Time-first layout: slice on dim 0.
-        fire_patched = master_fp[t0:t0 + T]
-        print(f"  Loaded MASTER fire_patched + sliced: {fire_master_patched_path}")
-    elif fire_cache_path and os.path.exists(fire_cache_path) and not args.overwrite:
-        _fp_T = os.path.getsize(fire_cache_path) // (n_patches * out_dim)
-        fire_patched = np.memmap(fire_cache_path, dtype='uint8', mode='r',
-                                 shape=(_fp_T, n_patches, out_dim))
-        if _fp_T > T:
-            fire_patched = fire_patched[:T]
-        print(f"  Loaded cached fire_patched: {fire_cache_path}")
-    else:
-        if fire_cache_path:
-            fire_patched = np.memmap(fire_cache_path, dtype='uint8', mode='w+',
-                                     shape=(T, n_patches, out_dim))
-        else:
-            fire_patched = np.empty((T, n_patches, out_dim), dtype=np.uint8)
-        for t_idx in range(min(T, fire_stack.shape[0])):
-            frame_f = fire_stack[t_idx, :Hc, :Wc, np.newaxis].astype(np.float32)
-            fire_patched[t_idx] = _patchify_frame(frame_f, P).astype(np.uint8)
-        if fire_cache_path:
-            fire_patched.flush()
-        print(f"  fire_patched: {fire_patched.shape}  ~{fire_gb:.1f} GB")
+    fire_patched, fire_gb = patchify_fire_labels(
+        args=args, P=P, T=T, Hc=Hc, Wc=Wc, n_patches=n_patches, out_dim=out_dim,
+        aligned_dates=aligned_dates, fire_stack=fire_stack,
+        fusion_tag=fusion_tag, master_info=master_info,
+    )
     del fire_stack
 
     if args.prep_only:
@@ -2247,109 +2444,11 @@ def main():
     # ----------------------------------------------------------------
     # S2S cache setup  (only for --decoder s2s_legacy)
     # ----------------------------------------------------------------
-    s2s_cache = None
-    s2s_full_cache = None
-    date_to_s2s_idx = None
-    date_to_s2s_exact = None
-    date_to_s2s_lag = None
-    s2s_means = None
-    s2s_stds = None
-
-    if args.decoder == "s2s_legacy":
-        print(f"\n[S2S decoder — legacy patch-mean] dec_dim={dec_dim_base}")
-        s2s_cache_path = args.s2s_cache
-        if not s2s_cache_path:
-            raise ValueError("--decoder s2s_legacy requires --s2s_cache <path>")
-        if not os.path.exists(s2s_cache_path):
-            raise FileNotFoundError(f"S2S cache not found: {s2s_cache_path}")
-        dates_file = s2s_cache_path + ".dates.npy"
-        if not os.path.exists(dates_file):
-            raise FileNotFoundError(f"S2S dates file not found: {dates_file}")
-        s2s_dates = np.load(dates_file, allow_pickle=True)
-        s2s_n_dates = len(s2s_dates)
-        print(f"  S2S cache dates: {s2s_n_dates}  ({s2s_dates[0]} .. {s2s_dates[-1]})")
-        s2s_cache = np.memmap(s2s_cache_path, dtype="float16", mode="r",
-                              shape=(s2s_n_dates, n_patches, 32, S2S_DEC_DIM - 3))
-        print(f"  S2S cache shape: {s2s_cache.shape}  "
-              f"({os.path.getsize(s2s_cache_path)/1e9:.2f} GB)")
-        date_to_s2s_idx, date_to_s2s_exact, date_to_s2s_lag = _expand_s2s_date_mapping(
-            s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
-        )
-        _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
-        _n_fallback = sum(
-            1 for d in aligned_dates
-            if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
-        )
-        _n_miss = len(aligned_dates) - _n_exact - _n_fallback
-        print(f"  S2S date mapping: exact={_n_exact}  fallback={_n_fallback}  "
-              f"miss={_n_miss}  (max_lag={args.s2s_max_issue_lag}d)")
-
-        # Per-channel normalization stats (train period only)
-        from datetime import date as _date_cls
-        _pred_start = _date_cls.fromisoformat(str(args.pred_start))
-        _s2s_train_rows = [
-            i for i, d in enumerate(s2s_dates)
-            if _date_cls.fromisoformat(str(d)) < _pred_start
-        ]
-        _S2S_N_CH = S2S_DEC_DIM - 3   # 6 weather channels (excl. issue_age/is_fallback/is_missing)
-        _S2S_CH_NAMES = ["2t", "2d", "tcw", "sm20", "st20", "VPD"]
-        if _s2s_train_rows:
-            _rng_s2s = np.random.default_rng(42)
-            _sample_patches = _rng_s2s.choice(n_patches, size=min(2000, n_patches), replace=False)
-            _ch_sums   = np.zeros(_S2S_N_CH, dtype=np.float64)
-            _ch_sqsums = np.zeros(_S2S_N_CH, dtype=np.float64)
-            _ch_counts = np.zeros(_S2S_N_CH, dtype=np.int64)
-            for _row_i in _s2s_train_rows:
-                _block = np.array(s2s_cache[_row_i, _sample_patches, :, :], dtype=np.float32)
-                _flat  = _block.reshape(-1, _S2S_N_CH)
-                _nz    = np.any(_flat != 0, axis=1)
-                _valid = _flat[_nz]
-                if len(_valid) > 0:
-                    _ch_sums   += _valid.sum(axis=0)
-                    _ch_sqsums += (_valid ** 2).sum(axis=0)
-                    _ch_counts += len(_valid)
-            s2s_means = np.zeros(_S2S_N_CH, dtype=np.float32)
-            s2s_stds  = np.ones(_S2S_N_CH, dtype=np.float32)
-            for _ch in range(_S2S_N_CH):
-                if _ch_counts[_ch] > 0:
-                    s2s_means[_ch] = _ch_sums[_ch] / _ch_counts[_ch]
-                    _var = _ch_sqsums[_ch] / _ch_counts[_ch] - s2s_means[_ch] ** 2
-                    s2s_stds[_ch]  = max(float(np.sqrt(max(_var, 0))), 1e-6)
-            print(f"\n  S2S norm stats ({len(_s2s_train_rows)} train rows):")
-            for _ch in range(_S2S_N_CH):
-                print(f"    {_S2S_CH_NAMES[_ch]:>4s}:  "
-                      f"mean={s2s_means[_ch]:10.4f}  std={s2s_stds[_ch]:10.4f}")
-        else:
-            print("  WARNING: no S2S training-period rows — skipping normalization")
-            s2s_means = None
-            s2s_stds  = None
-
-    elif args.decoder == "s2s" and args.s2s_full_cache:
-        print(f"\n[S2S decoder — full-patch] dec_dim={dec_dim_base}")
-        s2s_fc_path = args.s2s_full_cache
-        if not os.path.exists(s2s_fc_path):
-            raise FileNotFoundError(f"S2S full-patch cache not found: {s2s_fc_path}")
-        dates_file = s2s_fc_path + ".dates.npy"
-        if not os.path.exists(dates_file):
-            raise FileNotFoundError(f"S2S full-patch dates file not found: {dates_file}")
-        s2s_dates = np.load(dates_file, allow_pickle=True)
-        s2s_n_dates = len(s2s_dates)
-        # Full-patch cache shape: (n_dates, n_patches, 32, 2048)
-        s2s_full_cache = np.memmap(s2s_fc_path, dtype="float16", mode="r",
-                                    shape=(s2s_n_dates, n_patches, 32, dec_dim_base))
-        print(f"  S2S full-patch cache: {s2s_full_cache.shape}  "
-              f"({os.path.getsize(s2s_fc_path)/1e12:.2f} TB)")
-        date_to_s2s_idx, date_to_s2s_exact, date_to_s2s_lag = _expand_s2s_date_mapping(
-            s2s_dates, aligned_dates, max_lag_days=args.s2s_max_issue_lag
-        )
-        _n_exact = sum(1 for d in aligned_dates if date_to_s2s_exact.get(str(d), False))
-        _n_fallback = sum(
-            1 for d in aligned_dates
-            if str(d) in date_to_s2s_idx and not date_to_s2s_exact.get(str(d), False)
-        )
-        _n_miss = len(aligned_dates) - _n_exact - _n_fallback
-        print(f"  S2S date mapping: exact={_n_exact}  fallback={_n_fallback}  "
-              f"miss={_n_miss}  (max_lag={args.s2s_max_issue_lag}d)")
+    (s2s_cache, s2s_full_cache, date_to_s2s_idx, date_to_s2s_lag,
+     s2s_means, s2s_stds) = setup_s2s_cache(
+        args=args, aligned_dates=aligned_dates,
+        dec_dim_base=dec_dim_base, n_patches=n_patches,
+    )
 
     # ----------------------------------------------------------------
     # STEP 7b  Positive pairs + HARD NEGATIVE MINING
@@ -2498,39 +2597,12 @@ def main():
     # ----------------------------------------------------------------
     # STEP 8  Build loss criterion
     # ----------------------------------------------------------------
-    print(f"\n[STEP 8] Building loss: {args.loss_fn}")
-    # Compute pos_weight
-    pos_pixels = 0
-    neg_pixels_in_pos = 0
-    for win_i, patch_i in pos_pairs:
-        hs, he, ts, te = train_wins[win_i]
-        pf = fire_patched[ts:te, patch_i, :]
-        pos_pixels += int(pf.sum())
-        neg_pixels_in_pos += pf.size - int(pf.sum())
-    neg_pixels_total = neg_pixels_in_pos + len(chosen) * out_dim * decoder_days
-    raw_ratio = neg_pixels_total / max(pos_pixels, 1)
-    pos_weight_val = min(raw_ratio, args.pos_weight_cap)
-    print(f"  pos_weight={pos_weight_val:.2f} (raw={raw_ratio:.1f}, cap={args.pos_weight_cap})")
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    pw_tensor = torch.tensor([pos_weight_val], dtype=torch.float32).to(device)
-
-    if args.loss_fn == "bce":
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pw_tensor)
-    elif args.loss_fn == "focal":
-        criterion = FocalBCELoss(alpha=args.focal_alpha, gamma=args.focal_gamma,
-                                 pos_weight=pw_tensor)
-    elif args.loss_fn == "ranking":
-        criterion = ApproxNDCGLoss(temperature=args.rank_temperature,
-                                   subsample=args.rank_subsample)
-    elif args.loss_fn == "hybrid":
-        criterion = HybridLoss(rank_weight=args.rank_weight,
-                               focal_alpha=args.focal_alpha,
-                               focal_gamma=args.focal_gamma,
-                               pos_weight=pw_tensor,
-                               rank_temperature=args.rank_temperature,
-                               rank_subsample=args.rank_subsample)
-    print(f"  Loss: {criterion.__class__.__name__}")
+    criterion = build_loss_criterion(
+        args=args, pos_pairs=pos_pairs, train_wins=train_wins,
+        fire_patched=fire_patched, chosen=chosen, out_dim=out_dim,
+        decoder_days=decoder_days, device=device,
+    )
 
     # ----------------------------------------------------------------
     # Build datasets & dataloaders
