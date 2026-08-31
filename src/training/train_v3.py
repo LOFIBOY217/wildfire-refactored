@@ -63,6 +63,7 @@ import sys
 import time
 import atexit
 import threading
+from dataclasses import dataclass
 from datetime import date, timedelta
 from datetime import datetime as dt
 
@@ -2191,268 +2192,33 @@ def build_loss_criterion(
     return criterion
 
 
-def main():
-    run_started_at = time.time()
-    run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
+@dataclass
+class TrainingPairs:
+    """Outputs of build_training_pairs() (STEP 7b): the shuffled
+    positive+negative training pairs plus hard-negative-mining state."""
+    all_pairs: "np.ndarray"           # (n_pairs, 2) int32 [win_idx, patch_idx]
+    pos_pairs: list                   # list[(win_idx, patch_idx)] positives
+    chosen: "np.ndarray"              # flat indices of sampled hard negatives
+    fire_clim_per_patch: "np.ndarray" # (n_patches,) mean fire_clim per patch
 
-    args = _build_arg_parser().parse_args()
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
 
-    # Climatology blending requires patch_ids passed everywhere → force
-    # --use_patch_embed (adds learned spatial embeddings as a side effect;
-    # this is desired since the model needs to know "which patch" to add
-    # the climatology bias to).
-    if args.clim_blend_alpha > 0 and not args.use_patch_embed:
-        print(f"[clim_blend] auto-enabling --use_patch_embed (alpha={args.clim_blend_alpha})")
-        args.use_patch_embed = True
-    # Gating modes also need patch_ids → force --use_patch_embed.
-    if args.gating != "none":
-        if args.clim_blend_alpha > 0:
-            raise SystemExit("[gating] --gating != none is mutually exclusive "
-                             "with --clim_blend_alpha > 0 (both inject a clim "
-                             "bias). Pick one.")
-        if not args.use_patch_embed:
-            print(f"[gating] auto-enabling --use_patch_embed (mode={args.gating})")
-            args.use_patch_embed = True
-
-    # ── W&B init (optional) ─────────────────────────────────────────────
-    _wandb = None
-    if args.wandb_project:
-        try:
-            import wandb as _wandb
-            tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
-            _wandb.init(
-                project=args.wandb_project,
-                name=args.run_name,
-                tags=tags,
-                config={k: v for k, v in vars(args).items()
-                        if isinstance(v, (int, float, str, bool, type(None)))},
-                resume="allow",
-            )
-            print(f"  [wandb] initialized project={args.wandb_project} "
-                  f"name={args.run_name}")
-        except Exception as e:
-            print(f"  [wandb] disabled (init failed: {e})")
-            _wandb = None
-
-    # ----------------------------------------------------------------
-    # Parse active channels
-    # ----------------------------------------------------------------
-    CHANNEL_NAMES = [c.strip() for c in args.channels.split(",")]
-    N_CHANNELS = len(CHANNEL_NAMES)
-    for ch in CHANNEL_NAMES:
-        if ch not in V3_CHANNEL_DEFS:
-            raise ValueError(f"Unknown channel: {ch}. Available: {list(V3_CHANNEL_DEFS.keys())}")
-
-    # ----------------------------------------------------------------
-    # Config & paths
-    # ----------------------------------------------------------------
-    cfg = load_config(args.config)
-    paths_cfg = cfg.get("paths", {})
-
-    fwi_dir = get_path(cfg, "fwi_dir")
-    obs_root = get_path(cfg, "observation_dir") if "observation_dir" in paths_cfg \
-               else get_path(cfg, "ecmwf_dir")
-    hotspot_csv = get_path(cfg, "hotspot_csv")
-    output_dir = os.path.join(get_path(cfg, "output_dir"), f"{args.run_name}_fire_prob")
-    ckpt_dir = os.path.join(get_path(cfg, "checkpoint_dir"), args.run_name)
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(ckpt_dir, exist_ok=True)
-
-    fire_clim_path = args.fire_climatology_tif or paths_cfg.get("fire_climatology_tif")
-    fire_clim_dir = args.fire_clim_dir or paths_cfg.get("fire_clim_dir")
-    lightning_dir = paths_cfg.get("lightning_dir", "data/lightning")
-    ndvi_dir = paths_cfg.get("ndvi_dir", "data/ndvi_data")
-    terrain_dir = paths_cfg.get("terrain_dir", "data/terrain")
-    burn_scars_dir = paths_cfg.get("burn_scars_dir", "data/burn_scars")
-    precip_dir = paths_cfg.get("precip_dir", "data/era5_precip")
-    deep_soil_dir = args.deep_soil_dir or paths_cfg.get("deep_soil_dir", "data/era5_deep_soil")
-    population_tif = args.population_tif or paths_cfg.get("population_tif", "data/population_density.tif")
-
-    def _date(s):
-        parts = s.split("-")
-        return date(int(parts[0]), int(parts[1]), int(parts[2]))
-
-    data_start_date = _date(args.data_start)
-    pred_start_date = _date(args.pred_start)
-    pred_end_date = _date(args.pred_end)
-
-    # ----------------------------------------------------------------
-    # Teleconnection climate indices (optional decoder context) — LOAD
-    # ----------------------------------------------------------------
-    # Loaded here so tele_K is known before dec_dim is computed (the model's
-    # decoder projection width depends on it). Train-period normalization
-    # stats are computed later, once train_window_dates exists. When the flag
-    # is absent, tele_K = 0 and every downstream shape is unchanged (no-op).
-    tele_table = None       # {date_iso: raw np.array([...], f32)} or None
-    tele_K = 0
-    tele_cols = []
-    tele_norm = None        # {"mean","std","cols"} (train-period); assigned later
-    tele_per_sample = None  # (n_samples, K) float32 (training only) or None
-    _tele_ckpt_meta = {}    # merged into every checkpoint payload (empty = off)
-    if args.teleconnection_csv:
-        if not args.decoder_ctx:
-            raise SystemExit("[teleconnection] --teleconnection_csv requires "
-                             "--decoder_ctx (it extends the decoder context).")
-        tele_cols = [c.strip() for c in args.teleconnection_cols.split(",")
-                     if c.strip()]
-        tele_table, tele_K = _load_teleconnections(
-            args.teleconnection_csv, tele_cols)
-        print(f"  [teleconnection] loaded {len(tele_table)} dates, "
-              f"cols={tele_cols} K={tele_K}")
-
-    def _tele_norm_vec(date_obj, miss_counter=None):
-        """Normalized teleconnection vector for an issue date, or None if off.
-
-        Reads the enclosing `tele_norm` by reference, so it must only be
-        CALLED after tele_norm has been assigned (post train_window_dates).
-        Missing/None dates → normalized zeros, keeping the +K width consistent.
-        """
-        if tele_table is None:
-            return None
-        raw = _tele_lookup(tele_table, tele_K, date_obj, miss_counter)
-        return ((raw - tele_norm["mean"]) / tele_norm["std"]).astype(np.float32)
-
-    in_days = args.in_days
-    lead_start = args.lead_start
-    lead_end = args.lead_end
-    if args.decoder in ("s2s", "s2s_legacy") and lead_end > 45:
-        lead_end = 45
-    decoder_days = lead_end - lead_start + 1
-
-    # Print git SHA so logs always show which commit is running
-    # (Python modules are cached at import — this prevents "fix pushed but job uses old code" confusion)
-    try:
-        import subprocess as _sp
-        _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        _git_sha = _sp.check_output(
-            ["git", "-C", _repo_root, "rev-parse", "--short", "HEAD"],
-            stderr=_sp.DEVNULL,
-        ).decode().strip()
-        _git_status = _sp.check_output(
-            ["git", "-C", _repo_root, "status", "--porcelain"],
-            stderr=_sp.DEVNULL,
-        ).decode().strip()
-        _dirty = " [DIRTY]" if _git_status else ""
-        print(f"\n=== CODE VERSION: git {_git_sha}{_dirty} ===")
-    except Exception as _e:
-        print(f"\n=== CODE VERSION: unknown ({_e}) ===")
-
-    print("\n" + "=" * 70)
-    print("S2S HOTSPOT TRANSFORMER V3  [Focal Loss, Hard Negatives]")
-    print("=" * 70)
-    print(f"  Channels          : {N_CHANNELS} — {', '.join(CHANNEL_NAMES)}")
-    print(f"  Loss function     : {args.loss_fn}"
-          + (f" (alpha={args.focal_alpha}, gamma={args.focal_gamma})" if "focal" in args.loss_fn else ""))
-    print(f"  Hard neg fraction : {args.hard_neg_fraction}")
-    print(f"  Cluster eval      : {args.cluster_eval}")
-    print(f"  decoder           : {args.decoder}")
-    print(f"  data_start        : {data_start_date}")
-    print(f"  pred_start        : {pred_start_date}")
-    print(f"  pred_end          : {pred_end_date}")
-    print(f"  lead range        : {lead_start}–{lead_end} (decoder_days={decoder_days})")
-    print(f"  epochs / batch    : {args.epochs} / {args.batch_size}  lr={args.lr}")
-    print("=" * 70)
-
-    # ----------------------------------------------------------------
-    # STEP 1-6  Build packaged training inputs (see data_cache.build_training_inputs)
-    _inp = build_training_inputs(
-        args=args,
-        CHANNEL_NAMES=CHANNEL_NAMES,
-        N_CHANNELS=N_CHANNELS,
-        burn_scars_dir=burn_scars_dir,
-        ckpt_dir=ckpt_dir,
-        data_start_date=data_start_date,
-        deep_soil_dir=deep_soil_dir,
-        fire_clim_dir=fire_clim_dir,
-        fire_clim_path=fire_clim_path,
-        fwi_dir=fwi_dir,
-        hotspot_csv=hotspot_csv,
-        in_days=in_days,
-        lead_end=lead_end,
-        lightning_dir=lightning_dir,
-        ndvi_dir=ndvi_dir,
-        obs_root=obs_root,
-        paths_cfg=paths_cfg,
-        population_tif=population_tif,
-        precip_dir=precip_dir,
-        pred_end_date=pred_end_date,
-        pred_start_date=pred_start_date,
-        tele_K=tele_K,
-        terrain_dir=terrain_dir,
-    )
-    meteo_patched = _inp.meteo_patched
-    meteo_means = _inp.meteo_means
-    meteo_stds = _inp.meteo_stds
-    static_arrays = _inp.static_arrays
-    fire_stack = _inp.fire_stack
-    aligned_dates = _inp.aligned_dates
-    T = _inp.T
-    P = _inp.P
-    Hc = _inp.Hc
-    Wc = _inp.Wc
-    hw = _inp.hw
-    grid = _inp.grid
-    n_patches = _inp.n_patches
-    enc_dim = _inp.enc_dim
-    dec_dim = _inp.dec_dim
-    dec_dim_base = _inp.dec_dim_base
-    out_dim = _inp.out_dim
-    ctx_extra_dim = _inp.ctx_extra_dim
-    fusion_tag = _inp.fusion_tag
-    master_info = _inp.master_info
-    meteo_mmap_gb = _inp.meteo_mmap_gb
-
-    if getattr(args, "build_cache_only", False):
-        print("\n[BUILD_CACHE_ONLY] Meteo cache built. "
-              "Exiting before fire-patch/training.")
-        return
-
-    # ----------------------------------------------------------------
-    # STEP 7  Patchify fire labels
-    # ----------------------------------------------------------------
-    # CRITICAL BUG FIX 2026-04-29: fire_patched cache filename did NOT
-    # include fusion_tag. Result: a previous run with --label_fusion=False
-    # (CWFIS-only) would create fire_patched.dat that subsequent runs
-    # with --label_fusion=True silently REUSE, despite the dilated-label
-    # source differing. This corrupted ALL 4y/12y training+eval (they
-    # used CWFIS labels even though commands had --label_fusion).
-    # 22y was unaffected because no .dat file pre-existed.
-    # Fix: include fusion_tag in fire_patched cache filename, matching
-    # the fire_dilated cache name convention.
-    fire_patched, fire_gb = patchify_fire_labels(
-        args=args, P=P, T=T, Hc=Hc, Wc=Wc, n_patches=n_patches, out_dim=out_dim,
-        aligned_dates=aligned_dates, fire_stack=fire_stack,
-        fusion_tag=fusion_tag, master_info=master_info,
-    )
-    del fire_stack
-
-    if args.prep_only:
-        print("\n[--prep_only] All caches built. Exiting.")
-        return
-
-    # Build windows
-    all_windows = _build_s2s_windows(T, in_days, lead_start, lead_end)
-    train_wins = [w for w in all_windows if aligned_dates[w[3] - 1] < pred_start_date]
-    val_wins = [w for w in all_windows if aligned_dates[w[1]] >= pred_start_date]
-    print(f"\n  Windows: train={len(train_wins)}  val={len(val_wins)}")
-
-    all_train_window_dates = [str(aligned_dates[w[1]]) for w in train_wins]
-    all_val_window_dates = [str(aligned_dates[w[1]]) for w in val_wins]
-
-    # ----------------------------------------------------------------
-    # S2S cache setup  (only for --decoder s2s_legacy)
-    # ----------------------------------------------------------------
-    (s2s_cache, s2s_full_cache, date_to_s2s_idx, date_to_s2s_lag,
-     s2s_means, s2s_stds) = setup_s2s_cache(
-        args=args, aligned_dates=aligned_dates,
-        dec_dim_base=dec_dim_base, n_patches=n_patches,
-    )
-
-    # ----------------------------------------------------------------
-    # STEP 7b  Positive pairs + HARD NEGATIVE MINING
-    # ----------------------------------------------------------------
+def build_training_pairs(
+        args,
+        CHANNEL_NAMES,
+        Hc,
+        Wc,
+        P,
+        n_patches,
+        grid,
+        fire_patched,
+        static_arrays,
+        train_wins):
+    """STEP 7b: scan train windows for positive patches, apply the spatial
+    buffer / radius negative-candidate restriction, sample hard negatives
+    (fire_clim-weighted), then optional region-balanced positive resampling
+    and region-only filtering. Extracted verbatim from main() (body
+    byte-identical). Returns a TrainingPairs.
+    """
     print(f"\n[STEP 7b] Building pos/neg pairs (hard_neg_fraction={args.hard_neg_fraction})...")
     t0_filter = time.time()
 
@@ -2586,27 +2352,63 @@ def main():
 
     print(f"  Pos: {len(pos_pairs):,}  Neg: {len(chosen):,}  "
           f"Total: {len(all_pairs):,}")
+    return TrainingPairs(all_pairs=all_pairs, pos_pairs=pos_pairs,
+                         chosen=chosen,
+                         fire_clim_per_patch=fire_clim_per_patch)
 
-    # MemoryGuard
-    mem_guard = MemoryGuard(limit_pct=args.mem_limit_pct, interval=15,
-                            meteo_gb=meteo_mmap_gb, fire_gb=fire_gb,
-                            batch_size=args.batch_size)
-    if _PSUTIL_OK and args.mem_limit_pct > 0:
-        mem_guard.start()
 
-    # ----------------------------------------------------------------
-    # STEP 8  Build loss criterion
-    # ----------------------------------------------------------------
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    criterion = build_loss_criterion(
-        args=args, pos_pairs=pos_pairs, train_wins=train_wins,
-        fire_patched=fire_patched, chosen=chosen, out_dim=out_dim,
-        decoder_days=decoder_days, device=device,
-    )
+@dataclass
+class TrainingDataLoaders:
+    """Outputs of build_dataloaders(): the training DataLoader (with any
+    teleconnection / per-sample-weight wrappers applied) and the val-lift
+    window lists, plus the teleconnection per-sample tensor + checkpoint
+    metadata that the training loop and checkpoints need."""
+    train_dl: object
+    train_ds: object
+    sample_weights_arr: object      # (n,) or (n,2) float32, or None
+    tele_per_sample: object         # (n, K) float32, or None
+    tele_ckpt_meta: dict            # merged into every checkpoint payload
+    val_wins_lift: list
+    val_wins_lift_dates: list
 
-    # ----------------------------------------------------------------
-    # Build datasets & dataloaders
-    # ----------------------------------------------------------------
+
+def build_dataloaders(
+        P,
+        _tele_ckpt_meta,
+        _tele_norm_vec,
+        aligned_dates,
+        all_pairs,
+        all_train_window_dates,
+        all_val_window_dates,
+        args,
+        date_to_s2s_idx,
+        date_to_s2s_lag,
+        dec_dim,
+        fire_clim_per_patch,
+        fire_patched,
+        grid,
+        hw,
+        meteo_patched,
+        s2s_cache,
+        s2s_full_cache,
+        s2s_means,
+        s2s_stds,
+        tele_K,
+        tele_cols,
+        tele_per_sample,
+        tele_table,
+        train_wins,
+        val_wins):
+    """Assemble the training DataLoader from the sampled pairs: optional
+    load-to-RAM copy, teleconnection train-period normalization + per-sample
+    vectors, the base S2SHotspotDatasetMixed, the five per-sample weighting
+    strategies (climate-sim / recency / region-loss / novel-per-pixel /
+    anomaly), the teleconnection + weighted-sample dataset wrappers, and the
+    fire-season val-lift window lists. Extracted verbatim from main() (body
+    byte-identical). tele_per_sample / _tele_ckpt_meta are passed in with
+    their main defaults (None / {}) and returned possibly reassigned.
+    Returns a TrainingDataLoaders.
+    """
     meteo_train = meteo_patched
     train_wins_eff = train_wins
     all_pairs_eff = all_pairs
@@ -2935,6 +2737,343 @@ def main():
     val_wins_lift = [x[0] for x in _lift_filtered]
     val_wins_lift_dates = [x[1] for x in _lift_filtered]
     print(f"  Val Lift windows: {len(val_wins_lift)}/{len(val_wins)} (fire season)")
+    return TrainingDataLoaders(
+        train_dl=train_dl, train_ds=train_ds,
+        sample_weights_arr=sample_weights_arr,
+        tele_per_sample=tele_per_sample,
+        tele_ckpt_meta=_tele_ckpt_meta,
+        val_wins_lift=val_wins_lift,
+        val_wins_lift_dates=val_wins_lift_dates,
+    )
+
+
+def main():
+    run_started_at = time.time()
+    run_started_iso = dt.utcnow().isoformat(timespec="seconds") + "Z"
+
+    args = _build_arg_parser().parse_args()
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+    # Climatology blending requires patch_ids passed everywhere → force
+    # --use_patch_embed (adds learned spatial embeddings as a side effect;
+    # this is desired since the model needs to know "which patch" to add
+    # the climatology bias to).
+    if args.clim_blend_alpha > 0 and not args.use_patch_embed:
+        print(f"[clim_blend] auto-enabling --use_patch_embed (alpha={args.clim_blend_alpha})")
+        args.use_patch_embed = True
+    # Gating modes also need patch_ids → force --use_patch_embed.
+    if args.gating != "none":
+        if args.clim_blend_alpha > 0:
+            raise SystemExit("[gating] --gating != none is mutually exclusive "
+                             "with --clim_blend_alpha > 0 (both inject a clim "
+                             "bias). Pick one.")
+        if not args.use_patch_embed:
+            print(f"[gating] auto-enabling --use_patch_embed (mode={args.gating})")
+            args.use_patch_embed = True
+
+    # ── W&B init (optional) ─────────────────────────────────────────────
+    _wandb = None
+    if args.wandb_project:
+        try:
+            import wandb as _wandb
+            tags = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+            _wandb.init(
+                project=args.wandb_project,
+                name=args.run_name,
+                tags=tags,
+                config={k: v for k, v in vars(args).items()
+                        if isinstance(v, (int, float, str, bool, type(None)))},
+                resume="allow",
+            )
+            print(f"  [wandb] initialized project={args.wandb_project} "
+                  f"name={args.run_name}")
+        except Exception as e:
+            print(f"  [wandb] disabled (init failed: {e})")
+            _wandb = None
+
+    # ----------------------------------------------------------------
+    # Parse active channels
+    # ----------------------------------------------------------------
+    CHANNEL_NAMES = [c.strip() for c in args.channels.split(",")]
+    N_CHANNELS = len(CHANNEL_NAMES)
+    for ch in CHANNEL_NAMES:
+        if ch not in V3_CHANNEL_DEFS:
+            raise ValueError(f"Unknown channel: {ch}. Available: {list(V3_CHANNEL_DEFS.keys())}")
+
+    # ----------------------------------------------------------------
+    # Config & paths
+    # ----------------------------------------------------------------
+    cfg = load_config(args.config)
+    paths_cfg = cfg.get("paths", {})
+
+    fwi_dir = get_path(cfg, "fwi_dir")
+    obs_root = get_path(cfg, "observation_dir") if "observation_dir" in paths_cfg \
+               else get_path(cfg, "ecmwf_dir")
+    hotspot_csv = get_path(cfg, "hotspot_csv")
+    output_dir = os.path.join(get_path(cfg, "output_dir"), f"{args.run_name}_fire_prob")
+    ckpt_dir = os.path.join(get_path(cfg, "checkpoint_dir"), args.run_name)
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    fire_clim_path = args.fire_climatology_tif or paths_cfg.get("fire_climatology_tif")
+    fire_clim_dir = args.fire_clim_dir or paths_cfg.get("fire_clim_dir")
+    lightning_dir = paths_cfg.get("lightning_dir", "data/lightning")
+    ndvi_dir = paths_cfg.get("ndvi_dir", "data/ndvi_data")
+    terrain_dir = paths_cfg.get("terrain_dir", "data/terrain")
+    burn_scars_dir = paths_cfg.get("burn_scars_dir", "data/burn_scars")
+    precip_dir = paths_cfg.get("precip_dir", "data/era5_precip")
+    deep_soil_dir = args.deep_soil_dir or paths_cfg.get("deep_soil_dir", "data/era5_deep_soil")
+    population_tif = args.population_tif or paths_cfg.get("population_tif", "data/population_density.tif")
+
+    def _date(s):
+        parts = s.split("-")
+        return date(int(parts[0]), int(parts[1]), int(parts[2]))
+
+    data_start_date = _date(args.data_start)
+    pred_start_date = _date(args.pred_start)
+    pred_end_date = _date(args.pred_end)
+
+    # ----------------------------------------------------------------
+    # Teleconnection climate indices (optional decoder context) — LOAD
+    # ----------------------------------------------------------------
+    # Loaded here so tele_K is known before dec_dim is computed (the model's
+    # decoder projection width depends on it). Train-period normalization
+    # stats are computed later, once train_window_dates exists. When the flag
+    # is absent, tele_K = 0 and every downstream shape is unchanged (no-op).
+    tele_table = None       # {date_iso: raw np.array([...], f32)} or None
+    tele_K = 0
+    tele_cols = []
+    tele_norm = None        # {"mean","std","cols"} (train-period); assigned later
+    tele_per_sample = None  # (n_samples, K) float32 (training only) or None
+    _tele_ckpt_meta = {}    # merged into every checkpoint payload (empty = off)
+    if args.teleconnection_csv:
+        if not args.decoder_ctx:
+            raise SystemExit("[teleconnection] --teleconnection_csv requires "
+                             "--decoder_ctx (it extends the decoder context).")
+        tele_cols = [c.strip() for c in args.teleconnection_cols.split(",")
+                     if c.strip()]
+        tele_table, tele_K = _load_teleconnections(
+            args.teleconnection_csv, tele_cols)
+        print(f"  [teleconnection] loaded {len(tele_table)} dates, "
+              f"cols={tele_cols} K={tele_K}")
+
+    def _tele_norm_vec(date_obj, miss_counter=None):
+        """Normalized teleconnection vector for an issue date, or None if off.
+
+        Reads the enclosing `tele_norm` by reference, so it must only be
+        CALLED after tele_norm has been assigned (post train_window_dates).
+        Missing/None dates → normalized zeros, keeping the +K width consistent.
+        """
+        if tele_table is None:
+            return None
+        raw = _tele_lookup(tele_table, tele_K, date_obj, miss_counter)
+        return ((raw - tele_norm["mean"]) / tele_norm["std"]).astype(np.float32)
+
+    in_days = args.in_days
+    lead_start = args.lead_start
+    lead_end = args.lead_end
+    if args.decoder in ("s2s", "s2s_legacy") and lead_end > 45:
+        lead_end = 45
+    decoder_days = lead_end - lead_start + 1
+
+    # Print git SHA so logs always show which commit is running
+    # (Python modules are cached at import — this prevents "fix pushed but job uses old code" confusion)
+    try:
+        import subprocess as _sp
+        _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        _git_sha = _sp.check_output(
+            ["git", "-C", _repo_root, "rev-parse", "--short", "HEAD"],
+            stderr=_sp.DEVNULL,
+        ).decode().strip()
+        _git_status = _sp.check_output(
+            ["git", "-C", _repo_root, "status", "--porcelain"],
+            stderr=_sp.DEVNULL,
+        ).decode().strip()
+        _dirty = " [DIRTY]" if _git_status else ""
+        print(f"\n=== CODE VERSION: git {_git_sha}{_dirty} ===")
+    except Exception as _e:
+        print(f"\n=== CODE VERSION: unknown ({_e}) ===")
+
+    print("\n" + "=" * 70)
+    print("S2S HOTSPOT TRANSFORMER V3  [Focal Loss, Hard Negatives]")
+    print("=" * 70)
+    print(f"  Channels          : {N_CHANNELS} — {', '.join(CHANNEL_NAMES)}")
+    print(f"  Loss function     : {args.loss_fn}"
+          + (f" (alpha={args.focal_alpha}, gamma={args.focal_gamma})" if "focal" in args.loss_fn else ""))
+    print(f"  Hard neg fraction : {args.hard_neg_fraction}")
+    print(f"  Cluster eval      : {args.cluster_eval}")
+    print(f"  decoder           : {args.decoder}")
+    print(f"  data_start        : {data_start_date}")
+    print(f"  pred_start        : {pred_start_date}")
+    print(f"  pred_end          : {pred_end_date}")
+    print(f"  lead range        : {lead_start}–{lead_end} (decoder_days={decoder_days})")
+    print(f"  epochs / batch    : {args.epochs} / {args.batch_size}  lr={args.lr}")
+    print("=" * 70)
+
+    # ----------------------------------------------------------------
+    # STEP 1-6  Build packaged training inputs (see data_cache.build_training_inputs)
+    _inp = build_training_inputs(
+        args=args,
+        CHANNEL_NAMES=CHANNEL_NAMES,
+        N_CHANNELS=N_CHANNELS,
+        burn_scars_dir=burn_scars_dir,
+        ckpt_dir=ckpt_dir,
+        data_start_date=data_start_date,
+        deep_soil_dir=deep_soil_dir,
+        fire_clim_dir=fire_clim_dir,
+        fire_clim_path=fire_clim_path,
+        fwi_dir=fwi_dir,
+        hotspot_csv=hotspot_csv,
+        in_days=in_days,
+        lead_end=lead_end,
+        lightning_dir=lightning_dir,
+        ndvi_dir=ndvi_dir,
+        obs_root=obs_root,
+        paths_cfg=paths_cfg,
+        population_tif=population_tif,
+        precip_dir=precip_dir,
+        pred_end_date=pred_end_date,
+        pred_start_date=pred_start_date,
+        tele_K=tele_K,
+        terrain_dir=terrain_dir,
+    )
+    meteo_patched = _inp.meteo_patched
+    meteo_means = _inp.meteo_means
+    meteo_stds = _inp.meteo_stds
+    static_arrays = _inp.static_arrays
+    fire_stack = _inp.fire_stack
+    aligned_dates = _inp.aligned_dates
+    T = _inp.T
+    P = _inp.P
+    Hc = _inp.Hc
+    Wc = _inp.Wc
+    hw = _inp.hw
+    grid = _inp.grid
+    n_patches = _inp.n_patches
+    enc_dim = _inp.enc_dim
+    dec_dim = _inp.dec_dim
+    dec_dim_base = _inp.dec_dim_base
+    out_dim = _inp.out_dim
+    ctx_extra_dim = _inp.ctx_extra_dim
+    fusion_tag = _inp.fusion_tag
+    master_info = _inp.master_info
+    meteo_mmap_gb = _inp.meteo_mmap_gb
+
+    if getattr(args, "build_cache_only", False):
+        print("\n[BUILD_CACHE_ONLY] Meteo cache built. "
+              "Exiting before fire-patch/training.")
+        return
+
+    # ----------------------------------------------------------------
+    # STEP 7  Patchify fire labels
+    # ----------------------------------------------------------------
+    # CRITICAL BUG FIX 2026-04-29: fire_patched cache filename did NOT
+    # include fusion_tag. Result: a previous run with --label_fusion=False
+    # (CWFIS-only) would create fire_patched.dat that subsequent runs
+    # with --label_fusion=True silently REUSE, despite the dilated-label
+    # source differing. This corrupted ALL 4y/12y training+eval (they
+    # used CWFIS labels even though commands had --label_fusion).
+    # 22y was unaffected because no .dat file pre-existed.
+    # Fix: include fusion_tag in fire_patched cache filename, matching
+    # the fire_dilated cache name convention.
+    fire_patched, fire_gb = patchify_fire_labels(
+        args=args, P=P, T=T, Hc=Hc, Wc=Wc, n_patches=n_patches, out_dim=out_dim,
+        aligned_dates=aligned_dates, fire_stack=fire_stack,
+        fusion_tag=fusion_tag, master_info=master_info,
+    )
+    del fire_stack
+
+    if args.prep_only:
+        print("\n[--prep_only] All caches built. Exiting.")
+        return
+
+    # Build windows
+    all_windows = _build_s2s_windows(T, in_days, lead_start, lead_end)
+    train_wins = [w for w in all_windows if aligned_dates[w[3] - 1] < pred_start_date]
+    val_wins = [w for w in all_windows if aligned_dates[w[1]] >= pred_start_date]
+    print(f"\n  Windows: train={len(train_wins)}  val={len(val_wins)}")
+
+    all_train_window_dates = [str(aligned_dates[w[1]]) for w in train_wins]
+    all_val_window_dates = [str(aligned_dates[w[1]]) for w in val_wins]
+
+    # ----------------------------------------------------------------
+    # S2S cache setup  (only for --decoder s2s_legacy)
+    # ----------------------------------------------------------------
+    (s2s_cache, s2s_full_cache, date_to_s2s_idx, date_to_s2s_lag,
+     s2s_means, s2s_stds) = setup_s2s_cache(
+        args=args, aligned_dates=aligned_dates,
+        dec_dim_base=dec_dim_base, n_patches=n_patches,
+    )
+
+    # ----------------------------------------------------------------
+    # STEP 7b  Positive pairs + HARD NEGATIVE MINING
+    # ----------------------------------------------------------------
+    _pairs = build_training_pairs(
+        args=args, CHANNEL_NAMES=CHANNEL_NAMES, Hc=Hc, Wc=Wc, P=P,
+        n_patches=n_patches, grid=grid, fire_patched=fire_patched,
+        static_arrays=static_arrays, train_wins=train_wins,
+    )
+    all_pairs = _pairs.all_pairs
+    pos_pairs = _pairs.pos_pairs
+    chosen = _pairs.chosen
+    fire_clim_per_patch = _pairs.fire_clim_per_patch
+
+    # MemoryGuard
+    mem_guard = MemoryGuard(limit_pct=args.mem_limit_pct, interval=15,
+                            meteo_gb=meteo_mmap_gb, fire_gb=fire_gb,
+                            batch_size=args.batch_size)
+    if _PSUTIL_OK and args.mem_limit_pct > 0:
+        mem_guard.start()
+
+    # ----------------------------------------------------------------
+    # STEP 8  Build loss criterion
+    # ----------------------------------------------------------------
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    criterion = build_loss_criterion(
+        args=args, pos_pairs=pos_pairs, train_wins=train_wins,
+        fire_patched=fire_patched, chosen=chosen, out_dim=out_dim,
+        decoder_days=decoder_days, device=device,
+    )
+
+    # ----------------------------------------------------------------
+    # Build datasets & dataloaders
+    # ----------------------------------------------------------------
+    _dl = build_dataloaders(
+        P=P,
+        _tele_ckpt_meta=_tele_ckpt_meta,
+        _tele_norm_vec=_tele_norm_vec,
+        aligned_dates=aligned_dates,
+        all_pairs=all_pairs,
+        all_train_window_dates=all_train_window_dates,
+        all_val_window_dates=all_val_window_dates,
+        args=args,
+        date_to_s2s_idx=date_to_s2s_idx,
+        date_to_s2s_lag=date_to_s2s_lag,
+        dec_dim=dec_dim,
+        fire_clim_per_patch=fire_clim_per_patch,
+        fire_patched=fire_patched,
+        grid=grid,
+        hw=hw,
+        meteo_patched=meteo_patched,
+        s2s_cache=s2s_cache,
+        s2s_full_cache=s2s_full_cache,
+        s2s_means=s2s_means,
+        s2s_stds=s2s_stds,
+        tele_K=tele_K,
+        tele_cols=tele_cols,
+        tele_per_sample=tele_per_sample,
+        tele_table=tele_table,
+        train_wins=train_wins,
+        val_wins=val_wins,
+    )
+    train_dl = _dl.train_dl
+    train_ds = _dl.train_ds
+    sample_weights_arr = _dl.sample_weights_arr
+    tele_per_sample = _dl.tele_per_sample
+    _tele_ckpt_meta = _dl.tele_ckpt_meta
+    val_wins_lift = _dl.val_wins_lift
+    val_wins_lift_dates = _dl.val_wins_lift_dates
 
     # ----------------------------------------------------------------
     # STEP 9  Build model & train
