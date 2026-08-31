@@ -274,7 +274,15 @@ def run_inference(args) -> None:
         print(f"\n=== Post-processing issue={tag} {lead_str} "
               f"target={target.isoformat()} ===")
 
-        prob_tif = _find_prob_tif(args.out_dir, issue, args.lead)
+        try:
+            prob_tif = _find_prob_tif(args.out_dir, issue, args.lead)
+        except FileNotFoundError as e:
+            # forecast() legitimately skips issue dates outside the S2S cache
+            # (see its "[skip] issue_date ... not in S2S cache" path); don't
+            # crash the whole run -- warn and move to the next date.
+            print(f"  [skip] no probability tif for {tag} lead {args.lead}; "
+                  f"forecast likely skipped this date. ({e})")
+            continue
         prob, profile, transform, crs, bounds, nodata = _read_raster(prob_tif)
 
         # ---- Step 2: ranking CSV ---------------------------------------
