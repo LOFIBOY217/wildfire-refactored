@@ -56,7 +56,9 @@ import os
 import sys
 import time
 from datetime import date, timedelta
+from dataclasses import dataclass
 from typing import Dict, List, Optional
+
 
 import numpy as np
 import rasterio
@@ -213,7 +215,32 @@ def _pick_burn_age(burn_index: Dict[int, np.ndarray],
 # ----------------------------------------------------------------
 # Main forecast routine
 # ----------------------------------------------------------------
-def forecast(args) -> None:
+@dataclass
+class ForecastModel:
+    """Loaded checkpoint + reconstructed model and the config it fixes."""
+    model: object
+    device: object
+    P: int
+    in_days: int
+    lead_start: int
+    lead_end: int
+    decoder_days: int
+    decoder_mode: str
+    s2s_max_lag: int
+    meteo_means: np.ndarray
+    meteo_stds: np.ndarray
+    s2s_means: Optional[np.ndarray]
+    s2s_stds: Optional[np.ndarray]
+    CHANNEL_NAMES: List[str]
+    N_CHANNELS: int
+    enc_dim: int
+    use_decoder_ctx: bool
+
+
+def _load_forecast_model(args) -> ForecastModel:
+    """Phases 1-2: load the checkpoint and rebuild the model on device.
+    Channel order, decoder dims and normalization stats are recovered from
+    the checkpoint's saved args and asserted against the state dict."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # ---- 1. Load checkpoint ------------------------------------------------
@@ -328,7 +355,47 @@ def forecast(args) -> None:
     model.eval()
     print(f"  Loaded. device={device} params={sum(p.numel() for p in model.parameters()):,}")
 
-    # ---- 3. Resolve data paths --------------------------------------------
+    return ForecastModel(
+        model=model, device=device, P=P, in_days=in_days,
+        lead_start=lead_start, lead_end=lead_end, decoder_days=decoder_days,
+        decoder_mode=decoder_mode, s2s_max_lag=s2s_max_lag,
+        meteo_means=meteo_means, meteo_stds=meteo_stds,
+        s2s_means=s2s_means, s2s_stds=s2s_stds,
+        CHANNEL_NAMES=CHANNEL_NAMES, N_CHANNELS=N_CHANNELS,
+        enc_dim=enc_dim, use_decoder_ctx=use_decoder_ctx)
+
+
+@dataclass
+class ForecastInputs:
+    """Phases 3-5: resolved data indices, static channels and grid geometry.
+    Built once and reused across issue dates (ndvi_cache is mutated in place)."""
+    fwi_dict: Dict
+    daily_dicts: Dict
+    static_arrays: Dict
+    fire_clim_arrays: Dict
+    burn_index: Dict
+    burn_count_index: Dict
+    ndvi_index: list
+    ndvi_cache: Dict
+    H: int
+    W: int
+    Hc: int
+    Wc: int
+    nph: int
+    npw: int
+    n_patches: int
+    out_profile: Dict
+    s2s_cache: object
+    s2s_dates: object
+
+
+def _load_forecast_inputs(fm: ForecastModel, args) -> ForecastInputs:
+    """Phases 3-5: resolve paths, index input TIFs, load static channels and
+    map the S2S decoder cache. Depends only on checkpoint config in *fm*."""
+    CHANNEL_NAMES = fm.CHANNEL_NAMES
+    N_CHANNELS = fm.N_CHANNELS
+    P = fm.P
+    decoder_mode = fm.decoder_mode
     cfg = load_config(args.config)
     P_PATHS = _resolve_paths(cfg)
 
@@ -444,213 +511,267 @@ def forecast(args) -> None:
               f"({os.path.getsize(args.s2s_cache)/1e9:.2f} GB) "
               f"dates {s2s_dates[0]}..{s2s_dates[-1]}")
 
-    # ---- 6. Issue-date loop ------------------------------------------------
-    issue_dates = [_parse_date(s) for s in args.issue_dates]
-    os.makedirs(args.out_dir, exist_ok=True)
+    return ForecastInputs(
+        fwi_dict=fwi_dict, daily_dicts=daily_dicts, static_arrays=static_arrays,
+        fire_clim_arrays=fire_clim_arrays, burn_index=burn_index,
+        burn_count_index=burn_count_index, ndvi_index=ndvi_index,
+        ndvi_cache=ndvi_cache, H=H, W=W, Hc=Hc, Wc=Wc, nph=nph, npw=npw,
+        n_patches=n_patches, out_profile=out_profile, s2s_cache=s2s_cache,
+        s2s_dates=s2s_dates)
 
-    for issue_date in issue_dates:
-        t0 = time.time()
-        print(f"\n=== Forecasting issue_date={issue_date} ===")
 
-        # The encoder needs days [issue - in_days, issue).
-        enc_start = issue_date - timedelta(days=in_days)
-        enc_dates = [enc_start + timedelta(days=i) for i in range(in_days)]
+def _forecast_one_issue(issue_date, fm: ForecastModel, fi: ForecastInputs, args) -> None:
+    """Phase 6 body: forecast one issue date and write its per-lead TIFs.
+    A former `continue` (missing inputs / issue not in S2S cache) is now an
+    early return -- that one issue is skipped, the rest proceed."""
+    model = fm.model
+    device = fm.device
+    P = fm.P
+    in_days = fm.in_days
+    lead_start = fm.lead_start
+    lead_end = fm.lead_end
+    decoder_days = fm.decoder_days
+    decoder_mode = fm.decoder_mode
+    s2s_max_lag = fm.s2s_max_lag
+    meteo_means = fm.meteo_means
+    meteo_stds = fm.meteo_stds
+    s2s_means = fm.s2s_means
+    s2s_stds = fm.s2s_stds
+    CHANNEL_NAMES = fm.CHANNEL_NAMES
+    N_CHANNELS = fm.N_CHANNELS
+    enc_dim = fm.enc_dim
+    use_decoder_ctx = fm.use_decoder_ctx
+    fwi_dict = fi.fwi_dict
+    daily_dicts = fi.daily_dicts
+    static_arrays = fi.static_arrays
+    fire_clim_arrays = fi.fire_clim_arrays
+    burn_index = fi.burn_index
+    burn_count_index = fi.burn_count_index
+    ndvi_index = fi.ndvi_index
+    ndvi_cache = fi.ndvi_cache
+    H = fi.H
+    W = fi.W
+    Hc = fi.Hc
+    Wc = fi.Wc
+    nph = fi.nph
+    npw = fi.npw
+    n_patches = fi.n_patches
+    out_profile = fi.out_profile
+    s2s_cache = fi.s2s_cache
+    s2s_dates = fi.s2s_dates
+    t0 = time.time()
+    print(f"\n=== Forecasting issue_date={issue_date} ===")
 
-        # ------- Build encoder meteo stack (T=in_days, H, W, C) -------
-        meteo_y = np.zeros((in_days, H, W, N_CHANNELS), dtype=np.float32)
-        _fallback_fwi = None
-        _fallback_t2m = None
+    # The encoder needs days [issue - in_days, issue).
+    enc_start = issue_date - timedelta(days=in_days)
+    enc_dates = [enc_start + timedelta(days=i) for i in range(in_days)]
 
-        skip = False
-        for t_idx, cur_date in enumerate(enc_dates):
-            for ch_idx, ch_name in enumerate(CHANNEL_NAMES):
-                ch_def = V3_CHANNEL_DEFS.get(ch_name)
-                if ch_def is None:
-                    raise ValueError(f"Unknown channel in ckpt: {ch_name}")
+    # ------- Build encoder meteo stack (T=in_days, H, W, C) -------
+    meteo_y = np.zeros((in_days, H, W, N_CHANNELS), dtype=np.float32)
+    _fallback_fwi = None
+    _fallback_t2m = None
 
-                # FWI: required, fallback to previous day if missing.
-                if ch_name == "FWI":
-                    if cur_date in fwi_dict:
-                        arr = _read_tif_safe(fwi_dict[cur_date], _fallback_fwi)
-                        _fallback_fwi = arr
-                    elif _fallback_fwi is not None:
-                        arr = _fallback_fwi
-                    else:
-                        print(f"  [skip] no FWI for {cur_date} and no fallback")
-                        skip = True
-                        break
-                    meteo_y[t_idx, ..., ch_idx] = np.nan_to_num(
-                        arr, nan=float(meteo_means[ch_idx]))
+    skip = False
+    for t_idx, cur_date in enumerate(enc_dates):
+        for ch_idx, ch_name in enumerate(CHANNEL_NAMES):
+            ch_def = V3_CHANNEL_DEFS.get(ch_name)
+            if ch_def is None:
+                raise ValueError(f"Unknown channel in ckpt: {ch_name}")
 
-                elif ch_name == "2t":
-                    d = daily_dicts.get("2t", {})
-                    if cur_date in d:
-                        arr = _read_tif_safe(d[cur_date], _fallback_t2m)
-                        _fallback_t2m = arr
-                    elif _fallback_t2m is not None:
-                        arr = _fallback_t2m
-                    else:
-                        print(f"  [skip] no 2t for {cur_date}")
-                        skip = True
-                        break
-                    meteo_y[t_idx, ..., ch_idx] = np.nan_to_num(
-                        arr, nan=float(meteo_means[ch_idx]))
-
-                elif ch_def["type"] == "static":
-                    meteo_y[t_idx, ..., ch_idx] = static_arrays.get(
-                        ch_name, np.zeros((H, W), dtype=np.float32))
-
-                elif ch_name == "fire_clim":
-                    meteo_y[t_idx, ..., ch_idx] = _pick_fire_clim(
-                        fire_clim_arrays, cur_date.year, H, W)
-
-                elif ch_name == "burn_age":
-                    meteo_y[t_idx, ..., ch_idx] = _pick_burn_age(
-                        burn_index, cur_date.year, H, W)
-                elif ch_name == "burn_count":
-                    meteo_y[t_idx, ..., ch_idx] = _pick_burn_age(
-                        burn_count_index, cur_date.year, H, W)
-
-                elif ch_name == "NDVI":
-                    meteo_y[t_idx, ..., ch_idx] = _interpolate_ndvi(
-                        cur_date, ndvi_index, ndvi_cache, H, W)
-
-                elif ch_name in daily_dicts:
-                    d = daily_dicts[ch_name]
-                    if cur_date in d:
-                        arr = _read_tif_safe(d[cur_date], None)
-                        if arr is not None:
-                            meteo_y[t_idx, ..., ch_idx] = np.nan_to_num(
-                                arr, nan=float(meteo_means[ch_idx]))
+            # FWI: required, fallback to previous day if missing.
+            if ch_name == "FWI":
+                if cur_date in fwi_dict:
+                    arr = _read_tif_safe(fwi_dict[cur_date], _fallback_fwi)
+                    _fallback_fwi = arr
+                elif _fallback_fwi is not None:
+                    arr = _fallback_fwi
                 else:
-                    # Unsupported channel type for forecast inference.
-                    raise NotImplementedError(
-                        f"Channel '{ch_name}' (type={ch_def['type']}) is not "
-                        f"supported by this forecaster yet."
-                    )
+                    print(f"  [skip] no FWI for {cur_date} and no fallback")
+                    skip = True
+                    break
+                meteo_y[t_idx, ..., ch_idx] = np.nan_to_num(
+                    arr, nan=float(meteo_means[ch_idx]))
 
-            if skip:
-                break
+            elif ch_name == "2t":
+                d = daily_dicts.get("2t", {})
+                if cur_date in d:
+                    arr = _read_tif_safe(d[cur_date], _fallback_t2m)
+                    _fallback_t2m = arr
+                elif _fallback_t2m is not None:
+                    arr = _fallback_t2m
+                else:
+                    print(f"  [skip] no 2t for {cur_date}")
+                    skip = True
+                    break
+                meteo_y[t_idx, ..., ch_idx] = np.nan_to_num(
+                    arr, nan=float(meteo_means[ch_idx]))
+
+            elif ch_def["type"] == "static":
+                meteo_y[t_idx, ..., ch_idx] = static_arrays.get(
+                    ch_name, np.zeros((H, W), dtype=np.float32))
+
+            elif ch_name == "fire_clim":
+                meteo_y[t_idx, ..., ch_idx] = _pick_fire_clim(
+                    fire_clim_arrays, cur_date.year, H, W)
+
+            elif ch_name == "burn_age":
+                meteo_y[t_idx, ..., ch_idx] = _pick_burn_age(
+                    burn_index, cur_date.year, H, W)
+            elif ch_name == "burn_count":
+                meteo_y[t_idx, ..., ch_idx] = _pick_burn_age(
+                    burn_count_index, cur_date.year, H, W)
+
+            elif ch_name == "NDVI":
+                meteo_y[t_idx, ..., ch_idx] = _interpolate_ndvi(
+                    cur_date, ndvi_index, ndvi_cache, H, W)
+
+            elif ch_name in daily_dicts:
+                d = daily_dicts[ch_name]
+                if cur_date in d:
+                    arr = _read_tif_safe(d[cur_date], None)
+                    if arr is not None:
+                        meteo_y[t_idx, ..., ch_idx] = np.nan_to_num(
+                            arr, nan=float(meteo_means[ch_idx]))
+            else:
+                # Unsupported channel type for forecast inference.
+                raise NotImplementedError(
+                    f"Channel '{ch_name}' (type={ch_def['type']}) is not "
+                    f"supported by this forecaster yet."
+                )
 
         if skip:
-            print(f"  [skip] issue_date {issue_date}: missing inputs.")
-            continue
+            break
 
-        # Normalize using ckpt stats (matches train_v3.py:2112-2114).
-        meteo_y -= meteo_means
-        meteo_y /= meteo_stds
-        np.clip(meteo_y, -10.0, 10.0, out=meteo_y)
+    if skip:
+        print(f"  [skip] issue_date {issue_date}: missing inputs.")
+        return
 
-        # Patchify entire (T, H, W, C) stack -> (n_patches, T, enc_dim).
-        # train_v3 uses _patchify_frame per timestep then transposes; the
-        # equivalent vectorized form is to call _patchify_frame on each
-        # frame and stack along T.
-        enc_patches = np.empty((n_patches, in_days, enc_dim), dtype=np.float16)
-        for t in range(in_days):
-            enc_patches[:, t, :] = _patchify_frame(meteo_y[t], P).astype(np.float16)
+    # Normalize using ckpt stats (matches train_v3.py:2112-2114).
+    meteo_y -= meteo_means
+    meteo_y /= meteo_stds
+    np.clip(meteo_y, -10.0, 10.0, out=meteo_y)
 
-        # ------- Build decoder_ctx static + lead-time tensors -------
-        decoder_ctx_fn = None
-        if use_decoder_ctx:
-            dec_ctx_np, ctx_indices = _build_decoder_ctx_static(
-                enc_patches, CHANNEL_NAMES, P * P, patch_mean=True)
-            ctx_names = [CHANNEL_NAMES[i] for i in ctx_indices]
-            print(f"  decoder_ctx: static channels {ctx_names} "
-                  f"-> shape {None if dec_ctx_np is None else dec_ctx_np.shape}")
+    # Patchify entire (T, H, W, C) stack -> (n_patches, T, enc_dim).
+    # train_v3 uses _patchify_frame per timestep then transposes; the
+    # equivalent vectorized form is to call _patchify_frame on each
+    # frame and stack along T.
+    enc_patches = np.empty((n_patches, in_days, enc_dim), dtype=np.float16)
+    for t in range(in_days):
+        enc_patches[:, t, :] = _patchify_frame(meteo_y[t], P).astype(np.float16)
 
-            # Lead-time encoding (seasonal sin/cos uses base DOY = issue_date's DOY).
-            base_doy = issue_date.timetuple().tm_yday
-            lead_time_enc = _build_lead_time_encoding(
-                decoder_days, lead_start, base_doy=base_doy, device=device)
+    # ------- Build decoder_ctx static + lead-time tensors -------
+    decoder_ctx_fn = None
+    if use_decoder_ctx:
+        dec_ctx_np, ctx_indices = _build_decoder_ctx_static(
+            enc_patches, CHANNEL_NAMES, P * P, patch_mean=True)
+        ctx_names = [CHANNEL_NAMES[i] for i in ctx_indices]
+        print(f"  decoder_ctx: static channels {ctx_names} "
+              f"-> shape {None if dec_ctx_np is None else dec_ctx_np.shape}")
 
-            def decoder_ctx_fn(xb_dec, cs, ce):  # noqa: E306
-                ctx_batch = torch.from_numpy(
-                    dec_ctx_np[cs:ce].astype(np.float32)).to(xb_dec.device)
-                return _augment_decoder(xb_dec, ctx_batch, lead_time_enc)
+        # Lead-time encoding (seasonal sin/cos uses base DOY = issue_date's DOY).
+        base_doy = issue_date.timetuple().tm_yday
+        lead_time_enc = _build_lead_time_encoding(
+            decoder_days, lead_start, base_doy=base_doy, device=device)
 
-        # ------- S2S decoder mapping for THIS issue_date -------
-        if decoder_mode == "s2s_legacy":
-            issue_str = str(issue_date)
-            date_to_idx, date_to_exact, date_to_lag = _expand_s2s_date_mapping(
-                s2s_dates, [issue_date], max_lag_days=s2s_max_lag)
-            if issue_str not in date_to_idx:
-                print(f"  [skip] issue_date {issue_date} not in S2S cache "
-                      f"(max_lag={s2s_max_lag}d).")
-                continue
-            lag = date_to_lag.get(issue_str, 0)
-            exact = date_to_exact.get(issue_str, False)
-            print(f"  S2S issue mapping: idx={date_to_idx[issue_str]} "
-                  f"lag={lag}d exact={exact}")
+        def decoder_ctx_fn(xb_dec, cs, ce):  # noqa: E306
+            ctx_batch = torch.from_numpy(
+                dec_ctx_np[cs:ce].astype(np.float32)).to(xb_dec.device)
+            return _augment_decoder(xb_dec, ctx_batch, lead_time_enc)
 
-        # ------- Forward pass in chunks -------
-        chunk = args.pred_batch_size
-        prob_list = []
-        with torch.no_grad():
-            for cs in range(0, n_patches, chunk):
-                ce = min(cs + chunk, n_patches)
-                xb_enc = torch.from_numpy(
-                    enc_patches[cs:ce].astype(np.float32)).to(device)
+    # ------- S2S decoder mapping for THIS issue_date -------
+    if decoder_mode == "s2s_legacy":
+        issue_str = str(issue_date)
+        date_to_idx, date_to_exact, date_to_lag = _expand_s2s_date_mapping(
+            s2s_dates, [issue_date], max_lag_days=s2s_max_lag)
+        if issue_str not in date_to_idx:
+            print(f"  [skip] issue_date {issue_date} not in S2S cache "
+                  f"(max_lag={s2s_max_lag}d).")
+            return
+        lag = date_to_lag.get(issue_str, 0)
+        exact = date_to_exact.get(issue_str, False)
+        print(f"  S2S issue mapping: idx={date_to_idx[issue_str]} "
+              f"lag={lag}d exact={exact}")
 
-                if decoder_mode == "s2s_legacy":
-                    dec_list = [
-                        _make_dec_s2s(
-                            s2s_cache, date_to_idx,
-                            str(issue_date), cs + pi,
-                            decoder_days, S2S_DEC_DIM, P,
-                            s2s_means=s2s_means, s2s_stds=s2s_stds,
-                            date_to_s2s_lag=date_to_lag,
-                            s2s_max_lag=s2s_max_lag,
-                        ).astype(np.float32)
-                        for pi in range(ce - cs)
-                    ]
-                    xb_dec = torch.from_numpy(
-                        np.stack(dec_list, axis=0)).to(device)
-                else:
-                    # Other decoder modes (oracle/zeros/random/climatology/s2s)
-                    # are not exercised by the 9ch SOTA; raise clear error.
-                    raise NotImplementedError(
-                        f"decoder='{decoder_mode}' is not implemented by this "
-                        f"forecaster. SOTA is s2s_legacy."
-                    )
+    # ------- Forward pass in chunks -------
+    chunk = args.pred_batch_size
+    prob_list = []
+    with torch.no_grad():
+        for cs in range(0, n_patches, chunk):
+            ce = min(cs + chunk, n_patches)
+            xb_enc = torch.from_numpy(
+                enc_patches[cs:ce].astype(np.float32)).to(device)
 
-                if decoder_ctx_fn is not None:
-                    xb_dec = decoder_ctx_fn(xb_dec, cs, ce)
+            if decoder_mode == "s2s_legacy":
+                dec_list = [
+                    _make_dec_s2s(
+                        s2s_cache, date_to_idx,
+                        str(issue_date), cs + pi,
+                        decoder_days, S2S_DEC_DIM, P,
+                        s2s_means=s2s_means, s2s_stds=s2s_stds,
+                        date_to_s2s_lag=date_to_lag,
+                        s2s_max_lag=s2s_max_lag,
+                    ).astype(np.float32)
+                    for pi in range(ce - cs)
+                ]
+                xb_dec = torch.from_numpy(
+                    np.stack(dec_list, axis=0)).to(device)
+            else:
+                # Other decoder modes (oracle/zeros/random/climatology/s2s)
+                # are not exercised by the 9ch SOTA; raise clear error.
+                raise NotImplementedError(
+                    f"decoder='{decoder_mode}' is not implemented by this "
+                    f"forecaster. SOTA is s2s_legacy."
+                )
 
-                logits = model(xb_enc, xb_dec)
-                prob_list.append(torch.sigmoid(logits).cpu().numpy())
+            if decoder_ctx_fn is not None:
+                xb_dec = decoder_ctx_fn(xb_dec, cs, ce)
 
-        probs = np.concatenate(prob_list, axis=0)
-        # probs shape: (n_patches, decoder_days, P*P)
+            logits = model(xb_enc, xb_dec)
+            prob_list.append(torch.sigmoid(logits).cpu().numpy())
 
-        # ------- Save 32 GeoTIFFs (lead 14..45 inclusive) -------
-        base_str = issue_date.strftime("%Y%m%d")
-        day_out = os.path.join(args.out_dir, base_str)
-        os.makedirs(day_out, exist_ok=True)
+    probs = np.concatenate(prob_list, axis=0)
+    # probs shape: (n_patches, decoder_days, P*P)
 
-        for li, lead in enumerate(range(lead_start, lead_end + 1)):
-            target_date = issue_date + timedelta(days=lead)
-            target_str = target_date.strftime("%Y%m%d")
-            out_path = os.path.join(
-                day_out, f"fire_prob_lead{lead:02d}d_{target_str}.tif")
+    # ------- Save 32 GeoTIFFs (lead 14..45 inclusive) -------
+    base_str = issue_date.strftime("%Y%m%d")
+    day_out = os.path.join(args.out_dir, base_str)
+    os.makedirs(day_out, exist_ok=True)
 
-            prob_patches_lead = probs[:, li, :]                    # (n_patches, P²)
-            prob_vol = depatchify(
-                prob_patches_lead[:, np.newaxis, :],
-                (nph, npw), P, (Hc, Wc), num_channels=1)            # (1, Hc, Wc)
-            prob_map = prob_vol[0] if prob_vol.ndim == 3 else prob_vol
-            if prob_map.shape != (H, W):
-                full = np.zeros((H, W), dtype=np.float32)
-                full[:prob_map.shape[0], :prob_map.shape[1]] = prob_map
-                prob_map = full
+    for li, lead in enumerate(range(lead_start, lead_end + 1)):
+        target_date = issue_date + timedelta(days=lead)
+        target_str = target_date.strftime("%Y%m%d")
+        out_path = os.path.join(
+            day_out, f"fire_prob_lead{lead:02d}d_{target_str}.tif")
 
-            with rasterio.open(out_path, "w", **out_profile) as dst:
-                dst.write(prob_map.astype(np.float32), 1)
+        prob_patches_lead = probs[:, li, :]                    # (n_patches, P²)
+        prob_vol = depatchify(
+            prob_patches_lead[:, np.newaxis, :],
+            (nph, npw), P, (Hc, Wc), num_channels=1)            # (1, Hc, Wc)
+        prob_map = prob_vol[0] if prob_vol.ndim == 3 else prob_vol
+        if prob_map.shape != (H, W):
+            full = np.zeros((H, W), dtype=np.float32)
+            full[:prob_map.shape[0], :prob_map.shape[1]] = prob_map
+            prob_map = full
 
-        elapsed = time.time() - t0
-        print(f"  -> wrote {decoder_days} TIFs to {day_out} "
-              f"in {elapsed:.1f}s")
+        with rasterio.open(out_path, "w", **out_profile) as dst:
+            dst.write(prob_map.astype(np.float32), 1)
 
+    elapsed = time.time() - t0
+    print(f"  -> wrote {decoder_days} TIFs to {day_out} "
+          f"in {elapsed:.1f}s")
+
+
+def forecast(args) -> None:
+    fm = _load_forecast_model(args)
+    fi = _load_forecast_inputs(fm, args)
+    issue_dates = [_parse_date(s) for s in args.issue_dates]
+    os.makedirs(args.out_dir, exist_ok=True)
+    for issue_date in issue_dates:
+        _forecast_one_issue(issue_date, fm, fi, args)
     print(f"\n[forecast_v3] DONE. Output dir: {args.out_dir}")
+
+
+
 
 
 # ----------------------------------------------------------------
