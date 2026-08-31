@@ -30,15 +30,12 @@ Usage:
 
 import argparse
 import json
-import os
 import sys
 import time
-from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
 import rasterio
-from scipy.ndimage import binary_dilation
 
 # Ensure src/ is importable when script is run directly
 for _p in Path(__file__).resolve().parents:
@@ -46,87 +43,11 @@ for _p in Path(__file__).resolve().parents:
         sys.path.insert(0, str(_p))
         break
 
-from src.data_ops.processing.rasterize_hotspots import (
-    load_hotspot_data, rasterize_hotspots_batch, load_nfdb_as_hotspot_df,
+# Observed-fire builders now live in src/ (single source of truth), shared
+# with src/forecasting/run_inference.py. See src/data_ops/observed_fire.py.
+from src.data_ops.observed_fire import (
+    build_date_list, build_cwfis, build_nbac_nfdb, dilate_stack,
 )
-from src.data_ops.processing.rasterize_burn_polygons import (
-    load_nbac, rasterize_nbac_batch,
-)
-
-
-def build_date_list(start: str, end: str):
-    sd = date.fromisoformat(start)
-    ed = date.fromisoformat(end)
-    dates = []
-    cur = sd
-    while cur <= ed:
-        dates.append(cur)
-        cur += timedelta(days=1)
-    return dates
-
-
-def build_cwfis(hotspot_csv: str, dates, profile):
-    df = load_hotspot_data(hotspot_csv)
-    print(f"  CWFIS: {len(df):,} hotspot records loaded")
-    return rasterize_hotspots_batch(df, dates, profile)
-
-
-def build_nbac_nfdb(nbac_path: str, nfdb_path: str,
-                    nbac_date_source: str,
-                    nfdb_min_size_ha: float,
-                    exclude_prescribed: bool,
-                    dates, profile):
-    H, W = int(profile["height"]), int(profile["width"])
-    stack = np.zeros((len(dates), H, W), dtype=np.uint8)
-
-    # --- NBAC polygons ---
-    nbac = load_nbac(nbac_path)
-    print(f"  NBAC: {len(nbac):,} polygons loaded")
-    if exclude_prescribed and "PRESCRIBED" in nbac.columns:
-        _before = len(nbac)
-        # NBAC PRESCRIBED: 'true' = prescribed burn, NaN = wildfire (audit 2026-04-21).
-        nbac = nbac[nbac["PRESCRIBED"].isna()].copy()
-        print(f"  NBAC: dropped {_before - len(nbac)} prescribed polygons "
-              f"({len(nbac):,} remain)")
-    nbac_stack = rasterize_nbac_batch(nbac, dates, profile,
-                                      date_source=nbac_date_source)
-    np.maximum(stack, nbac_stack, out=stack)
-    nbac_pos = int(stack.sum())
-    print(f"  after NBAC: {nbac_pos:,} positive pixels")
-
-    # --- NFDB points ---
-    keep_causes = {"H", "N", "U"} if exclude_prescribed else None
-    nfdb = load_nfdb_as_hotspot_df(
-        nfdb_path,
-        min_size_ha=nfdb_min_size_ha,
-        causes=keep_causes,
-    )
-    print(f"  NFDB: {len(nfdb):,} fires loaded "
-          f"(size >= {nfdb_min_size_ha} ha, excl prescribed={exclude_prescribed})")
-    nfdb_stack = rasterize_hotspots_batch(nfdb, dates, profile)
-    before = int(stack.sum())
-    np.maximum(stack, nfdb_stack, out=stack)
-    added = int(stack.sum()) - before
-    print(f"  after NFDB: +{added:,} pixels")
-
-    return stack, {"nbac_positive": nbac_pos, "nfdb_added": added}
-
-
-def dilate_stack(stack: np.ndarray, r: int):
-    if r <= 0:
-        return stack
-    yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
-    disk = (xx ** 2 + yy ** 2 <= r ** 2)
-    T = stack.shape[0]
-    out = np.zeros_like(stack)
-    print(f"  Dilating {T} frames with r={r} px disk...")
-    t0 = time.time()
-    for t in range(T):
-        if stack[t].any():
-            out[t] = binary_dilation(stack[t], structure=disk).astype(np.uint8)
-        if (t + 1) % 1000 == 0:
-            print(f"    {t+1}/{T}  ({time.time()-t0:.0f}s)")
-    return out
 
 
 def per_year_positive_count(stack, dates):
