@@ -555,7 +555,8 @@ def eval_window(score_fn, fire_patched, val_wins,
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
-def main():
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """CLI for the baseline benchmark."""
     parser = argparse.ArgumentParser(
         description="Compute Lift@K for baseline fire prediction methods")
     parser.add_argument("--config",    required=True)
@@ -592,7 +593,132 @@ def main():
                              "Post 2026-04-21 NBAC+NFDB labels. "
                              "If omitted, builds from CWFIS hotspots (legacy).")
     parser.add_argument("--output_csv",       default=None)
-    args = parser.parse_args()
+    return parser
+
+
+
+def _eval_cluster(args, fwi_patched, fire_patched, clim_patched,
+                  val_wins, display_k):
+    """Cluster-level (window-aggregated) Lift@K, printed to stdout."""
+    # ── Cluster-level Lift (window-aggregated) ───────────────────────
+    from scipy.ndimage import label as ndimage_label
+    print(f"\n{'='*70}")
+    print("CLUSTER-LEVEL Lift@K  (fire pixels merged into spatial clusters)")
+    print(f"{'='*70}")
+
+    P = args.patch_size
+    Hc = (fire_patched.shape[1] // 1)  # n_patches dimension — need grid info
+    # Recover grid from n_patches: n_patches = nph * npw
+    # We stored fire_patched as (T, n_patches, P²)
+    # Need to depatchify — get grid from load_data
+    # Actually, use the approach from V3: aggregate probs + labels across lead days,
+    # then cluster on the 2D grid
+    rng_cl = np.random.default_rng(0)
+    if len(val_wins) > args.n_sample_wins:
+        cl_idx = rng_cl.choice(len(val_wins), size=args.n_sample_wins, replace=False)
+        cl_wins = [val_wins[i] for i in sorted(cl_idx)]
+    else:
+        cl_wins = val_wins
+
+    for name in args.baseline:
+        if name == "climatology" and clim_patched is None:
+            continue
+
+        # Aggregate: score = mean over lead days, label = max over lead days
+        all_scores_cl, all_labels_cl = [], []
+        for win in cl_wins:
+            hs, he, ts, te = win
+            # Labels: max over lead days → (n_patches, P²)
+            label_win = fire_patched[ts:te, :, :].max(axis=0)  # (n_patches, P²)
+
+            # Scores: mean over lead days
+            if name == "climatology":
+                score_win = clim_patched.astype(np.float32)
+            else:  # fwi_oracle
+                score_win = np.nan_to_num(
+                    fwi_patched[:, ts:te, :].astype(np.float32), nan=0.0
+                ).max(axis=1)  # (n_patches, P²)
+
+            all_scores_cl.append(score_win.reshape(-1))
+            all_labels_cl.append(label_win.reshape(-1).astype(np.float32))
+
+        scores_flat = np.concatenate(all_scores_cl)
+        labels_flat = np.concatenate(all_labels_cl)
+
+        # Pixel-level for comparison
+        n_total = len(scores_flat)
+        n_fire = int(labels_flat.sum())
+        baseline_rate = n_fire / n_total if n_total > 0 else 0
+
+        for k in args.k_values:
+            k_eff = min(k, n_total)
+            top_idx = np.argpartition(scores_flat, -k_eff)[-k_eff:]
+            tp = float(labels_flat[top_idx].sum())
+            pixel_lift = (tp / k_eff) / baseline_rate if baseline_rate > 0 else 0
+
+            # Cluster: merge fire pixels, count unique clusters hit
+            # Simple approximation: count fire clusters in labels, count how many
+            # clusters have at least one pixel in top-K
+            if k == display_k:
+                # Build cluster map from labels (treat as 1D segments)
+                # For proper 2D clustering we'd need to depatchify — approximate here
+                print(f"  {name:20s}  pixel Lift@{k}={pixel_lift:.2f}x  "
+                      f"(n_fire={n_fire:,}  baseline={baseline_rate:.6f})")
+
+
+
+def _write_results_csv(args, all_results):
+    """Write per-baseline metrics to args.output_csv."""
+    os.makedirs(os.path.dirname(args.output_csv) or ".", exist_ok=True)
+    with open(args.output_csv, "w", newline="") as f:
+        writer = csv.writer(f)
+        if args.eval_mode == "per_leadday":
+            writer.writerow(["baseline", "lead_day", "k",
+                             "lift_k", "precision_k", "recall_k",
+                             "pr_auc", "n_fire", "baseline_rate"])
+            for name, res in all_results.items():
+                for ld, k_results in sorted(res["by_lead"].items()):
+                    for k, r in sorted(k_results.items()):
+                        writer.writerow([
+                            name, ld, k,
+                            f"{r['lift_k']:.4f}",
+                            f"{r.get('precision_k',0):.6f}",
+                            f"{r.get('recall_k',0):.6f}",
+                            f"{r.get('pr_auc',0):.6f}",
+                            r.get("n_fire", ""),
+                            f"{r.get('baseline',0):.8f}",
+                        ])
+        else:
+            # per_window mode: all_results[name] = {"per_win":[...],
+            # "summary": {k: {lift_k, lift_coarse, ...}}}. (Old `window`
+            # mode stored {name: {k: {...}}} directly — handle both.)
+            writer.writerow(["baseline", "k", "lift_k", "lift_k_std",
+                             "lift_coarse", "lift_coarse_std",
+                             "precision_k", "pr_auc", "bss", "f2", "mcc",
+                             "n_fire", "baseline_rate"])
+            for name, res in all_results.items():
+                summary = res["summary"] if isinstance(res, dict) and "summary" in res else res
+                for k, r in sorted(summary.items()):
+                    writer.writerow([
+                        name, k,
+                        f"{r.get('lift_k',0):.4f}",
+                        f"{r.get('lift_k_std',0):.4f}",
+                        f"{r.get('lift_coarse',0):.4f}",
+                        f"{r.get('lift_coarse_std',0):.4f}",
+                        f"{r.get('precision_k',0):.6f}",
+                        f"{r.get('pr_auc',0):.6f}",
+                        f"{r.get('bss',0):.4f}",
+                        f"{r.get('f2',0):.4f}",
+                        f"{r.get('mcc',0):.4f}",
+                        r.get("n_fire", ""),
+                        f"{r.get('baseline',0):.8f}",
+                    ])
+    print(f"\nResults saved to {args.output_csv}")
+
+
+
+def main():
+    args = _build_arg_parser().parse_args()
 
     print("=" * 70)
     print("BASELINE BENCHMARK: Lift@K Evaluation")
@@ -850,118 +976,13 @@ def main():
                   f"{r.get('recall_k',0):10.4f} "
                   f"{r.get('pr_auc',0):10.4f}")
 
-    # ── Cluster-level Lift (window-aggregated) ───────────────────────
-    from scipy.ndimage import label as ndimage_label
-    print(f"\n{'='*70}")
-    print("CLUSTER-LEVEL Lift@K  (fire pixels merged into spatial clusters)")
-    print(f"{'='*70}")
 
-    P = args.patch_size
-    Hc = (fire_patched.shape[1] // 1)  # n_patches dimension — need grid info
-    # Recover grid from n_patches: n_patches = nph * npw
-    # We stored fire_patched as (T, n_patches, P²)
-    # Need to depatchify — get grid from load_data
-    # Actually, use the approach from V3: aggregate probs + labels across lead days,
-    # then cluster on the 2D grid
-    rng_cl = np.random.default_rng(0)
-    if len(val_wins) > args.n_sample_wins:
-        cl_idx = rng_cl.choice(len(val_wins), size=args.n_sample_wins, replace=False)
-        cl_wins = [val_wins[i] for i in sorted(cl_idx)]
-    else:
-        cl_wins = val_wins
-
-    for name in args.baseline:
-        if name == "climatology" and clim_patched is None:
-            continue
-
-        # Aggregate: score = mean over lead days, label = max over lead days
-        all_scores_cl, all_labels_cl = [], []
-        for win in cl_wins:
-            hs, he, ts, te = win
-            # Labels: max over lead days → (n_patches, P²)
-            label_win = fire_patched[ts:te, :, :].max(axis=0)  # (n_patches, P²)
-
-            # Scores: mean over lead days
-            if name == "climatology":
-                score_win = clim_patched.astype(np.float32)
-            else:  # fwi_oracle
-                score_win = np.nan_to_num(
-                    fwi_patched[:, ts:te, :].astype(np.float32), nan=0.0
-                ).max(axis=1)  # (n_patches, P²)
-
-            all_scores_cl.append(score_win.reshape(-1))
-            all_labels_cl.append(label_win.reshape(-1).astype(np.float32))
-
-        scores_flat = np.concatenate(all_scores_cl)
-        labels_flat = np.concatenate(all_labels_cl)
-
-        # Pixel-level for comparison
-        n_total = len(scores_flat)
-        n_fire = int(labels_flat.sum())
-        baseline_rate = n_fire / n_total if n_total > 0 else 0
-
-        for k in args.k_values:
-            k_eff = min(k, n_total)
-            top_idx = np.argpartition(scores_flat, -k_eff)[-k_eff:]
-            tp = float(labels_flat[top_idx].sum())
-            pixel_lift = (tp / k_eff) / baseline_rate if baseline_rate > 0 else 0
-
-            # Cluster: merge fire pixels, count unique clusters hit
-            # Simple approximation: count fire clusters in labels, count how many
-            # clusters have at least one pixel in top-K
-            if k == display_k:
-                # Build cluster map from labels (treat as 1D segments)
-                # For proper 2D clustering we'd need to depatchify — approximate here
-                print(f"  {name:20s}  pixel Lift@{k}={pixel_lift:.2f}x  "
-                      f"(n_fire={n_fire:,}  baseline={baseline_rate:.6f})")
+    _eval_cluster(args, fwi_patched, fire_patched, clim_patched,
+                  val_wins, display_k)
 
     # ── CSV output ─────────────────────────────────────────────────────
     if args.output_csv:
-        os.makedirs(os.path.dirname(args.output_csv) or ".", exist_ok=True)
-        with open(args.output_csv, "w", newline="") as f:
-            writer = csv.writer(f)
-            if args.eval_mode == "per_leadday":
-                writer.writerow(["baseline", "lead_day", "k",
-                                 "lift_k", "precision_k", "recall_k",
-                                 "pr_auc", "n_fire", "baseline_rate"])
-                for name, res in all_results.items():
-                    for ld, k_results in sorted(res["by_lead"].items()):
-                        for k, r in sorted(k_results.items()):
-                            writer.writerow([
-                                name, ld, k,
-                                f"{r['lift_k']:.4f}",
-                                f"{r.get('precision_k',0):.6f}",
-                                f"{r.get('recall_k',0):.6f}",
-                                f"{r.get('pr_auc',0):.6f}",
-                                r.get("n_fire", ""),
-                                f"{r.get('baseline',0):.8f}",
-                            ])
-            else:
-                # per_window mode: all_results[name] = {"per_win":[...],
-                # "summary": {k: {lift_k, lift_coarse, ...}}}. (Old `window`
-                # mode stored {name: {k: {...}}} directly — handle both.)
-                writer.writerow(["baseline", "k", "lift_k", "lift_k_std",
-                                 "lift_coarse", "lift_coarse_std",
-                                 "precision_k", "pr_auc", "bss", "f2", "mcc",
-                                 "n_fire", "baseline_rate"])
-                for name, res in all_results.items():
-                    summary = res["summary"] if isinstance(res, dict) and "summary" in res else res
-                    for k, r in sorted(summary.items()):
-                        writer.writerow([
-                            name, k,
-                            f"{r.get('lift_k',0):.4f}",
-                            f"{r.get('lift_k_std',0):.4f}",
-                            f"{r.get('lift_coarse',0):.4f}",
-                            f"{r.get('lift_coarse_std',0):.4f}",
-                            f"{r.get('precision_k',0):.6f}",
-                            f"{r.get('pr_auc',0):.6f}",
-                            f"{r.get('bss',0):.4f}",
-                            f"{r.get('f2',0):.4f}",
-                            f"{r.get('mcc',0):.4f}",
-                            r.get("n_fire", ""),
-                            f"{r.get('baseline',0):.8f}",
-                        ])
-        print(f"\nResults saved to {args.output_csv}")
+        _write_results_csv(args, all_results)
 
     print("=== BENCHMARK FINISHED ===")
 
