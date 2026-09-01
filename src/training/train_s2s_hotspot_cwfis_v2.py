@@ -669,6 +669,30 @@ def _load_fire_clim(tif_path, expected_h, expected_w):
 # Val Lift@K  (used for checkpoint selection)
 # ------------------------------------------------------------------ #
 
+def _shuffle_encoder_time_axis(xb_enc):
+    """Temporal-ablation: destroy the ORDER of the encoder history.
+
+    Applies an INDEPENDENT random permutation of the time axis (dim=1) to each
+    sample, so every sample's days are re-ordered differently. Values are
+    preserved; only their day-ordering is scrambled, and the permutation is
+    re-drawn on every call (per batch / per eval chunk) so the model can never
+    learn a fixed slot -> physical-lag mapping. This isolates the contribution
+    of temporal ordering specifically -- contrast with the --random_encoder
+    ablation, which instead replaces the encoder with pure noise (removing all
+    encoder information, not just its order). Uses the global torch RNG, so
+    --seed makes the shuffle reproducible.
+
+    Args:
+        xb_enc: (B, T, patch_dim) encoder input tensor.
+    Returns:
+        (B, T, patch_dim) with dim=1 independently permuted per sample.
+    """
+    B, T = xb_enc.shape[0], xb_enc.shape[1]
+    perm = torch.argsort(torch.rand(B, T, device=xb_enc.device), dim=1)
+    return torch.gather(xb_enc, 1,
+                        perm.unsqueeze(-1).expand(-1, -1, xb_enc.shape[-1]))
+
+
 def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         n_patches, k, n_sample_wins, chunk, device,
                         decoder_mode="oracle", dec_dim=None,
@@ -678,6 +702,7 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                         date_to_s2s_lag=None, s2s_max_lag=3,
                         s2s_full_cache=None, use_patch_embed=False,
                         random_encoder=False,
+                        shuffle_encoder_time=False,
                         decoder_ctx_fn=None,
                         # --- Mainstream rare-event eval additions (2026-04-17) ---
                         hw=None, grid=None,
@@ -786,6 +811,8 @@ def _compute_val_lift_k(model, meteo_patched, fire_patched, val_wins,
                 ).to(device)
                 if random_encoder:
                     xb_enc = torch.randn_like(xb_enc)
+                if shuffle_encoder_time:
+                    xb_enc = _shuffle_encoder_time_axis(xb_enc)
                 if decoder_mode == "oracle":
                     xb_dec = torch.from_numpy(
                         np.ascontiguousarray(

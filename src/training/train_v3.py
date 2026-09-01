@@ -115,6 +115,7 @@ from src.training.train_s2s_hotspot_cwfis_v2 import (
     _transpose_tf_to_pf,
     MemoryGuard,
     _compute_val_lift_k,
+    _shuffle_encoder_time_axis,
     S2S_N_CHANNELS,
     S2S_DEC_DIM,
 )
@@ -561,6 +562,7 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                            date_to_s2s_lag=None, s2s_max_lag=3,
                            s2s_full_cache=None, use_patch_embed=False,
                            random_encoder=False,
+                           shuffle_encoder_time=False,
                            cluster_eval=False, cluster_min_size=1,
                            hw=None, grid=None, full_val=False,
                            per_lead_eval=False,
@@ -610,6 +612,7 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
         date_to_s2s_lag=date_to_s2s_lag, s2s_max_lag=s2s_max_lag,
         s2s_full_cache=s2s_full_cache, use_patch_embed=use_patch_embed,
         random_encoder=random_encoder,
+        shuffle_encoder_time=shuffle_encoder_time,
         s2s_cache=s2s_cache,
         decoder_ctx_fn=decoder_ctx_fn,
         # 2026-04-17: forward hw/grid so coarsened Lift (30km) works
@@ -658,6 +661,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                     ).to(device)
                     if random_encoder:
                         xb_enc = torch.randn_like(xb_enc)
+                    if shuffle_encoder_time:
+                        xb_enc = _shuffle_encoder_time_axis(xb_enc)
                     if decoder_mode == "oracle":
                         xb_dec = torch.from_numpy(
                             np.ascontiguousarray(
@@ -798,6 +803,8 @@ def _compute_val_lift_k_v3(model, meteo_patched, fire_patched, val_wins,
                     ).to(device)
                     if random_encoder:
                         xb_enc = torch.randn_like(xb_enc)
+                    if shuffle_encoder_time:
+                        xb_enc = _shuffle_encoder_time_axis(xb_enc)
                     if decoder_mode == "oracle":
                         xb_dec = torch.from_numpy(
                             np.ascontiguousarray(
@@ -1177,6 +1184,12 @@ def _build_arg_parser():
     ap.add_argument("--use_patch_embed", action="store_true")
     ap.add_argument("--mlp_dec_embed", action="store_true")
     ap.add_argument("--random_encoder", action="store_true")
+    ap.add_argument("--shuffle_encoder_time", action="store_true",
+                    help="Temporal ablation: independently permute the encoder "
+                         "history's day-ordering per sample (train+eval). "
+                         "Preserves values, destroys temporal order. Isolates "
+                         "the contribution of temporal dynamics vs the "
+                         "order-agnostic marginals. See _shuffle_encoder_time_axis.")
 
     # W&B (experiment tracking) — optional, no-op if not set
     ap.add_argument("--wandb_project", type=str, default=None,
@@ -1300,6 +1313,7 @@ def run_eval_mode(
         s2s_full_cache=s2s_full_cache,
         use_patch_embed=args.use_patch_embed,
         random_encoder=args.random_encoder,
+        shuffle_encoder_time=args.shuffle_encoder_time,
         cluster_eval=args.cluster_eval,
         cluster_min_size=args.cluster_min_size,
         hw=hw, grid=grid, full_val=args.full_val,
@@ -1623,6 +1637,8 @@ def run_training(
             xb_dec = xb_dec.to(device, dtype=torch.float32, non_blocking=True)
             if args.random_encoder:
                 xb_enc = torch.randn_like(xb_enc)
+            if args.shuffle_encoder_time:
+                xb_enc = _shuffle_encoder_time_axis(xb_enc)
             yb = yb.to(device, non_blocking=True)
             if args.label_smoothing > 0:
                 yb = yb * (1 - args.label_smoothing) + 0.5 * args.label_smoothing
@@ -1840,6 +1856,7 @@ def run_training(
                 s2s_full_cache=s2s_full_cache,
                 use_patch_embed=args.use_patch_embed,
                 random_encoder=args.random_encoder,
+                shuffle_encoder_time=args.shuffle_encoder_time,
                 cluster_eval=args.cluster_eval,
                 cluster_min_size=args.cluster_min_size,
                 hw=hw, grid=grid, full_val=args.full_val,
