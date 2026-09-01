@@ -186,6 +186,45 @@ python -m src.forecasting.forecast_v3_to_tif \
     --out_dir outputs/v3_9ch_enc21_fire_prob
 ```
 
+### Unified inference
+
+`src/forecasting/run_inference.py` wraps the forecast step into a single command
+that also produces the downstream artifacts: a **top-K ranking CSV**
+(pixel → lon/lat, ordered by ignition probability) and an optional **forecast
+map** alongside the probability GeoTIFF.
+
+```bash
+python -m src.forecasting.run_inference \
+    --config configs/default.yaml \
+    --ckpt checkpoints/v3_9ch_enc21/best_model.pt \
+    --s2s_cache data/s2s_processed/s2s_decoder_cache.dat \
+    --issue_dates 2023-08-15 \
+    --lead 30 --topk 5000 \
+    --out_dir outputs/inference_20230815
+```
+
+Add `--eval_window N` to switch on **verification**: the observed fire raster is
+built over the N-day window after each issue date and metrics (Lift@K, BSS,
+ROC-AUC) are written to JSON. The truth source is explicit — `--truth_source`
+defaults to `nbac_nfdb` (the training label; NBAC burned-area ∪ NFDB points),
+with `ciffc` (current-season) and `cwfis` also supported:
+
+```bash
+python -m src.forecasting.run_inference \
+    --config configs/default.yaml \
+    --ckpt checkpoints/v3_9ch_enc21/best_model.pt \
+    --s2s_cache data/s2s_processed/s2s_decoder_cache.dat \
+    --issue_dates 2023-08-15 \
+    --lead 30 --eval_window 30 --truth_source nbac_nfdb \
+    --out_dir outputs/inference_20230815
+```
+
+Note that these verification metrics are computed over the full grid for a single
+issue-date window, so they are **not** directly comparable to the multi-window,
+valid-mask Lift figures reported in `docs/`. See
+`python -m src.forecasting.run_inference --help` for map/ranking toggles and
+truth-source path overrides.
+
 ## License
 
 Released under the MIT License. See [`LICENSE`](LICENSE).
